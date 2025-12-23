@@ -1,13 +1,13 @@
-streamlit
-pandas
-gdown
-openpyxl
-xlsxwriter
-matplotlib
-plotly
-requests
-google-api-python-client
-google-auth
-google-auth-httplib2
-google-auth-oauthlib
+streamlit>=1.31.0
+pandas>=2.0.0
+numpy>=1.24.0
 
+plotly>=5.18.0
+matplotlib>=3.8.0
+
+scikit-learn>=1.3.0
+
+openpyxl>=3.1.2
+xlsxwriter>=3.1.9
+
+gdown>=5.1.0
