@@ -19,6 +19,8 @@ import matplotlib.pyplot as plt
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import gdown
 import xml.etree.ElementTree as ET
@@ -33,6 +35,22 @@ try:
     TENSORFLOW_AVAILABLE = True
 except Exception:
     TENSORFLOW_AVAILABLE = False
+
+
+def get_greeting():
+    now = datetime.now(ZoneInfo("Asia/Jakarta"))
+    hour = now.hour
+
+    if hour < 11:
+        greet = "Good Morning"
+    elif hour < 15:
+        greet = "Good Afternoon"
+    elif hour < 18:
+        greet = "Good Evening"
+    else:
+        greet = "Good Night"
+
+    return greet, now
 
 
 # ======================================
@@ -1249,4 +1267,5 @@ st.markdown("""
     </a> · MTRAX Travel Analytics
 </div>
 """, unsafe_allow_html=True)
+
 
