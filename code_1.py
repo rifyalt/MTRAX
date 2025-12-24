@@ -34,6 +34,28 @@ try:
 except Exception:
     TENSORFLOW_AVAILABLE = False
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# ==============================
+# Helper: Greeting sesuai waktu
+# ==============================
+def get_greeting():
+    now = datetime.now(ZoneInfo("Asia/Jakarta"))
+    hour = now.hour
+
+    if hour < 11:
+        greet = "Good Morning"
+    elif hour < 15:
+        greet = "Good Afternoon"
+    elif hour < 18:
+        greet = "Good Evening"
+    else:
+        greet = "Good Night"
+
+    return greet, now
+
+
 
 # ======================================
 # USER DATABASE
@@ -1249,4 +1271,5 @@ st.markdown("""
     </a> · MTRAX Travel Analytics
 </div>
 """, unsafe_allow_html=True)
+
 
