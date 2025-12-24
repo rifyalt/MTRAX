@@ -37,6 +37,12 @@ except Exception:
     TENSORFLOW_AVAILABLE = False
 
 
+# ===== Imports =====
+import streamlit as st
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# ===== Helpers =====
 def get_greeting():
     now = datetime.now(ZoneInfo("Asia/Jakarta"))
     hour = now.hour
@@ -52,6 +58,21 @@ def get_greeting():
 
     return greet, now
 
+# ===== Login check =====
+if not st.session_state.get("authenticated"):
+    login_page()
+    st.stop()
+
+# ===== Main UI =====
+greet, now = get_greeting()
+username = st.session_state.get("username", "User")
+
+st.markdown(f"""
+<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:20px'>
+    <div style='font-size:1.2em; font-weight:600;'>{greet}, {username}</div>
+    <div style='font-size:0.85em; color:#888;'>{now.strftime("%d %b %Y · %H:%M")}</div>
+</div>
+""", unsafe_allow_html=True)
 
 # ======================================
 # USER DATABASE
@@ -1267,5 +1288,6 @@ st.markdown("""
     </a> · MTRAX Travel Analytics
 </div>
 """, unsafe_allow_html=True)
+
 
 
