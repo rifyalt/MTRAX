@@ -57,18 +57,7 @@ def get_greeting():
         greet = "Good Night"
 
     return greet, now
-
-# ===== Main UI =====
-greet, now = get_greeting()
-username = st.session_state.get("username", "User")
-
-st.markdown(f"""
-<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:20px'>
-    <div style='font-size:1.2em; font-weight:600;'>{greet}, {username}</div>
-    <div style='font-size:0.85em; color:#888;'>{now.strftime("%d %b %Y · %H:%M")}</div>
-</div>
-""", unsafe_allow_html=True)
-
+    
 # ======================================
 # USER DATABASE
 # ======================================
@@ -227,6 +216,7 @@ def login_page():
                 st.error("Incorrect password")
         else:
             st.error("Username not found")
+
 
 
 # ======================================
@@ -573,6 +563,17 @@ def render_news_ticker(news):
         <div class="ticker-content">{items}</div>
     </div>
     """, unsafe_allow_html=True)
+
+# ===== Main UI =====
+greet, now = get_greeting()
+username = st.session_state.get("username", "User")
+
+st.markdown(f"""
+<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:20px'>
+    <div style='font-size:1.2em; font-weight:600;'>{greet}, {username}</div>
+    <div style='font-size:0.85em; color:#888;'>{now.strftime("%d %b %Y · %H:%M")}</div>
+</div>
+""", unsafe_allow_html=True)
 
 # ======================================
 # HEADER
@@ -1283,6 +1284,7 @@ st.markdown("""
     </a> · MTRAX Travel Analytics
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
