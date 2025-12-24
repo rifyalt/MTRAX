@@ -73,8 +73,8 @@ def get_bmkg_realtime_quake():
 # ======================================
 # SESSION STATE INIT
 # ======================================
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+#if "authenticated" not in st.session_state:
+#    st.session_state.authenticated = False
 
 if st.session_state.get("authenticated"):
 
@@ -1280,6 +1280,7 @@ st.markdown("""
     </a> · MTRAX Travel Analytics
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
