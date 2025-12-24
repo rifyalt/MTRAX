@@ -76,6 +76,18 @@ def get_bmkg_realtime_quake():
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
+if st.session_state.get("authenticated"):
+
+    greet, now = get_greeting()
+    username = st.session_state.get("username", "User")
+
+    st.markdown(f"""
+    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:20px'>
+        <div style='font-size:1.2em; font-weight:600;'>{greet}, {username}</div>
+        <div style='font-size:0.85em; color:#888;'>{now.strftime("%d %b %Y · %H:%M")}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
 if "username" not in st.session_state:
     st.session_state.username = ""
 
@@ -1268,6 +1280,7 @@ st.markdown("""
     </a> · MTRAX Travel Analytics
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
