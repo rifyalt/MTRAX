@@ -58,11 +58,6 @@ def get_greeting():
 
     return greet, now
 
-# ===== Login check =====
-if not st.session_state.get("authenticated"):
-    login_page()
-    st.stop()
-
 # ===== Main UI =====
 greet, now = get_greeting()
 username = st.session_state.get("username", "User")
@@ -1288,6 +1283,7 @@ st.markdown("""
     </a> · MTRAX Travel Analytics
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
