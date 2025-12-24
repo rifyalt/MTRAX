@@ -1,3 +1,4 @@
+# BAGIAN 1
 # =====================================
 # CORE IMPORTS
 # =====================================
@@ -12,6 +13,7 @@ import numpy as np
 
 from datetime import datetime
 from io import BytesIO
+from zoneinfo import ZoneInfo
 
 import plotly.graph_objects as go
 import plotly.express as px
@@ -34,11 +36,11 @@ try:
 except Exception:
     TENSORFLOW_AVAILABLE = False
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
-# ===== Helpers =====
+# =====================================
+# HELPER FUNCTIONS
+# =====================================
 def get_greeting():
+    """Mendapatkan greeting sesuai waktu Jakarta"""
     now = datetime.now(ZoneInfo("Asia/Jakarta"))
     hour = now.hour
 
@@ -57,6 +59,7 @@ def get_greeting():
 # USER DATABASE
 # ======================================
 def hash_password(password: str) -> str:
+    """Hash password menggunakan SHA256"""
     return hashlib.sha256(password.encode()).hexdigest()
 
 USERS = {
@@ -66,10 +69,10 @@ USERS = {
 }
 
 # ======================================
-# BMKG SIDEBAR
+# BMKG FUNCTIONS
 # ======================================
-
 def get_bmkg_realtime_quake():
+    """Mengambil data gempa real-time dari BMKG"""
     url = "https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json"
     try:
         r = requests.get(url, timeout=10)
@@ -85,24 +88,11 @@ def get_bmkg_realtime_quake():
         st.sidebar.error(f"BMKG Error: {e}")
         return None
 
-
 # ======================================
-# SESSION STATE INIT
+# SESSION STATE INITIALIZATION
 # ======================================
-#if "authenticated" not in st.session_state:
-#    st.session_state.authenticated = False
-
-if st.session_state.get("authenticated"):
-
-    greet, now = get_greeting()
-    username = st.session_state.get("username", "User")
-
-    st.markdown(f"""
-    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:20px'>
-        <div style='font-size:1.2em; font-weight:600;'>{greet}, {username}</div>
-        <div style='font-size:0.85em; color:#888;'>{now.strftime("%d %b %Y · %H:%M")}</div>
-    </div>
-    """, unsafe_allow_html=True)
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
 if "username" not in st.session_state:
     st.session_state.username = ""
@@ -110,28 +100,12 @@ if "username" not in st.session_state:
 if "role" not in st.session_state:
     st.session_state.role = ""
 
-# ==============================
-# Helper: Greeting sesuai waktu
-# ==============================
-def get_greeting():
-    now = datetime.now(ZoneInfo("Asia/Jakarta"))
-    hour = now.hour
-
-    if hour < 11:
-        greet = "Good Morning"
-    elif hour < 15:
-        greet = "Good Afternoon"
-    elif hour < 18:
-        greet = "Good Evening"
-    else:
-        greet = "Good Night"
-
-    return greet, now
-
+# BAGIAN 2
 # ======================================
 # LOGIN FUNCTION
 # ======================================
 def login_page():
+    """Halaman login dengan desain minimalis"""
     st.set_page_config(page_title="Login | MTRAX", layout="centered")
 
     st.markdown(
@@ -241,16 +215,15 @@ def login_page():
         else:
             st.error("Username not found")
 
-
 # ======================================
 # LOGOUT FUNCTION
 # ======================================
 def logout():
+    """Logout dan reset session state"""
     st.session_state.authenticated = False
     st.session_state.username = ""
     st.session_state.role = ""
     st.rerun()
-
 
 # ======================================
 # GATEKEEPER
@@ -259,6 +232,7 @@ if not st.session_state.authenticated:
     login_page()
     st.stop()
 
+# BAGIAN 3
 # ======================================
 # PAGE CONFIG
 # ======================================
@@ -550,13 +524,13 @@ section[data-testid="stSidebar"] .stMarkdown h3 {
 """, unsafe_allow_html=True)
 
 # ======================================
-# RENDER NEWS TICKER
+# NEWS TICKER FUNCTIONS
 # ======================================
-
 def fetch_rss_news(limit=10):
+    """Mengambil berita dari RSS feed"""
     urls = [
         "https://news.google.com/rss/search?q=danantara&hl=id&gl=ID&ceid=ID:id",
-        "https://news.google.com/rss/search?q=pertamina&hl=id&gl=ID&ceid=ID:id"
+        "https://news.google.com/rss/search?q=pertamina&hl=id&gl=ID&ceid=ID:id",
         "https://news.google.com/rss/search?q=bmkg&hl=id&gl=ID&ceid=ID:id"
     ]
 
@@ -577,6 +551,10 @@ def fetch_rss_news(limit=10):
     return news[:limit]
 
 def render_news_ticker(news):
+    """Render news ticker dengan animasi"""
+    if not news:
+        return
+    
     items = "".join([
         f'<a class="news-item" href="{n["link"]}" target="_blank">{n["title"]}</a>'
         for n in news
@@ -587,16 +565,12 @@ def render_news_ticker(news):
     </div>
     """, unsafe_allow_html=True)
 
+# BAGIAN 4
 # ======================================
-# HEADER
+# HEADER WITH DYNAMIC GREETING
 # ======================================
-current_hour = datetime.now().hour
-if current_hour < 12:
-    greeting = "Good Morning"
-elif current_hour < 18:
-    greeting = "Good Afternoon"
-else:
-    greeting = "Good Evening"
+# Dapatkan greeting dan waktu real-time
+greet, now = get_greeting()
 
 st.markdown(f"""
 <div class='header'>
@@ -606,13 +580,14 @@ st.markdown(f"""
             <div class='header-subtitle'>Corporate Travel Analytics</div>
         </div>
         <div class='header-user'>
-            <div class='user-name'>{greeting}, {st.session_state.username.title()}</div>
-            <div class='user-role'>{st.session_state.role} · {datetime.now().strftime('%d %b %Y')}</div>
+            <div class='user-name'>{greet}, {st.session_state.username.title()}</div>
+            <div class='user-role'>{st.session_state.role} · {now.strftime('%d %b %Y · %H:%M')}</div>
         </div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
+# Render News Ticker
 news_data = fetch_rss_news()
 render_news_ticker(news_data)
 
@@ -620,6 +595,7 @@ render_news_ticker(news_data)
 # SIDEBAR
 # ======================================
 def load_logo_base64(path):
+    """Load logo dan convert ke base64"""
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()
 
@@ -632,6 +608,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+    # Logout Button
     if st.button("Logout", use_container_width=True):
         logout()
 
@@ -643,72 +620,104 @@ with st.sidebar:
         label_visibility="collapsed"
     )
 
-# ======================================
-# BMKG SIDEBAR
-# ======================================
+    # ======================================
+    # BMKG EARTHQUAKE SIDEBAR
+    # ======================================
+    st.markdown("### 🌏 BMKG Earthquake")
 
-st.sidebar.markdown("### 🌏 BMKG Earthquake")
+    quake = get_bmkg_realtime_quake()
 
-quake = get_bmkg_realtime_quake()
+    if quake:
+        mag = float(quake["Magnitude"])
+        alert = mag >= 5.0
 
-if quake:
-    mag = float(quake["Magnitude"])
-    alert = mag >= 5.0
+        bg = "#fff1f1" if alert else "#f7f7f7"
+        accent = "#e74c3c" if alert else "#cccccc"
+        title_color = "#e74c3c" if alert else "#333333"
+        status = "WASPADA" if alert else "AMAN"
 
-    bg = "#fff1f1" if alert else "#f7f7f7"
-    accent = "#e74c3c" if alert else "#cccccc"
-    title_color = "#e74c3c" if alert else "#333333"
-    status = "WASPADA" if alert else "AMAN"
-
-    st.sidebar.markdown(
-        f"""
-        <div style="
-            background:{bg};
-            padding:12px 14px;
-            border-left:3px solid {accent};
-            border-radius:6px;
-            font-size:0.85rem;
-            line-height:1.4;
-        ">
-            <div style="font-weight:600; color:{title_color}; margin-bottom:4px;">
-                {status} • M {quake['Magnitude']}
+        st.markdown(
+            f"""
+            <div style="
+                background:{bg};
+                padding:12px 14px;
+                border-left:3px solid {accent};
+                border-radius:6px;
+                font-size:0.85rem;
+                line-height:1.4;
+            ">
+                <div style="font-weight:600; color:{title_color}; margin-bottom:4px;">
+                    {status} • M {quake['Magnitude']}
+                </div>
+                <div style="color:#666;">
+                    {quake['Tanggal']} {quake['Jam']}<br>
+                    {quake['Wilayah']}<br>
+                    Kedalaman {quake['Kedalaman']}
+                </div>
             </div>
-            <div style="color:#666;">
-                {quake['Tanggal']} {quake['Jam']}<br>
-                {quake['Wilayah']}<br>
-                Kedalaman {quake['Kedalaman']}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+            """,
+            unsafe_allow_html=True
+        )
 
-else:
-    st.sidebar.markdown(
-        """
-        <div style="
-            background:#f7f7f7;
-            padding:12px;
-            border-radius:6px;
-            color:#888;
-            font-size:0.8rem;
-            text-align:center;
-        ">
-            Tidak ada data gempa
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    else:
+        st.markdown(
+            """
+            <div style="
+                background:#f7f7f7;
+                padding:12px;
+                border-radius:6px;
+                color:#888;
+                font-size:0.8rem;
+                text-align:center;
+            ">
+                Tidak ada data gempa
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 # ======================================
-# DATA PREP
+# DATA PREPARATION
 # ======================================
 os.makedirs("data_temp", exist_ok=True)
 drop_cols = ["Site (PSA)", "Site group Name", "Currency", "Reschedule ID", "Source_File"]
 df_all = pd.DataFrame()
 
 # ======================================
-# CLOUD MODE
+# HELPER FUNCTION FOR MONTHLY TREND
+# ======================================
+def prepare_monthly_trend(df, date_col, value_col=None, agg="nunique"):
+    """
+    Prepare data untuk monthly trend chart
+    
+    Parameters:
+    - df: DataFrame
+    - date_col: kolom tanggal
+    - value_col: kolom nilai (optional)
+    - agg: metode agregasi ('nunique', 'sum', 'count')
+    """
+    tmp = df.copy()
+
+    tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
+    tmp = tmp[tmp[date_col].notna()]
+
+    tmp["YearMonth"] = tmp[date_col].dt.to_period("M").astype(str)
+
+    if value_col is None:
+        # fallback count rows
+        trend = tmp.groupby("YearMonth").size().reset_index(name="Value")
+    else:
+        if agg == "sum":
+            trend = tmp.groupby("YearMonth")[value_col].sum().reset_index(name="Value")
+        elif agg == "nunique":
+            trend = tmp.groupby("YearMonth")[value_col].nunique().reset_index(name="Value")
+        else:
+            trend = tmp.groupby("YearMonth")[value_col].count().reset_index(name="Value")
+
+    return trend.sort_values("YearMonth")
+
+# ======================================
+# CLOUD MODE - GOOGLE DRIVE
 # ======================================
 if mode == "Cloud/Drive":
 
@@ -764,13 +773,13 @@ if mode == "Cloud/Drive":
 
                 df_all = pd.concat(df_list, ignore_index=True)
                 progress_bar.progress(100)
-                st.success(f"Loaded {len(df_all):,} records")
+                st.success(f"✓ Loaded {len(df_all):,} records from {len(files)} files")
 
             except Exception as e:
                 st.error(f"Error: {e}")
 
 # ======================================
-# UPLOAD MODE
+# UPLOAD MODE - LOCAL FILES
 # ======================================
 elif mode == "Upload Files":
 
@@ -798,53 +807,36 @@ elif mode == "Upload Files":
 
             if df_list:
                 df_all = pd.concat(df_list, ignore_index=True)
-                st.success(f"Loaded {len(df_all):,} records")
+                st.success(f"✓ Loaded {len(df_all):,} records from {len(uploaded_files)} files")
 
+# BAGIAN 5
 # ======================================
 # DATA CLEANING
 # ======================================
 if not df_all.empty:
+    # Bersihkan Invoice Amount
     if "Invoice Amount" in df_all.columns:
         df_all["Invoice Amount"] = pd.to_numeric(
             df_all["Invoice Amount"].astype(str).str.replace("$", "").str.replace(",", ""),
             errors="coerce"
         )
+    
+    # Bersihkan Number of Rooms Night
     if "Number of Rooms Night" in df_all.columns:
         df_all["Number of Rooms Night"] = pd.to_numeric(df_all["Number of Rooms Night"], errors="coerce")
+    
+    # Convert dates
     if "Check in Date" in df_all.columns:
         df_all["Check in Date"] = pd.to_datetime(df_all["Check in Date"], errors="coerce")
+    
     if "Check Out Date" in df_all.columns:
         df_all["Check Out Date"] = pd.to_datetime(df_all["Check Out Date"], errors="coerce")
+    
+    if "Issue Time" in df_all.columns:
+        df_all["Issue Time"] = pd.to_datetime(df_all["Issue Time"], errors="coerce")
 
 # ======================================
-# MONTHLY TREND
-# ======================================
-
-def prepare_monthly_trend(df, date_col, value_col=None, agg="nunique"):
-    tmp = df.copy()
-
-    tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
-    tmp = tmp[tmp[date_col].notna()]
-
-    tmp["YearMonth"] = tmp[date_col].dt.to_period("M").astype(str)
-
-    if value_col is None:
-        # fallback count rows
-        trend = tmp.groupby("YearMonth").size().reset_index(name="Value")
-
-    else:
-        if agg == "sum":
-            trend = tmp.groupby("YearMonth")[value_col].sum().reset_index(name="Value")
-        elif agg == "nunique":
-            trend = tmp.groupby("YearMonth")[value_col].nunique().reset_index(name="Value")
-        else:
-            trend = tmp.groupby("YearMonth")[value_col].count().reset_index(name="Value")
-
-    return trend.sort_values("YearMonth")
-
-
-# ======================================
-# DASHBOARD
+# DASHBOARD TABS
 # ======================================
 if not df_all.empty:
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -856,420 +848,799 @@ if not df_all.empty:
         "Export"
     ])
 
+    # ======================================
+    # TAB 1: DASHBOARD
+    # ======================================
     with tab1:
-            st.markdown("<div class='section-title'>Overview</div>", unsafe_allow_html=True)
-            
-            # Primary Metrics
-            col1, col2, col3, col4, col5 = st.columns(5)
+        st.markdown("<div class='section-title'>Overview</div>", unsafe_allow_html=True)
+        
+        # ======================================
+        # PRIMARY METRICS (5 COLUMNS)
+        # ======================================
+        col1, col2, col3, col4, col5 = st.columns(5)
 
-            with col1:
-                total_rows = len(df_all)
+        with col1:
+            total_rows = len(df_all)
+            st.markdown(f"""
+                <div class='metric-box'>
+                    <div class='metric-label'>Bookings</div>
+                    <div class='metric-value'>{total_rows:,}</div>
+                </div>
+            """, unsafe_allow_html=True)
+
+        with col2:
+            if "Travel Request Number" in df_all.columns:
+                unique_tr = df_all["Travel Request Number"].nunique()
                 st.markdown(f"""
                     <div class='metric-box'>
-                        <div class='metric-label'>Bookings</div>
-                        <div class='metric-value'>{total_rows:,}</div>
+                        <div class='metric-label'>Requests</div>
+                        <div class='metric-value'>{unique_tr:,}</div>
                     </div>
                 """, unsafe_allow_html=True)
 
-            with col2:
-                if "Travel Request Number" in df_all.columns:
-                    unique_tr = df_all["Travel Request Number"].nunique()
-                    st.markdown(f"""
-                        <div class='metric-box'>
-                            <div class='metric-label'>Requests</div>
-                            <div class='metric-value'>{unique_tr:,}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
+        with col3:
+            if "Employee Id" in df_all.columns:
+                unique_emp = df_all["Employee Id"].nunique()
+                st.markdown(f"""
+                    <div class='metric-box'>
+                        <div class='metric-label'>Travelers</div>
+                        <div class='metric-value'>{unique_emp:,}</div>
+                    </div>
+                """, unsafe_allow_html=True)
 
-            with col3:
-                if "Employee Id" in df_all.columns:
-                    unique_emp = df_all["Employee Id"].nunique()
-                    st.markdown(f"""
-                        <div class='metric-box'>
-                            <div class='metric-label'>Travelers</div>
-                            <div class='metric-value'>{unique_emp:,}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
+        with col4:
+            if "Hotel Name" in df_all.columns:
+                unique_hotels = df_all["Hotel Name"].nunique()
+                st.markdown(f"""
+                    <div class='metric-box'>
+                        <div class='metric-label'>Hotels</div>
+                        <div class='metric-value'>{unique_hotels:,}</div>
+                    </div>
+                """, unsafe_allow_html=True)
 
-            with col4:
-                if "Hotel Name" in df_all.columns:
-                    unique_hotels = df_all["Hotel Name"].nunique()
-                    st.markdown(f"""
-                        <div class='metric-box'>
-                            <div class='metric-label'>Hotels</div>
-                            <div class='metric-value'>{unique_hotels:,}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
+        with col5:
+            if "Number of Rooms Night" in df_all.columns:
+                total_rooms = df_all["Number of Rooms Night"].sum()
+                st.markdown(f"""
+                    <div class='metric-box'>
+                        <div class='metric-label'>Room Nights</div>
+                        <div class='metric-value'>{total_rooms:,.0f}</div>
+                    </div>
+                """, unsafe_allow_html=True)
 
-            with col5:
-                if "Number of Rooms Night" in df_all.columns:
-                    total_rooms = df_all["Number of Rooms Night"].sum()
-                    st.markdown(f"""
-                        <div class='metric-box'>
-                            <div class='metric-label'>Room Nights</div>
-                            <div class='metric-value'>{total_rooms:,.0f}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
+        # ======================================
+        # SECONDARY METRICS (4 COLUMNS)
+        # ======================================
+        st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if "Company Code" in df_all.columns:
+                unique_company = df_all["Company Code"].nunique()
+                st.metric("Companies", f"{unique_company:,}")
 
-            # Secondary Metrics
-            st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
+        with col2:
+            if "Cost Center Pekerja" in df_all.columns:
+                unique_cost_center = df_all["Cost Center Pekerja"].nunique()
+                st.metric("Cost Centers", f"{unique_cost_center:,}")
+
+        with col3:
+            if "City" in df_all.columns:
+                unique_cities = df_all["City"].nunique()
+                st.metric("Cities", f"{unique_cities:,}")
+
+        with col4:
+            if "Country" in df_all.columns:
+                unique_countries = df_all["Country"].nunique()
+                st.metric("Countries", f"{unique_countries:,}")
+
+        # ======================================
+        # TRAVEL REQUEST ANALYSIS
+        # ======================================
+        if "Travel Request Number" in df_all.columns:
+            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-title'>Travel Request Analysis</div>", unsafe_allow_html=True)
             
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            # Card 1: Average Bookings per TR
+            with col1:
+                tr_bookings = df_all.groupby("Travel Request Number").size()
+                avg_booking = tr_bookings.mean()
+                max_booking = tr_bookings.max()
+                
+                st.markdown(f"""
+                    <div class='stats-card'>
+                        <div class='stats-label'>Avg Bookings</div>
+                        <div class='stats-number'>{avg_booking:.1f}</div>
+                        <div class='stats-detail'>Max: {max_booking}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            # Card 2: Average Nights per TR
+            with col2:
+                if "Number of Rooms Night" in df_all.columns:
+                    tr_rooms = df_all.groupby("Travel Request Number")["Number of Rooms Night"].sum()
+                    avg_rooms = tr_rooms.mean()
+                    max_rooms = tr_rooms.max()
+                    
+                    st.markdown(f"""
+                        <div class='stats-card'>
+                            <div class='stats-label'>Avg Nights</div>
+                            <div class='stats-number'>{avg_rooms:.1f}</div>
+                            <div class='stats-detail'>Max: {max_rooms:.0f}</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+            
+            # Card 3: Multi-Booking Percentage
+            with col3:
+                tr_with_multiple = (tr_bookings > 1).sum()
+                tr_single = (tr_bookings == 1).sum()
+                multi_percentage = (tr_with_multiple / len(tr_bookings) * 100)
+                
+                st.markdown(f"""
+                    <div class='stats-card'>
+                        <div class='stats-label'>Multi-Booking</div>
+                        <div class='stats-number'>{multi_percentage:.0f}%</div>
+                        <div class='stats-detail'>{tr_with_multiple:,} / {tr_single:,}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            # Card 4: Average Rate per Night
+            with col4:
+                if "Invoice Amount" in df_all.columns and "Number of Rooms Night" in df_all.columns:
+                    valid_rows = (df_all["Invoice Amount"].notna()) & \
+                                (df_all["Number of Rooms Night"].notna()) & \
+                                (df_all["Number of Rooms Night"] > 0)
+                    df_valid = df_all[valid_rows].copy()
+                    df_valid["Price Per Night"] = df_valid["Invoice Amount"] / df_valid["Number of Rooms Night"]
+                    
+                    avg_price = df_valid["Price Per Night"].mean()
+                    
+                    st.markdown(f"""
+                        <div class='stats-card'>
+                            <div class='stats-label'>Avg Rate</div>
+                            <div class='stats-number'>{avg_price/1000:.0f}k</div>
+                            <div class='stats-detail'>Per Night</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+            
+            # Card 5: Lead Time Analysis
+            with col5:
+                if "Issue Time" in df_all.columns and "Check in Date" in df_all.columns:
+                    df_lead = df_all[
+                        df_all["Issue Time"].notna() &
+                        df_all["Check in Date"].notna()
+                    ].copy()
+
+                    df_lead["Lead Time (Days)"] = (
+                        df_lead["Check in Date"].dt.normalize() -
+                        df_lead["Issue Time"].dt.normalize()
+                    ).dt.days
+
+                    lead_valid = df_lead[df_lead["Lead Time (Days)"] >= 0]
+                    avg_lead = lead_valid["Lead Time (Days)"].mean()
+                    last_minute_pct = (
+                        (lead_valid["Lead Time (Days)"] <= 2).sum() / len(lead_valid) * 100
+                        if len(lead_valid) > 0 else 0
+                    )
+
+                    st.markdown(f"""
+                        <div class='stats-card'>
+                            <div class='stats-label'>Lead Time</div>
+                            <div class='stats-number'>{avg_lead:.0f}</div>
+                            <div class='stats-detail'>{last_minute_pct:.0f}% last-minute</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+# BAGIAN 6
+# ======================================
+        # BOOKING HEATMAP
+        # ======================================
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>Insights</div>", unsafe_allow_html=True)
+
+        if "Issue Time" in df_all.columns:
+            df_heat = df_all[df_all["Issue Time"].notna()].copy()
+            df_heat["Issue Hour"] = df_heat["Issue Time"].dt.hour
+            df_heat["Issue Day"] = df_heat["Issue Time"].dt.day_name()
+
+            day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+            pivot_issue = (
+                df_heat
+                .groupby(["Issue Day", "Issue Hour"])
+                .size()
+                .reset_index(name="Total")
+                .pivot(index="Issue Day", columns="Issue Hour", values="Total")
+                .reindex(day_order)
+                .fillna(0)
+            )
+
+            fig_heat = px.imshow(
+                pivot_issue,
+                text_auto=True,
+                color_continuous_scale=["#ffffff", "#ddd", "#9c5789"],
+                aspect="auto",
+                labels=dict(x="Hour", y="Day", color="Bookings")
+            )
+
+            fig_heat.update_layout(
+                height=380,
+                title="Booking Heatmap by Day & Hour",
+                xaxis_title="Hour of Day",
+                yaxis_title="Day of Week",
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+                margin=dict(l=40, r=20, t=50, b=40),
+                font=dict(size=11)
+            )
+
+            st.plotly_chart(fig_heat, use_container_width=True)
+
+        st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
+
+        # ======================================
+        # TWO COLUMNS: CHARTS & TRENDS
+        # ======================================
+        col1, col2 = st.columns(2)
+
+        # ======================================
+        # COLUMN 1: TOP DIRECTORATES & TR TREND
+        # ======================================
+        with col1:
+            # Top 10 Directorates Chart
+            if "Direktorat Pekerja" in df_all.columns and "Travel Request Number" in df_all.columns:
+                top_dir = (
+                    df_all.groupby("Direktorat Pekerja")["Travel Request Number"]
+                    .nunique()
+                    .sort_values(ascending=False)
+                    .head(10)
+                    .reset_index(name="Travel Requests")
+                )
+
+                fig_dir = px.bar(
+                    top_dir,
+                    x="Travel Requests",
+                    y="Direktorat Pekerja",
+                    orientation="h",
+                    text="Travel Requests"
+                )
+
+                fig_dir.update_traces(
+                    marker_color="#9c5789",
+                    texttemplate="%{text:,}",
+                    textposition="outside",
+                    textfont=dict(size=11)
+                )
+
+                fig_dir.update_layout(
+                    height=380,
+                    title="Top 10 Directorates by Travel Requests",
+                    xaxis_title="Number of Travel Requests",
+                    yaxis_title="",
+                    yaxis=dict(autorange="reversed"),
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    margin=dict(l=10, r=40, t=50, b=10),
+                    showlegend=False
+                )
+
+                st.plotly_chart(fig_dir, use_container_width=True)
+
+            # ================================
+            # MONTHLY TREND — TRAVEL REQUEST
+            # ================================
+            st.markdown("<div style='height:25px;'></div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-title'>Monthly Trend — Travel Requests</div>", unsafe_allow_html=True)
+
+            if "Issue Time" in df_all.columns and "Travel Request Number" in df_all.columns:
+
+                trend_df = prepare_monthly_trend(
+                    df_all,
+                    date_col="Issue Time",
+                    value_col="Travel Request Number",
+                    agg="nunique"
+                )
+
+                fig_trend = px.line(
+                    trend_df,
+                    x="YearMonth",
+                    y="Value",
+                    markers=True,
+                    labels={"Value": "Unique Travel Requests", "YearMonth": "Month"}
+                )
+
+                fig_trend.update_traces(
+                    line=dict(color="#9c5789", width=3), 
+                    marker=dict(size=8, color="#9c5789")
+                )
+                
+                fig_trend.update_layout(
+                    height=380,
+                    title="Monthly Travel Request Trend",
+                    xaxis_title="",
+                    yaxis_title="Travel Requests",
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    margin=dict(l=40, r=20, t=50, b=40),
+                    hovermode="x unified"
+                )
+
+                st.plotly_chart(fig_trend, use_container_width=True)
+
+        # ======================================
+        # COLUMN 2: MARKET DISTRIBUTION & ROOM NIGHTS TREND
+        # ======================================
+        with col2:
+            # Market Distribution (Domestic vs International)
+            if "Country" in df_all.columns:
+                df_all["Country"] = df_all["Country"].astype(str).str.strip().str.upper()
+
+                indo = df_all[df_all["Country"] == "INDONESIA"].shape[0]
+                intl = df_all[df_all["Country"] != "INDONESIA"].shape[0]
+
+                pie_df = pd.DataFrame({
+                    "Market": ["Domestic", "International"],
+                    "Bookings": [indo, intl]
+                })
+
+                fig_pie = px.pie(
+                    pie_df,
+                    names="Market",
+                    values="Bookings",
+                    hole=0.5,
+                    color_discrete_sequence=["#9c5789", "#cccccc"]
+                )
+
+                fig_pie.update_traces(
+                    textinfo="percent+label", 
+                    textfont=dict(size=12),
+                    marker=dict(line=dict(color='white', width=2))
+                )
+
+                total = pie_df["Bookings"].sum()
+
+                fig_pie.update_layout(
+                    height=380,
+                    title="Market Distribution (Domestic vs International)",
+                    showlegend=True,
+                    legend=dict(
+                        orientation="h", 
+                        yanchor="bottom", 
+                        y=-0.15, 
+                        xanchor="center", 
+                        x=0.5
+                    ),
+                    margin=dict(l=10, r=30, t=50, b=10),
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    annotations=[
+                        dict(
+                            text=f"<b>{total:,}</b><br>Total", 
+                            x=0.5, 
+                            y=0.5, 
+                            font=dict(size=16), 
+                            showarrow=False
+                        )
+                    ]
+                )
+
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            # ================================
+            # MONTHLY TREND — ROOM NIGHTS
+            # ================================
+            st.markdown("<div style='height:25px;'></div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-title'>Monthly Trend — Room Nights</div>", unsafe_allow_html=True)
+
+            if "Issue Time" in df_all.columns and "Number of Rooms Night" in df_all.columns:
+
+                trend_df = prepare_monthly_trend(
+                    df_all,
+                    date_col="Issue Time",
+                    value_col="Number of Rooms Night",
+                    agg="sum"
+                )
+
+                fig_trend = px.line(
+                    trend_df,
+                    x="YearMonth",
+                    y="Value",
+                    markers=True,
+                    labels={"Value": "Total Room Nights", "YearMonth": "Month"}
+                )
+
+                fig_trend.update_traces(
+                    line=dict(color="#9c5789", width=3), 
+                    marker=dict(size=8, color="#9c5789")
+                )
+                
+                fig_trend.update_layout(
+                    height=380,
+                    title="Monthly Room Nights Trend",
+                    xaxis_title="",
+                    yaxis_title="Room Nights",
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    margin=dict(l=40, r=20, t=50, b=40),
+                    hovermode="x unified"
+                )
+
+                st.plotly_chart(fig_trend, use_container_width=True)
+
+            else:
+                st.info("Column 'Issue Time' or 'Number of Rooms Night' not available.")
+
+# BAGIAN 7
+# ======================================
+    # TAB 2: EXPLORER
+    # ======================================
+    with tab2:
+        st.markdown("<div class='section-title'>Data Explorer</div>", unsafe_allow_html=True)
+        
+        # Filter Options
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if "Country" in df_all.columns:
+                countries = ["All"] + sorted(df_all["Country"].dropna().unique().tolist())
+                selected_country = st.selectbox("Country", countries)
+        
+        with col2:
+            if "City" in df_all.columns:
+                cities = ["All"] + sorted(df_all["City"].dropna().unique().tolist())
+                selected_city = st.selectbox("City", cities)
+        
+        with col3:
+            if "Company Code" in df_all.columns:
+                companies = ["All"] + sorted(df_all["Company Code"].dropna().unique().tolist())
+                selected_company = st.selectbox("Company Code", companies)
+        
+        # Apply Filters
+        df_filtered = df_all.copy()
+        
+        if selected_country != "All":
+            df_filtered = df_filtered[df_filtered["Country"] == selected_country]
+        
+        if selected_city != "All":
+            df_filtered = df_filtered[df_filtered["City"] == selected_city]
+        
+        if selected_company != "All":
+            df_filtered = df_filtered[df_filtered["Company Code"] == selected_company]
+        
+        # Display filtered data
+        st.markdown(f"**Showing {len(df_filtered):,} records**")
+        st.dataframe(df_filtered, use_container_width=True, height=500)
+        
+    # ======================================
+    # TAB 3: ANALYTICS
+    # ======================================
+    with tab3:
+        st.markdown("<div class='section-title'>Advanced Analytics</div>", unsafe_allow_html=True)
+        
+        # Top Hotels Analysis
+        st.markdown("### Top Hotels by Bookings")
+        
+        if "Hotel Name" in df_all.columns:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                top_n = st.slider("Number of hotels to display", 5, 50, 20)
+            
+            top_hotels = (
+                df_all.groupby("Hotel Name")
+                .agg({
+                    "Travel Request Number": "nunique",
+                    "Number of Rooms Night": "sum",
+                    "Invoice Amount": "sum"
+                })
+                .rename(columns={
+                    "Travel Request Number": "Travel Requests",
+                    "Number of Rooms Night": "Room Nights",
+                    "Invoice Amount": "Total Revenue"
+                })
+                .sort_values("Travel Requests", ascending=False)
+                .head(top_n)
+                .reset_index()
+            )
+            
+            # Format currency
+            if "Total Revenue" in top_hotels.columns:
+                top_hotels["Total Revenue"] = top_hotels["Total Revenue"].apply(
+                    lambda x: f"${x:,.2f}" if pd.notna(x) else "N/A"
+                )
+            
+            st.dataframe(top_hotels, use_container_width=True, height=400)
+            
+            # Visualization
+            fig_hotels = px.bar(
+                top_hotels.head(15),
+                x="Travel Requests",
+                y="Hotel Name",
+                orientation="h",
+                text="Travel Requests",
+                title=f"Top 15 Hotels by Travel Requests"
+            )
+            
+            fig_hotels.update_traces(
+                marker_color="#9c5789",
+                texttemplate="%{text:,}",
+                textposition="outside"
+            )
+            
+            fig_hotels.update_layout(
+                height=500,
+                yaxis=dict(autorange="reversed"),
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+                showlegend=False
+            )
+            
+            st.plotly_chart(fig_hotels, use_container_width=True)
+        
+        # Cost Center Analysis
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+        st.markdown("### Cost Center Analysis")
+        
+        if "Cost Center Pekerja" in df_all.columns:
+            cost_center_stats = (
+                df_all.groupby("Cost Center Pekerja")
+                .agg({
+                    "Travel Request Number": "nunique",
+                    "Employee Id": "nunique",
+                    "Number of Rooms Night": "sum",
+                    "Invoice Amount": "sum"
+                })
+                .rename(columns={
+                    "Travel Request Number": "Travel Requests",
+                    "Employee Id": "Travelers",
+                    "Number of Rooms Night": "Room Nights",
+                    "Invoice Amount": "Total Spend"
+                })
+                .sort_values("Travel Requests", ascending=False)
+                .head(20)
+                .reset_index()
+            )
+            
+            st.dataframe(cost_center_stats, use_container_width=True, height=400)
+        
+    # ======================================
+    # TAB 4: ML MODELS
+    # ======================================
+    with tab4:
+        st.markdown("<div class='section-title'>Machine Learning Models</div>", unsafe_allow_html=True)
+        
+        # Clustering Analysis
+        st.markdown("### Hotel Clustering Analysis")
+        st.info("Cluster hotels based on booking patterns and characteristics")
+        
+        if st.button("Run K-Means Clustering", type="primary"):
+            
+            if "Hotel Name" in df_all.columns:
+                with st.spinner("Running clustering analysis..."):
+                    
+                    # Prepare data for clustering
+                    hotel_features = (
+                        df_all.groupby("Hotel Name")
+                        .agg({
+                            "Travel Request Number": "count",
+                            "Number of Rooms Night": "sum",
+                            "Invoice Amount": "mean"
+                        })
+                        .rename(columns={
+                            "Travel Request Number": "Bookings",
+                            "Number of Rooms Night": "Total_Nights",
+                            "Invoice Amount": "Avg_Price"
+                        })
+                    )
+                    
+                    # Remove NaN
+                    hotel_features = hotel_features.dropna()
+                    
+                    if len(hotel_features) > 5:
+                        # Scale features
+                        scaler = StandardScaler()
+                        features_scaled = scaler.fit_transform(hotel_features)
+                        
+                        # Run K-Means
+                        n_clusters = min(5, len(hotel_features))
+                        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                        hotel_features["Cluster"] = kmeans.fit_predict(features_scaled)
+                        
+                        # Visualization
+                        fig_cluster = px.scatter(
+                            hotel_features.reset_index(),
+                            x="Bookings",
+                            y="Avg_Price",
+                            color="Cluster",
+                            size="Total_Nights",
+                            hover_data=["Hotel Name"],
+                            title="Hotel Clusters (by Bookings & Average Price)",
+                            color_continuous_scale="Viridis"
+                        )
+                        
+                        fig_cluster.update_layout(
+                            height=500,
+                            plot_bgcolor="white",
+                            paper_bgcolor="white"
+                        )
+                        
+                        st.plotly_chart(fig_cluster, use_container_width=True)
+                        
+                        # Cluster summary
+                        st.markdown("### Cluster Summary")
+                        cluster_summary = hotel_features.groupby("Cluster").agg({
+                            "Bookings": ["mean", "count"],
+                            "Total_Nights": "mean",
+                            "Avg_Price": "mean"
+                        }).round(2)
+                        
+                        st.dataframe(cluster_summary, use_container_width=True)
+                    else:
+                        st.warning("Not enough data for clustering analysis")
+            else:
+                st.error("Hotel Name column not found")
+        
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+        st.markdown("### Price Prediction")
+        st.info("Feature coming soon - ML model for price prediction based on historical data")
+        
+    # ======================================
+    # TAB 5: FORECAST
+    # ======================================
+    with tab5:
+        st.markdown("<div class='section-title'>Demand Forecast</div>", unsafe_allow_html=True)
+        
+        if "Issue Time" in df_all.columns:
+            
+            # Prepare monthly data
+            forecast_data = prepare_monthly_trend(
+                df_all,
+                date_col="Issue Time",
+                value_col="Travel Request Number",
+                agg="nunique"
+            )
+            
+            st.markdown("### Historical Trend")
+            
+            fig_forecast = px.line(
+                forecast_data,
+                x="YearMonth",
+                y="Value",
+                markers=True,
+                labels={"Value": "Travel Requests", "YearMonth": "Month"}
+            )
+            
+            fig_forecast.update_traces(
+                line=dict(color="#9c5789", width=3),
+                marker=dict(size=8)
+            )
+            
+            fig_forecast.update_layout(
+                height=400,
+                title="Monthly Travel Request Trend",
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+                hovermode="x unified"
+            )
+            
+            st.plotly_chart(fig_forecast, use_container_width=True)
+            
+            # Simple statistics
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                if "Company Code" in df_all.columns:
-                    unique_company = df_all["Company Code"].nunique()
-                    st.metric("Companies", f"{unique_company:,}")
-
+                avg_monthly = forecast_data["Value"].mean()
+                st.metric("Avg Monthly Requests", f"{avg_monthly:.0f}")
+            
             with col2:
-                if "Cost Center Pekerja" in df_all.columns:
-                    unique_cost_center = df_all["Cost Center Pekerja"].nunique()
-                    st.metric("Cost Centers", f"{unique_cost_center:,}")
-
+                max_monthly = forecast_data["Value"].max()
+                st.metric("Peak Month", f"{max_monthly:.0f}")
+            
             with col3:
-                if "City" in df_all.columns:
-                    unique_cities = df_all["City"].nunique()
-                    st.metric("Cities", f"{unique_cities:,}")
-
+                min_monthly = forecast_data["Value"].min()
+                st.metric("Lowest Month", f"{min_monthly:.0f}")
+            
             with col4:
-                if "Country" in df_all.columns:
-                    unique_countries = df_all["Country"].nunique()
-                    st.metric("Countries", f"{unique_countries:,}")
-
-            # Travel Request Analysis
-            if "Travel Request Number" in df_all.columns:
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-                st.markdown("<div class='section-title'>Travel Request Analysis</div>", unsafe_allow_html=True)
+                std_monthly = forecast_data["Value"].std()
+                st.metric("Std Deviation", f"{std_monthly:.0f}")
+            
+            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+            
+            if TENSORFLOW_AVAILABLE:
+                st.markdown("### LSTM Forecast")
+                st.info("Advanced forecasting using LSTM neural networks - Feature in development")
                 
-                col1, col2, col3, col4, col5 = st.columns(5)
-                
-                with col1:
-                    tr_bookings = df_all.groupby("Travel Request Number").size()
-                    avg_booking = tr_bookings.mean()
-                    max_booking = tr_bookings.max()
-                    
-                    st.markdown(f"""
-                        <div class='stats-card'>
-                            <div class='stats-label'>Avg Bookings</div>
-                            <div class='stats-number'>{avg_booking:.1f}</div>
-                            <div class='stats-detail'>Max: {max_booking}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-                
-                with col2:
-                    if "Number of Rooms Night" in df_all.columns:
-                        tr_rooms = df_all.groupby("Travel Request Number")["Number of Rooms Night"].sum()
-                        avg_rooms = tr_rooms.mean()
-                        max_rooms = tr_rooms.max()
-                        
-                        st.markdown(f"""
-                            <div class='stats-card'>
-                                <div class='stats-label'>Avg Nights</div>
-                                <div class='stats-number'>{avg_rooms:.1f}</div>
-                                <div class='stats-detail'>Max: {max_rooms:.0f}</div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                
-                with col3:
-                    tr_with_multiple = (tr_bookings > 1).sum()
-                    tr_single = (tr_bookings == 1).sum()
-                    multi_percentage = (tr_with_multiple / len(tr_bookings) * 100)
-                    
-                    st.markdown(f"""
-                        <div class='stats-card'>
-                            <div class='stats-label'>Multi-Booking</div>
-                            <div class='stats-number'>{multi_percentage:.0f}%</div>
-                            <div class='stats-detail'>{tr_with_multiple:,} / {tr_single:,}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-                
-                with col4:
-                    if "Invoice Amount" in df_all.columns and "Number of Rooms Night" in df_all.columns:
-                        valid_rows = (df_all["Invoice Amount"].notna()) & \
-                                    (df_all["Number of Rooms Night"].notna()) & \
-                                    (df_all["Number of Rooms Night"] > 0)
-                        df_valid = df_all[valid_rows].copy()
-                        df_valid["Price Per Night"] = df_valid["Invoice Amount"] / df_valid["Number of Rooms Night"]
-                        
-                        avg_price = df_valid["Price Per Night"].mean()
-                        
-                        st.markdown(f"""
-                            <div class='stats-card'>
-                                <div class='stats-label'>Avg Rate</div>
-                                <div class='stats-number'>{avg_price/1000:.0f}k</div>
-                                <div class='stats-detail'>Per Night</div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                
-                with col5:
-                    date_cols = ["Issue Time", "Check in Date"]
-                    for col in date_cols:
-                        if col in df_all.columns:
-                            df_all[col] = pd.to_datetime(df_all[col], errors="coerce")
-
-                    if "Issue Time" in df_all.columns and "Check in Date" in df_all.columns:
-                        df_lead = df_all[
-                            df_all["Issue Time"].notna() &
-                            df_all["Check in Date"].notna()
-                        ].copy()
-
-                        df_lead["Lead Time (Days)"] = (
-                            df_lead["Check in Date"].dt.normalize() -
-                            df_lead["Issue Time"].dt.normalize()
-                        ).dt.days
-
-                        lead_valid = df_lead[df_lead["Lead Time (Days)"] >= 0]
-                        avg_lead = lead_valid["Lead Time (Days)"].mean()
-                        last_minute_pct = (
-                            (lead_valid["Lead Time (Days)"] <= 2).sum() / len(lead_valid) * 100
-                            if len(lead_valid) > 0 else 0
-                        )
-
-                        st.markdown(f"""
-                            <div class='stats-card'>
-                                <div class='stats-label'>Lead Time</div>
-                                <div class='stats-number'>{avg_lead:.0f}</div>
-                                <div class='stats-detail'>{last_minute_pct:.0f}% last-minute</div>
-                            </div>
-                        """, unsafe_allow_html=True)
-
-                # Visualizations
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-                st.markdown("<div class='section-title'>Insights</div>", unsafe_allow_html=True)
-
-                if "Issue Time" in df_all.columns:
-                    df_heat = df_all[df_all["Issue Time"].notna()].copy()
-                    df_heat["Issue Hour"] = df_heat["Issue Time"].dt.hour
-                    df_heat["Issue Day"] = df_heat["Issue Time"].dt.day_name()
-
-                    day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-                    pivot_issue = (
-                        df_heat
-                        .groupby(["Issue Day", "Issue Hour"])
-                        .size()
-                        .reset_index(name="Total")
-                        .pivot(index="Issue Day", columns="Issue Hour", values="Total")
-                        .reindex(day_order)
-                        .fillna(0)
-                    )
-
-                    fig_heat = px.imshow(
-                        pivot_issue,
-                        text_auto=True,
-                        color_continuous_scale=["#ffffff", "#ddd", "#9c5789"],
-                        aspect="auto"
-                    )
-
-                    fig_heat.update_layout(
-                        height=380,
-                        title="Booking Heatmap",
-                        xaxis_title="Hour",
-                        yaxis_title="Day",
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=40, r=20, t=50, b=40),
-                        font=dict(size=11)
-                    )
-
-                    st.plotly_chart(fig_heat, use_container_width=True)
-
-                st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                if "Direktorat Pekerja" in df_all.columns and "Travel Request Number" in df_all.columns:
-                    top_dir = (
-                        df_all.groupby("Direktorat Pekerja")["Travel Request Number"]
-                        .nunique()
-                        .sort_values(ascending=False)
-                        .head(10)
-                        .reset_index(name="Travel Requests")
-                    )
-
-                    fig_dir = px.bar(
-                        top_dir,
-                        x="Travel Requests",
-                        y="Direktorat Pekerja",
-                        orientation="h",
-                        text="Travel Requests"
-                    )
-
-                    fig_dir.update_traces(
-                        marker_color="#9c5789",
-                        texttemplate="%{text:,}",
-                        textposition="outside",
-                        textfont=dict(size=11)
-                    )
-
-                    fig_dir.update_layout(
-                        height=380,
-                        title="Top 10 Directorates",
-                        xaxis_title="",
-                        yaxis_title="",
-                        yaxis=dict(autorange="reversed"),
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=10, r=40, t=50, b=10),
-                        showlegend=False
-                    )
-
-                    st.plotly_chart(fig_dir, use_container_width=True)
-
-                    # ================================
-                    # MONTHLY TREND — TRAVEL REQUEST
-                    # ================================
-                    st.markdown("<div style='height:25px;'></div>", unsafe_allow_html=True)
-                    st.markdown("<div class='section-title'>Monthly Trend — Travel Request Number</div>", unsafe_allow_html=True)
-
-                    if "Issue Time" in df_all.columns and "Travel Request Number" in df_all.columns:
-
-                        trend_df = prepare_monthly_trend(
-                            df_all,
-                            date_col="Issue Time",
-                            value_col="Travel Request Number",
-                            agg="nunique"
-                        )
-
-                        fig_trend = px.line(
-                            trend_df,
-                            x="YearMonth",
-                            y="Value",
-                            markers=True,
-                            labels={"Value": "Unique Travel Requests", "YearMonth": "Month"}
-                        )
-
-                        fig_trend.update_traces(line=dict(color="#9c5789", width=3), marker=dict(size=7))
-                        fig_trend.update_layout(
-                            height=380,
-                            title="Monthly Travel Request Trend",
-                            plot_bgcolor="white",
-                            paper_bgcolor="white",
-                            margin=dict(l=40, r=20, t=50, b=40)
-                        )
-
-                        st.plotly_chart(fig_trend, use_container_width=True)
-
-            with col2:
-                if "Country" in df_all.columns:
-                    df_all["Country"] = df_all["Country"].astype(str).str.strip()
-
-                    indo = df_all[df_all["Country"] == "INDONESIA"].shape[0]
-                    intl = df_all[df_all["Country"] != "INDONESIA"].shape[0]
-
-                    pie_df = pd.DataFrame({
-                        "Market": ["Domestic", "International"],
-                        "Bookings": [indo, intl]
-                    })
-
-                    fig_pie = px.pie(
-                        pie_df,
-                        names="Market",
-                        values="Bookings",
-                        hole=0.5,
-                        color_discrete_sequence=["#9c5789", "#888888"]
-                    )
-
-                    fig_pie.update_traces(textinfo="percent+label", textfont=dict(size=12))
-
-                    total = pie_df["Bookings"].sum()
-
-                    fig_pie.update_layout(
-                        height=380,
-                        title="Market Distribution",
-                        showlegend=True,
-                        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5),
-                        margin=dict(l=10, r=30, t=50, b=10),
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        annotations=[dict(text=f"{total:,}", x=0.5, y=0.5, font=dict(size=16), showarrow=False)]
-                    )
-
-                    st.plotly_chart(fig_pie, use_container_width=True)
-
-                    # ================================
-                    # MONTHLY TREND — ROOM NIGHTS
-                    # ================================
-                    st.markdown("<div style='height:25px;'></div>", unsafe_allow_html=True)
-                    st.markdown("<div class='section-title'>Monthly Trend — Room Nights</div>", unsafe_allow_html=True)
-
-                    if "Issue Time" in df_all.columns and "Number of Rooms Night" in df_all.columns:
-
-                        trend_df = prepare_monthly_trend(
-                            df_all,
-                            date_col="Issue Time",
-                            value_col="Number of Rooms Night",
-                            agg="sum"
-                        )
-
-                        fig_trend = px.line(
-                            trend_df,
-                            x="YearMonth",
-                            y="Value",
-                            markers=True,
-                            labels={"Value": "Total Room Nights", "YearMonth": "Month"}
-                        )
-
-                        fig_trend.update_traces(line=dict(color="#9c5789", width=3), marker=dict(size=7))
-                        fig_trend.update_layout(
-                            height=380,
-                            title="Monthly Room Nights Trend",
-                            plot_bgcolor="white",
-                            paper_bgcolor="white",
-                            margin=dict(l=40, r=20, t=50, b=40)
-                        )
-
-                        st.plotly_chart(fig_trend, use_container_width=True)
-
-                    else:
-                        st.info("Kolom 'Issue Time' atau 'Number of Rooms Night' tidak tersedia.")
-                    
-
-    with tab2:
-        st.markdown("<div class='section-title'>Data Explorer</div>", unsafe_allow_html=True)
-        st.info("Coming soon")
+                if st.button("Generate Forecast", type="primary"):
+                    st.warning("LSTM forecasting will be available in the next update")
+            else:
+                st.warning("TensorFlow not available. Install TensorFlow for advanced forecasting features.")
+        else:
+            st.error("Issue Time column not found in dataset")
         
-    with tab3:
-        st.markdown("<div class='section-title'>Advanced Analytics</div>", unsafe_allow_html=True)
-        st.info("Coming soon")
-        
-    with tab4:
-        st.markdown("<div class='section-title'>Machine Learning</div>", unsafe_allow_html=True)
-        st.info("Coming soon")
-        
-    with tab5:
-        st.markdown("<div class='section-title'>Demand Forecast</div>", unsafe_allow_html=True)
-        st.info("Coming soon")
-        
+    # ======================================
+    # TAB 6: EXPORT
+    # ======================================
     with tab6:
         st.markdown("<div class='section-title'>Export Data</div>", unsafe_allow_html=True)
         
-        col1, col2 = st.columns(2)
+        st.markdown("""
+        Export your data in various formats for further analysis or reporting.
+        """)
+        
+        col1, col2, col3 = st.columns(3)
 
         with col1:
-            if st.button("Download CSV", use_container_width=True, type="primary"):
+            st.markdown("#### CSV Format")
+            st.markdown("Comma-separated values - Compatible with Excel, Google Sheets")
+            
+            if st.button("📥 Download CSV", use_container_width=True, type="primary"):
                 csv = df_all.to_csv(index=False).encode("utf-8")
                 st.download_button(
-                    "Click to Download",
+                    "⬇️ Click to Download CSV",
                     data=csv,
-                    file_name=f"data_{datetime.now().strftime('%Y%m%d')}.csv",
+                    file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv",
                     use_container_width=True
                 )
 
         with col2:
-            if st.button("Download Excel", use_container_width=True, type="primary"):
+            st.markdown("#### Excel Format")
+            st.markdown("Microsoft Excel workbook with formatting")
+            
+            if st.button("📥 Download Excel", use_container_width=True, type="primary"):
                 buffer = BytesIO()
                 with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-                    df_all.to_excel(writer, index=False, sheet_name="Data")
+                    df_all.to_excel(writer, index=False, sheet_name="Travel Data")
+                    
                 st.download_button(
-                    "Click to Download",
+                    "⬇️ Click to Download Excel",
                     data=buffer.getvalue(),
-                    file_name=f"data_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
+        
+        with col3:
+            st.markdown("#### JSON Format")
+            st.markdown("JavaScript Object Notation for APIs")
+            
+            if st.button("📥 Download JSON", use_container_width=True, type="primary"):
+                json_data = df_all.to_json(orient="records", date_format="iso")
+                st.download_button(
+                    "⬇️ Click to Download JSON",
+                    data=json_data,
+                    file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
+        
+        # Export Statistics
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+        st.markdown("### Export Statistics")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Records", f"{len(df_all):,}")
+        
+        with col2:
+            st.metric("Total Columns", f"{len(df_all.columns)}")
+        
+        with col3:
+            memory_usage = df_all.memory_usage(deep=True).sum() / 1024 / 1024
+            st.metric("Memory Usage", f"{memory_usage:.2f} MB")
+        
+        with col4:
+            st.metric("File Size (Est.)", f"{memory_usage * 0.8:.2f} MB")
+
+# ======================================
+# NO DATA MESSAGE
+# ======================================
+else:
+    st.info("👆 Please load data from Cloud/Drive or upload files to begin")
 
 # ======================================
 # FOOTER
@@ -1285,7 +1656,7 @@ st.markdown("""
     transition: color 0.2s ease;
 }
 .footer-link:hover {
-    color: #9c5789; /* ungu corporate MTRAX */
+    color: #9c5789;
 }
 </style>
 
@@ -1296,9 +1667,3 @@ st.markdown("""
     </a> · MTRAX Travel Analytics
 </div>
 """, unsafe_allow_html=True)
-
-
-
-
-
-
