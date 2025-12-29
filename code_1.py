@@ -1339,7 +1339,7 @@ if not df_all.empty:
                 .rename(columns={
                     "Travel Request Number": "Travel Requests",
                     "Number of Rooms Night": "Room Nights",
-                    "Invoice Amount": "Total Revenue"
+                    "Invoice Amount": "Total Spend"
                 })
                 .sort_values("Travel Requests", ascending=False)
                 .head(top_n)
@@ -1667,4 +1667,5 @@ st.markdown("""
     </a> · MTRAX Travel Analytics
 </div>
 """, unsafe_allow_html=True)
+
 
