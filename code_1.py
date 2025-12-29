@@ -238,7 +238,7 @@ if not st.session_state.authenticated:
 # ======================================
 st.set_page_config(
     page_title="MTRAX",
-    page_icon="✈️",
+    page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -1667,3 +1667,4 @@ st.markdown("""
     </a> · MTRAX Travel Analytics
 </div>
 """, unsafe_allow_html=True)
+
