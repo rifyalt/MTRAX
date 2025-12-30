@@ -598,7 +598,7 @@ def main_app():
             help="Choose which year's data to load"
         )
         
-        if st.button("Drive Data", use_container_width=True, type="primary"):
+        if st.button("Cloud/Drive Data", use_container_width=True, type="primary"):
             with st.spinner(f"Loading {selected_period} data..."):
                 progress_bar = st.progress(0)
                 try:
@@ -648,7 +648,7 @@ def main_app():
                     except Exception as e:
                         st.error(f"Error: {e}")
 
-#        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
         # Data status
         if st.session_state.data_loaded and not st.session_state.df_all.empty:
