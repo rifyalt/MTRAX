@@ -1211,7 +1211,103 @@ def main_app():
 
                 else:
                     st.info("Column 'Issue Time' or 'Number of Rooms Night' not available.")
+            # ======================================
+            # TOP 100 ANALYSIS BY ROOM NIGHTS
+            # ======================================
+            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-title'>Top 100 Analysis by Room Nights</div>", unsafe_allow_html=True)
+            
+            cols1, cols2 = st.columns(2)
+            
+            # -------------------------------
+            # COL 1 — Top 100 Hotel Name
+            # -------------------------------
+            with cols1:
+                if "Hotel Name" in df_all.columns and "Number of Rooms Night" in df_all.columns:
+                    top_hotels = (
+                        df_all.groupby("Hotel Name")["Number of Rooms Night"]
+                        .sum()
+                        .sort_values(ascending=False)
+                        .head(100)
+                        .reset_index()
+                    )
+            
+                    fig_hotels = px.bar(
+                        top_hotels,
+                        x="Number of Rooms Night",
+                        y="Hotel Name",
+                        orientation="h",
+                        text="Number of Rooms Night",
+                        title="Top 100 Hotels by Total Room Nights"
+                    )
+            
+                    fig_hotels.update_traces(
+                        texttemplate="%{text:,.0f}",
+                        textposition="outside",
+                        marker_color="#9c5789"
+                    )
+            
+                    fig_hotels.update_layout(
+                        height=900,
+                        yaxis=dict(autorange="reversed"),
+                        plot_bgcolor="white",
+                        paper_bgcolor="white",
+                        margin=dict(l=10, r=40, t=50, b=10),
+                        showlegend=False
+                    )
+            
+                    st.plotly_chart(fig_hotels, use_container_width=True)
+                else:
+                    st.warning("Kolom 'Hotel Name' atau 'Number of Rooms Night' tidak ditemukan.")
+            
+            # -------------------------------
+            # COL 2 — Top 100 City
+            # -------------------------------
+            with cols2:
+                city_col = None
+                for c in ["City", "City Destination"]:
+                    if c in df_all.columns:
+                        city_col = c
+                        break
+            
+                if city_col and "Number of Rooms Night" in df_all.columns:
+                    top_cities = (
+                        df_all.groupby(city_col)["Number of Rooms Night"]
+                        .sum()
+                        .sort_values(ascending=False)
+                        .head(100)
+                        .reset_index()
+                    )
+            
+                    fig_cities = px.bar(
+                        top_cities,
+                        x="Number of Rooms Night",
+                        y=city_col,
+                        orientation="h",
+                        text="Number of Rooms Night",
+                        title="Top 100 Cities by Total Room Nights"
+                    )
+            
+                    fig_cities.update_traces(
+                        texttemplate="%{text:,.0f}",
+                        textposition="outside",
+                        marker_color="#9c5789"
+                    )
+            
+                    fig_cities.update_layout(
+                        height=900,
+                        yaxis=dict(autorange="reversed"),
+                        plot_bgcolor="white",
+                        paper_bgcolor="white",
+                        margin=dict(l=10, r=40, t=50, b=10),
+                        showlegend=False
+                    )
+            
+                    st.plotly_chart(fig_cities, use_container_width=True)
+                else:
+                    st.warning("Kolom City / City Destination atau Number of Rooms Night tidak ditemukan.")
 
+        
         # ======================================
         # TAB 2: EXPLORER
         # ======================================
@@ -1563,3 +1659,4 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
+
