@@ -956,10 +956,10 @@ def main_app():
             "2205": "PT Kilang Pertamina Balikpapan",
             "2222": "PT Pertamina Patra Niaga",
             "5000": "PT Pertamina Hulu Energi",
-            "2060": "Integrated Marine Logistics Subholding",
-            "2062": "Integrated Marine Logistics Subholding",
+            "2060": "PT Pertamina Marine Solutions",
+            "2062": "PT Pertamina Marine Engineering",
             "2110": "PT Pertamina Drilling Services Indonesia ",
-            "2052":"PT Pertamina Maintenance and Construction",
+            "2052": "PT Pertamina Maintenance and Construction",
         }
 
         if "Company Code" in df_all.columns:
