@@ -22,6 +22,9 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
 import gdown
 import xml.etree.ElementTree as ET
 
@@ -55,22 +58,219 @@ def get_greeting():
 
     return greet, now
 
+
 @st.cache_data(show_spinner=False)
 def load_drive_data(folder_id, drop_cols):
     shutil.rmtree("data_temp", ignore_errors=True)
     os.makedirs("data_temp", exist_ok=True)
 
-    gdown.download_folder(id=folder_id, output="data_temp", quiet=True, use_cookies=False)
+    gdown.download_folder(
+        id=folder_id,
+        output="data_temp",
+        quiet=True,
+        use_cookies=False
+    )
 
-    files = [f for f in os.listdir("data_temp") if f.endswith((".xlsx", ".xls"))]
+    files = [
+        f for f in os.listdir("data_temp")
+        if f.endswith((".xlsx", ".xls"))
+    ]
+
     dfs = []
 
     for f in files:
         df = pd.read_excel(os.path.join("data_temp", f))
-        df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
+
+        # drop kolom tidak perlu
+        df = df.drop(
+            columns=[c for c in drop_cols if c in df.columns],
+            errors="ignore"
+        )
+
+        # 🔹 TRIM & CLEAN STRING DATA
+        df = trim_string_columns(df)
+
         dfs.append(df)
 
+    if not dfs:
+        return pd.DataFrame()
+
     return pd.concat(dfs, ignore_index=True)
+
+#==========================#
+# FUNGSI AUTO-CANONICAL MAPPING
+#==========================#
+def auto_canonical_hotel_mapping(
+    df,
+    hotel_col="Hotel Name",
+    threshold=0.88
+):
+    """
+    Membuat canonical mapping hotel otomatis berbasis text similarity
+    Output:
+    - df dengan kolom tambahan: Canonical Hotel Name
+    - mapping dataframe (raw → canonical)
+    """
+
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    hotel_series = (
+        df[hotel_col]
+        .dropna()
+        .astype(str)
+        .str.lower()
+        .str.replace(r"[^a-z0-9 ]", "", regex=True)
+        .str.strip()
+        .drop_duplicates()
+    )
+
+    hotel_names = hotel_series.tolist()
+
+    if len(hotel_names) < 2:
+        df["Canonical Hotel Name"] = df[hotel_col]
+        return df, pd.DataFrame()
+
+    vectorizer = TfidfVectorizer(
+        analyzer="char_wb",
+        ngram_range=(3, 5)
+    )
+
+    tfidf = vectorizer.fit_transform(hotel_names)
+    similarity = cosine_similarity(tfidf)
+
+    clusters = {}
+    visited = set()
+
+    for i, name in enumerate(hotel_names):
+        if i in visited:
+            continue
+
+        group = [name]
+        visited.add(i)
+
+        for j in range(i + 1, len(hotel_names)):
+            if similarity[i, j] >= threshold:
+                group.append(hotel_names[j])
+                visited.add(j)
+
+        # canonical = nama terpanjang
+        canonical = max(group, key=len)
+        for g in group:
+            clusters[g] = canonical
+
+    mapping_df = pd.DataFrame(
+        clusters.items(),
+        columns=["Hotel Name Clean", "Canonical Hotel Name"]
+    )
+
+    # merge ke df awal
+    df_out = df.copy()
+    df_out["_hotel_clean"] = (
+        df_out[hotel_col]
+        .astype(str)
+        .str.lower()
+        .str.replace(r"[^a-z0-9 ]", "", regex=True)
+        .str.strip()
+    )
+
+    df_out = df_out.merge(
+        mapping_df,
+        left_on="_hotel_clean",
+        right_on="Hotel Name Clean",
+        how="left"
+    )
+
+    df_out["Canonical Hotel Name"] = (
+        df_out["Canonical Hotel Name"]
+        .fillna(df_out[hotel_col])
+    )
+
+    df_out.drop(columns=["_hotel_clean", "Hotel Name Clean"], inplace=True)
+
+    return df_out, mapping_df
+
+
+
+#==========================#    
+# TEXT SIMILARITY
+#==========================#
+def hotel_name_similarity(df, text_col="Hotel Name", threshold=0.75):
+    df_text = (
+        df[[text_col]]
+        .dropna()
+        .drop_duplicates()
+        .copy()
+    )
+
+    df_text[text_col] = (
+        df_text[text_col]
+        .astype(str)
+        .str.lower()
+        .str.replace(r"[^a-z0-9 ]", "", regex=True)
+        .str.strip()
+    )
+
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    vectorizer = TfidfVectorizer(
+        analyzer="char_wb",
+        ngram_range=(3, 5)
+    )
+
+    tfidf_matrix = vectorizer.fit_transform(df_text[text_col])
+    similarity_matrix = cosine_similarity(tfidf_matrix)
+
+    results = []
+    names = df_text[text_col].tolist()
+
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            score = similarity_matrix[i, j]
+            if score >= threshold:
+                results.append({
+                    "Hotel Name A": names[i],
+                    "Hotel Name B": names[j],
+                    "Similarity Score": round(score, 3)
+                })
+
+    result_df = pd.DataFrame(results)
+
+    if not result_df.empty:
+        result_df["Level"] = pd.cut(
+            result_df["Similarity Score"],
+            bins=[0.7, 0.8, 0.9, 1.0],
+            labels=["Medium", "High", "Very High"]
+        ).astype(str)
+
+        result_df = result_df.sort_values(
+            by="Similarity Score",
+            ascending=False
+        )
+
+    return result_df
+
+def trim_string_columns(df):
+    """
+    Membersihkan semua kolom bertipe object (string):
+    - strip spasi depan & belakang
+    - hapus spasi ganda di tengah
+    """
+    df_clean = df.copy()
+
+    for col in df_clean.select_dtypes(include=["object"]).columns:
+        df_clean[col] = (
+            df_clean[col]
+            .astype(str)
+            .str.strip()
+            .str.replace(r"\s+", " ", regex=True)
+        )
+
+        # kembalikan NaN asli (bukan string 'nan')
+        df_clean[col] = df_clean[col].replace("nan", np.nan)
+
+    return df_clean
 
 # ===============================
 # SESSION STATE INIT
@@ -106,7 +306,7 @@ def hash_password(password: str) -> str:
 USERS = {
     "admin": {"password": hash_password("admin123"), "role": "Admin"},
     "ssc": {"password": hash_password("ssc123"), "role": "Analyst"},
-    "viewer": {"password": hash_password("viewer123"), "role": "Viewer"},
+    "dtm": {"password": hash_password("dtm123"), "role": "Viewer"},
 }
 
 # ======================================
@@ -598,7 +798,7 @@ def main_app():
             help="Choose which year's data to load"
         )
         
-        if st.button("Cloud/Drive Data", use_container_width=True, type="primary"):
+        if st.button("Get Data", use_container_width=True, type="primary"):
             with st.spinner(f"Loading {selected_period} data..."):
                 progress_bar = st.progress(0)
                 try:
@@ -738,6 +938,44 @@ def main_app():
         if "Issue Time" in df_all.columns:
             df_all["Issue Time"] = pd.to_datetime(df_all["Issue Time"], errors="coerce")
 
+            # Mapping Company Code -> Nama Perusahaan
+        company_map = {
+            "1010": "PT Pertamina (Persero)",
+            "2022": "PT Pertamina Geothermal Energy",
+            "2033": "PT Pertamina Trans Kontinental",
+            "2034": "PT Pelita Air Service",
+            "2042": "PT Pertamina Retail",
+            "2059": "PT Pertamina Port And Logistics",
+            "2061": "PT Pertamina Energy Terminal",
+            "2119": "PT Nusantara Regas",
+            "2138": "PT Pertamina Lubricants",
+            "2147": "PT Pertamina International Shipping",
+            "2151": "PT Pertamina International EP",
+            "2183": "PT Pertamina Power Indonesia",
+            "2186": "PT Kilang Pertamina International",
+            "2205": "PT Kilang Pertamina Balikpapan",
+            "2222": "PT Pertamina Patra Niaga",
+            "5000": "PT Pertamina Hulu Energi",
+        }
+
+        if "Company Code" in df_all.columns:
+            df_all["Company Code"] = df_all["Company Code"].astype(str).str.strip()
+            df_all["Nama Perusahaan"] = df_all["Company Code"].map(company_map).fillna("Lainnya / Unknown")
+
+        # ======================================
+        # AUTO-NORMALISASI
+        # ======================================
+
+            df_all, hotel_mapping = auto_canonical_hotel_mapping(
+                df_all,
+                hotel_col="Hotel Name",
+                threshold=0.88
+            )
+
+        # ======================================
+        # TAB SEMUA
+        # ======================================
+
         # Tabs
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "Dashboard", "Explorer", "Analytics", "ML Models", "Forecast", "Export"
@@ -747,13 +985,44 @@ def main_app():
         # TAB 1: DASHBOARD
         # ======================================
         with tab1:
+
+        # ======================================
+        # FILTER OVERVIEW — NAMA PERUSAHAAN
+        # ======================================
+            company_col = "Nama Perusahaan"
+
+            if company_col in df_all.columns:
+                company_list = (
+                    df_all[company_col]
+                    .dropna()
+                    .astype(str)
+                    .sort_values()
+                    .unique()
+                    .tolist()
+                )
+
+                selected_company = st.selectbox(
+                    "Filter Overview berdasarkan Nama Perusahaan",
+                    options=["All"] + company_list,
+                    index=0
+                )
+
+                if selected_company != "All":
+                    df_overview = df_all[df_all[company_col] == selected_company]
+                else:
+                    df_overview = df_all.copy()
+            else:
+                st.warning("Kolom 'Nama Perusahaan' tidak ditemukan.")
+                df_overview = df_all.copy()
+
+
             st.markdown("<div class='section-title'>Overview</div>", unsafe_allow_html=True)
             
             # Primary Metrics
             col1, col2, col3, col4, col5 = st.columns(5)
 
             with col1:
-                total_rows = len(df_all)
+                total_rows = len(df_overview)
                 st.markdown(f"""
                     <div class='metric-box'>
                         <div class='metric-label'>Bookings</div>
@@ -762,7 +1031,7 @@ def main_app():
                 """, unsafe_allow_html=True)
 
             with col2:
-                if "Travel Request Number" in df_all.columns:
+                if "Travel Request Number" in df_overview.columns:
                     unique_tr = df_all["Travel Request Number"].nunique()
                     st.markdown(f"""
                         <div class='metric-box'>
@@ -772,8 +1041,8 @@ def main_app():
                     """, unsafe_allow_html=True)
 
             with col3:
-                if "Employee Id" in df_all.columns:
-                    unique_travelers = df_all["Employee Id"].nunique()
+                if "Employee Id" in df_overview.columns:
+                    unique_travelers = df_overview["Employee Id"].nunique()
                     st.markdown(f"""
                         <div class='metric-box'>
                             <div class='metric-label'>Travelers</div>
@@ -782,8 +1051,8 @@ def main_app():
                     """, unsafe_allow_html=True)
 
             with col4:
-                if "Hotel Name" in df_all.columns:
-                    unique_hotels = df_all["Hotel Name"].nunique()
+                if "Hotel Name" in df_overview.columns:
+                    unique_hotels = df_overview["Hotel Name"].nunique()
                     st.markdown(f"""
                         <div class='metric-box'>
                             <div class='metric-label'>Hotels</div>
@@ -792,8 +1061,8 @@ def main_app():
                     """, unsafe_allow_html=True)
 
             with col5:
-                if "Number of Rooms Night" in df_all.columns:
-                    total_nights = df_all["Number of Rooms Night"].sum()
+                if "Number of Rooms Night" in df_overview.columns:
+                    total_nights = df_overview["Number of Rooms Night"].sum()
                     st.markdown(f"""
                         <div class='metric-box'>
                             <div class='metric-label'>Room Nights</div>
@@ -807,34 +1076,34 @@ def main_app():
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                if "Company Code" in df_all.columns:
-                    unique_company = df_all["Company Code"].nunique()
+                if "Company Code" in df_overview.columns:
+                    unique_company = df_overview["Company Code"].nunique()
                     st.metric("Companies", f"{unique_company:,}")
 
             with col2:
-                if "Cost Center Pekerja" in df_all.columns:
-                    unique_cc = df_all["Cost Center Pekerja"].nunique()
+                if "Cost Center Pekerja" in df_overview.columns:
+                    unique_cc = df_overview["Cost Center Pekerja"].nunique()
                     st.metric("Cost Centers", f"{unique_cc:,}")
 
             with col3:
-                if "City" in df_all.columns:
+                if "City" in df_overview.columns:
                     unique_cities = df_all["City"].nunique()
                     st.metric("Cities", f"{unique_cities:,}")
 
             with col4:
-                if "Country" in df_all.columns:
+                if "Country" in df_overview.columns:
                     unique_countries = df_all["Country"].nunique()
                     st.metric("Countries", f"{unique_countries:,}")
 
             # Travel Request Analysis
-            if "Travel Request Number" in df_all.columns:
+            if "Travel Request Number" in df_overview.columns:
                 st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
                 st.markdown("<div class='section-title'>Travel Request Analysis</div>", unsafe_allow_html=True)
                 
                 col1, col2, col3, col4, col5 = st.columns(5)
                 
                 with col1:
-                    tr_bookings = df_all.groupby("Travel Request Number").size()
+                    tr_bookings = df_overview.groupby("Travel Request Number").size()
                     avg_booking = tr_bookings.mean()
                     max_booking = tr_bookings.max()
                     
@@ -847,8 +1116,8 @@ def main_app():
                     """, unsafe_allow_html=True)
                 
                 with col2:
-                    if "Number of Rooms Night" in df_all.columns:
-                        tr_nights = df_all.groupby("Travel Request Number")["Number of Rooms Night"].sum()
+                    if "Number of Rooms Night" in df_overview.columns:
+                        tr_nights = df_overview.groupby("Travel Request Number")["Number of Rooms Night"].sum()
                         avg_nights = tr_nights.mean()
                         max_nights = tr_nights.max()
                         
@@ -874,11 +1143,11 @@ def main_app():
                     """, unsafe_allow_html=True)
                 
                 with col4:
-                    if "Invoice Amount" in df_all.columns and "Number of Rooms Night" in df_all.columns:
-                        valid_rows = (df_all["Invoice Amount"].notna()) & \
-                                    (df_all["Number of Rooms Night"].notna()) & \
-                                    (df_all["Number of Rooms Night"] > 0)
-                        df_valid = df_all[valid_rows].copy()
+                    if "Invoice Amount" in df_overview.columns and "Number of Rooms Night" in df_overview.columns:
+                        valid_rows = (df_overview["Invoice Amount"].notna()) & \
+                                    (df_overview["Number of Rooms Night"].notna()) & \
+                                    (df_overview["Number of Rooms Night"] > 0)
+                        df_valid = df_overview[valid_rows].copy()
                         df_valid["Price Per Night"] = df_valid["Invoice Amount"] / df_valid["Number of Rooms Night"]
                         
                         avg_price = df_valid["Price Per Night"].mean()
@@ -894,13 +1163,13 @@ def main_app():
                 with col5:
                     date_cols = ["Issue Time", "Check in Date"]
                     for col in date_cols:
-                        if col in df_all.columns:
-                            df_all[col] = pd.to_datetime(df_all[col], errors="coerce")
+                        if col in df_overview.columns:
+                            df_overview[col] = pd.to_datetime(df_overview[col], errors="coerce")
 
                     if "Issue Time" in df_all.columns and "Check in Date" in df_all.columns:
-                        df_lead = df_all[
-                            df_all["Issue Time"].notna() &
-                            df_all["Check in Date"].notna()
+                        df_lead = df_overview[
+                            df_overview["Issue Time"].notna() &
+                            df_overview["Check in Date"].notna()
                         ].copy()
 
                         df_lead["Lead Time (Days)"] = (
@@ -923,54 +1192,100 @@ def main_app():
                             </div>
                         """, unsafe_allow_html=True)
 
-            # Visualizations
-            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-            st.markdown("<div class='section-title'>Insights</div>", unsafe_allow_html=True)
+            if "Issue Time" in df_overview.columns and "Travel Request Number" in df_overview.columns:
+                df_heat = df_overview[
+                    df_overview["Issue Time"].notna() &
+                    df_overview["Travel Request Number"].notna()
+                ].copy()
 
-            if "Issue Time" in df_all.columns:
-                df_heat = df_all[df_all["Issue Time"].notna()].copy()
                 df_heat["Issue Hour"] = df_heat["Issue Time"].dt.hour
                 df_heat["Issue Day"] = df_heat["Issue Time"].dt.day_name()
 
                 day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-                pivot_issue = (
+                # =========================
+                # CORE HEATMAP (COLOR)
+                # =========================
+                pivot_core = (
                     df_heat
-                    .groupby(["Issue Day", "Issue Hour"])
-                    .size()
-                    .reset_index(name="Total")
-                    .pivot(index="Issue Day", columns="Issue Hour", values="Total")
+                    .groupby(["Issue Day", "Issue Hour"])["Travel Request Number"]
+                    .nunique()
+                    .reset_index(name="TR_Count")
+                    .pivot(index="Issue Day", columns="Issue Hour", values="TR_Count")
                     .reindex(day_order)
                     .fillna(0)
                 )
 
-                fig_heat = px.imshow(
-                    pivot_issue,
+                # TOTAL
+                total_day = pivot_core.sum(axis=1)
+                total_hour = pivot_core.sum(axis=0)
+                grand_total = total_day.sum()
+
+                fig = px.imshow(
+                    pivot_core,
                     text_auto=True,
-                    color_continuous_scale=["#ffffff", "#ddd", "#9c5789"],
-                    aspect="auto"
+                    aspect="auto",
+                    color_continuous_scale=["#ffffff", "#ddd", "#9c5789"]
                 )
 
-                fig_heat.update_layout(
-                    height=380,
-                    title="Booking Heatmap",
-                    xaxis_title="Hour",
-                    yaxis_title="Day",
+                # =========================
+                # ANNOTATION TOTAL (NO COLOR)
+                # =========================
+                annotations = []
+
+                # Total per Hari (kanan)
+                for i, day in enumerate(pivot_core.index):
+                    annotations.append(dict(
+                        x=len(pivot_core.columns),
+                        y=i,
+                        text=f"<b>{int(total_day.loc[day])}</b>",
+                        showarrow=False,
+                        font=dict(color="black", size=12)
+                    ))
+
+                # Total per Jam (bawah)
+                for j, hour in enumerate(pivot_core.columns):
+                    annotations.append(dict(
+                        x=j,
+                        y=len(pivot_core.index),
+                        text=f"<b>{int(total_hour.loc[hour])}</b>",
+                        showarrow=False,
+                        font=dict(color="black", size=12)
+                    ))
+
+                # Grand Total (pojok kanan bawah)
+                annotations.append(dict(
+                    x=len(pivot_core.columns),
+                    y=len(pivot_core.index),
+                    text=f"<b>{int(grand_total)}</b>",
+                    showarrow=False,
+                    font=dict(color="black", size=13)
+                ))
+
+                fig.update_layout(
+                    title="Travel Request Heatmap (Issue Time)",
+                    xaxis_title="Issue Hour",
+                    yaxis_title="Issue Day",
+                    annotations=annotations,
+                    height=420,
                     plot_bgcolor="white",
                     paper_bgcolor="white",
-                    margin=dict(l=40, r=20, t=50, b=40),
+                    margin=dict(l=40, r=60, t=60, b=60),
                     font=dict(size=11)
                 )
 
-                st.plotly_chart(fig_heat, use_container_width=True)
+                # Tambah space axis untuk total
+                fig.update_xaxes(range=[-0.5, len(pivot_core.columns) + 0.5])
+                fig.update_yaxes(range=[len(pivot_core.index) + 0.5, -0.5])
 
-            st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True)
+
 
             col1, col2 = st.columns(2)
 
             with col1:
-                if "City Destination" in df_all.columns:
-                    top_cities = df_all["City Destination"].value_counts().head(10)
+                if "City Destination" in df_overview.columns:
+                    top_cities = df_overview["City Destination"].value_counts().head(10)
 
                     fig_cities = px.bar(
                         x=top_cities.values,
@@ -1001,8 +1316,8 @@ def main_app():
                     st.plotly_chart(fig_cities, use_container_width=True)
 
             with col2:
-                if "Country Destination" in df_all.columns:
-                    top_countries = df_all["Country Destination"].value_counts().head(10)
+                if "Country Destination" in df_overview.columns:
+                    top_countries = df_overview["Country Destination"].value_counts().head(10)
 
                     fig_countries = px.pie(
                         values=top_countries.values,
@@ -1026,13 +1341,13 @@ def main_app():
             col1, col2 = st.columns(2)
 
             # ======================================
-            # COLUMN 1: TOP DIRECTORATES & TR TREND
+            # COLUMN 1: TOP COMPANY & TR TREND
             # ======================================
             with col1:
                 # Top 10 Directorates Chart
-                if "Direktorat Pekerja" in df_all.columns and "Travel Request Number" in df_all.columns:
+                if "Nama Perusahaan" in df_overview.columns and "Travel Request Number" in df_overview.columns:
                     top_dir = (
-                        df_all.groupby("Direktorat Pekerja")["Travel Request Number"]
+                        df_overview.groupby("Nama Perusahaan")["Travel Request Number"]
                         .nunique()
                         .sort_values(ascending=False)
                         .head(10)
@@ -1042,7 +1357,7 @@ def main_app():
                     fig_dir = px.bar(
                         top_dir,
                         x="Travel Requests",
-                        y="Direktorat Pekerja",
+                        y="Nama Perusahaan",
                         orientation="h",
                         text="Travel Requests"
                     )
@@ -1074,10 +1389,10 @@ def main_app():
                 st.markdown("<div style='height:25px;'></div>", unsafe_allow_html=True)
                 st.markdown("<div class='section-title'>Monthly Trend — Travel Requests</div>", unsafe_allow_html=True)
 
-                if "Issue Time" in df_all.columns and "Travel Request Number" in df_all.columns:
+                if "Issue Time" in df_overview.columns and "Travel Request Number" in df_overview.columns:
 
                     trend_df = prepare_monthly_trend(
-                        df_all,
+                        df_overview,
                         date_col="Issue Time",
                         value_col="Travel Request Number",
                         agg="nunique"
@@ -1108,17 +1423,33 @@ def main_app():
                     )
 
                     st.plotly_chart(fig_trend, use_container_width=True)
+                    
+                    # === DOWNLOAD MONTHLY TRAVEL REQUEST TREND ===
+                    output_tr_trend = BytesIO()
+                    trend_df.to_excel(
+                        output_tr_trend,
+                        index=False,
+                        sheet_name="Monthly Travel Request Trend"
+                    )
+                    output_tr_trend.seek(0)
+
+                    st.download_button(
+                        label="⬇️ Download Data (Excel)",
+                        data=output_tr_trend,
+                        file_name="monthly_travel_request_trend.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
             # ======================================
             # COLUMN 2: MARKET DISTRIBUTION & ROOM NIGHTS TREND
             # ======================================
             with col2:
                 # Market Distribution (Domestic vs International)
-                if "Country" in df_all.columns:
-                    df_all["Country"] = df_all["Country"].astype(str).str.strip().str.upper()
+                if "Country" in df_overview.columns:
+                    df_all["Country"] = df_overview["Country"].astype(str).str.strip().str.upper()
 
-                    indo = df_all[df_all["Country"] == "INDONESIA"].shape[0]
-                    intl = df_all[df_all["Country"] != "INDONESIA"].shape[0]
+                    indo = df_overview[df_overview["Country"] == "INDONESIA"].shape[0]
+                    intl = df_overview[df_overview["Country"] != "INDONESIA"].shape[0]
 
                     pie_df = pd.DataFrame({
                         "Market": ["Domestic", "International"],
@@ -1174,10 +1505,10 @@ def main_app():
                 st.markdown("<div style='height:25px;'></div>", unsafe_allow_html=True)
                 st.markdown("<div class='section-title'>Monthly Trend — Room Nights</div>", unsafe_allow_html=True)
 
-                if "Issue Time" in df_all.columns and "Number of Rooms Night" in df_all.columns:
+                if "Issue Time" in df_overview.columns and "Number of Rooms Night" in df_overview.columns:
 
                     trend_df = prepare_monthly_trend(
-                        df_all,
+                        df_overview,
                         date_col="Issue Time",
                         value_col="Number of Rooms Night",
                         agg="sum"
@@ -1209,8 +1540,38 @@ def main_app():
 
                     st.plotly_chart(fig_trend, use_container_width=True)
 
+                    # === DOWNLOAD MONTHLY ROOM NIGHTS TREND ===
+                    output_rn_trend = BytesIO()
+                    trend_df.to_excel(
+                        output_rn_trend,
+                        index=False,
+                        sheet_name="Monthly Room Nights Trend"
+                    )
+                    output_rn_trend.seek(0)
+
+                    st.download_button(
+                        label="⬇️ Download Data (Excel)",
+                        data=output_rn_trend,
+                        file_name="monthly_room_nights_trend.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
                 else:
                     st.info("Column 'Issue Time' or 'Number of Rooms Night' not available.")
+
+            # ======================================
+            # CITY NAME NORMALIZATION (PROPER CASE)
+            # ======================================
+            for city_col in ["City", "City Destination"]:
+                if city_col in df_overview.columns:
+                    df_overview[city_col] = (
+                        df_overview[city_col]
+                        .astype(str)
+                        .str.strip()
+                        .str.lower()
+                        .str.title()
+                    )
+
             # ======================================
             # TOP 100 ANALYSIS BY ROOM NIGHTS
             # ======================================
@@ -1223,90 +1584,152 @@ def main_app():
             # COL 1 — Top 100 Hotel Name
             # -------------------------------
             with cols1:
-                if "Hotel Name" in df_all.columns and "Number of Rooms Night" in df_all.columns:
+                if "Hotel Name" in df_overview.columns and "Number of Rooms Night" in df_overview.columns:
                     top_hotels = (
-                        df_all.groupby("Hotel Name")["Number of Rooms Night"]
+                        df_overview.groupby("Hotel Name")["Number of Rooms Night"]
                         .sum()
                         .sort_values(ascending=False)
                         .head(100)
                         .reset_index()
                     )
-            
+
+                    # Ranking & Highlight
+                    top_hotels["Rank"] = top_hotels.index + 1
+                    top_hotels["Highlight"] = top_hotels["Rank"].apply(
+                        lambda x: "Top 20" if x <= 20 else "Others"
+                    )
+
                     fig_hotels = px.bar(
                         top_hotels,
                         x="Number of Rooms Night",
                         y="Hotel Name",
                         orientation="h",
-                        text="Number of Rooms Night",
+                        color="Highlight",
+                        color_discrete_map={
+                            "Top 20": "#9c5789",
+                            "Others": "#e0e0e0"
+                        },
                         title="Top 100 Hotels by Total Room Nights"
                     )
-            
+
                     fig_hotels.update_traces(
-                        texttemplate="%{text:,.0f}",
+                        texttemplate="%{x:,.0f}",
                         textposition="outside",
-                        marker_color="#9c5789"
+                        textfont_size=10
                     )
-            
+
                     fig_hotels.update_layout(
-                        height=900,
-                        yaxis=dict(autorange="reversed"),
+                        height=1700,
+                        yaxis=dict(
+                            autorange="reversed",
+                            tickfont=dict(size=10)
+                        ),
+                        xaxis=dict(
+                            tickfont=dict(size=10)
+                        ),
                         plot_bgcolor="white",
                         paper_bgcolor="white",
-                        margin=dict(l=10, r=40, t=50, b=10),
-                        showlegend=False
+                        margin=dict(l=10, r=80, t=50, b=10),
+                        legend_title_text="",
+                        showlegend=True
                     )
-            
+
                     st.plotly_chart(fig_hotels, use_container_width=True)
+
+                    # === DOWNLOAD TOP 100 HOTELS ===
+                    output_hotels = BytesIO()
+                    top_hotels.drop(columns=["Rank", "Highlight"]).to_excel(
+                        output_hotels, index=False, sheet_name="Top 100 Hotels"
+                    )
+                    output_hotels.seek(0)
+
+                    st.download_button(
+                        label="⬇️ Download Data (Excel)",
+                        data=output_hotels,
+                        file_name="top_100_hotels_by_room_nights.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
                 else:
                     st.warning("Kolom 'Hotel Name' atau 'Number of Rooms Night' tidak ditemukan.")
-            
+
+
             # -------------------------------
             # COL 2 — Top 100 City
             # -------------------------------
             with cols2:
                 city_col = None
                 for c in ["City", "City Destination"]:
-                    if c in df_all.columns:
+                    if c in df_overview.columns:
                         city_col = c
                         break
-            
-                if city_col and "Number of Rooms Night" in df_all.columns:
+
+                if city_col and "Number of Rooms Night" in df_overview.columns:
                     top_cities = (
-                        df_all.groupby(city_col)["Number of Rooms Night"]
+                        df_overview.groupby(city_col)["Number of Rooms Night"]
                         .sum()
                         .sort_values(ascending=False)
                         .head(100)
                         .reset_index()
                     )
-            
+
+                    # Ranking & Highlight
+                    top_cities["Rank"] = top_cities.index + 1
+                    top_cities["Highlight"] = top_cities["Rank"].apply(
+                        lambda x: "Top 20" if x <= 20 else "Others"
+                    )
+
                     fig_cities = px.bar(
                         top_cities,
                         x="Number of Rooms Night",
                         y=city_col,
                         orientation="h",
-                        text="Number of Rooms Night",
+                        color="Highlight",
+                        color_discrete_map={
+                            "Top 20": "#9c5789",
+                            "Others": "#e0e0e0"
+                        },
                         title="Top 100 Cities by Total Room Nights"
                     )
-            
+
                     fig_cities.update_traces(
-                        texttemplate="%{text:,.0f}",
+                        texttemplate="%{x:,.0f}",
                         textposition="outside",
-                        marker_color="#9c5789"
+                        textfont_size=10
                     )
-            
+
                     fig_cities.update_layout(
-                        height=900,
-                        yaxis=dict(autorange="reversed"),
+                        height=1700,
+                        yaxis=dict(
+                            autorange="reversed",
+                            tickfont=dict(size=10)
+                        ),
+                        xaxis=dict(
+                            tickfont=dict(size=10)
+                        ),
                         plot_bgcolor="white",
                         paper_bgcolor="white",
-                        margin=dict(l=10, r=40, t=50, b=10),
-                        showlegend=False
+                        margin=dict(l=10, r=80, t=50, b=10),
+                        legend_title_text="",
+                        showlegend=True
                     )
-            
+
                     st.plotly_chart(fig_cities, use_container_width=True)
+
+                    # === DOWNLOAD TOP 100 CITIES ===
+                    output_cities = BytesIO()
+                    top_cities.drop(columns=["Rank", "Highlight"]).to_excel(
+                        output_cities, index=False, sheet_name="Top 100 Cities"
+                    )
+                    output_cities.seek(0)
+
+                    st.download_button(
+                        label="⬇️ Download Data (Excel)",
+                        data=output_cities,
+                        file_name="top_100_cities_by_room_nights.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
                 else:
                     st.warning("Kolom City / City Destination atau Number of Rooms Night tidak ditemukan.")
-
         
         # ======================================
         # TAB 2: EXPLORER
@@ -1358,6 +1781,79 @@ def main_app():
             with col3:
                 missing_pct = (df_all.isnull().sum().sum() / (len(df_all) * len(df_all.columns))) * 100
                 st.metric("Missing Data", f"{missing_pct:.1f}%")
+
+            st.markdown("<div class='section-title'>Hotel Name Text Similarity Analysis</div>", unsafe_allow_html=True)
+
+            threshold = st.slider(
+                "Similarity Threshold",
+                min_value=0.70,
+                max_value=0.95,
+                value=0.85,
+                step=0.01,
+                help="Semakin tinggi, semakin ketat kemiripan"
+            )
+
+            if "Hotel Name" in df_all.columns:
+                with st.spinner("Analyzing hotel name similarity..."):
+                    sim_df = hotel_name_similarity(
+                        df_all,
+                        text_col="Hotel Name",
+                        threshold=threshold
+                    )
+
+                if not sim_df.empty:
+                    st.dataframe(
+                        sim_df,
+                        use_container_width=True,
+                        height=450
+                    )
+
+                    st.caption(
+                        "🔎 Digunakan untuk mendeteksi potensi duplikasi nama hotel akibat perbedaan penulisan."
+                    )
+
+                    # Download
+                    output = BytesIO()
+                    sim_df.to_excel(output, index=False, sheet_name="Hotel Name Similarity")
+                    output.seek(0)
+
+                    st.download_button(
+                        label="⬇️ Download Similarity Result (Excel)",
+                        data=output,
+                        file_name="hotel_name_similarity.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.info("Tidak ditemukan hotel dengan tingkat kemiripan sesuai threshold.")
+            else:
+                st.warning("Kolom 'Hotel Name' tidak tersedia.")
+
+            st.markdown("### Canonical Hotel Mapping")
+
+            if not hotel_mapping.empty:
+                st.dataframe(
+                    hotel_mapping.sort_values("Canonical Hotel Name"),
+                    use_container_width=True,
+                    height=350
+                )
+
+                output = BytesIO()
+                hotel_mapping.to_excel(
+                    output,
+                    index=False,
+                    sheet_name="Hotel Canonical Mapping"
+                )
+                output.seek(0)
+
+                st.download_button(
+                    "⬇️ Download Canonical Mapping (Excel)",
+                    data=output,
+                    file_name="hotel_canonical_mapping.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.info("Tidak ada mapping canonical yang terbentuk.")
+
 
         # ======================================
         # TAB 3: ANALYTICS
@@ -1659,4 +2155,3 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
-
