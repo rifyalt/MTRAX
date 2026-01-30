@@ -1032,10 +1032,10 @@ def main_app():
 
             with col2:
                 if "Travel Request Number" in df_overview.columns:
-                    unique_tr = df_all["Travel Request Number"].nunique()
+                    unique_tr = df_overview["Travel Request Number"].nunique()
                     st.markdown(f"""
                         <div class='metric-box'>
-                            <div class='metric-label'>Requests</div>
+                            <div class='metric-label'>Trvl Requests</div>
                             <div class='metric-value'>{unique_tr:,}</div>
                         </div>
                     """, unsafe_allow_html=True)
@@ -1087,12 +1087,12 @@ def main_app():
 
             with col3:
                 if "City" in df_overview.columns:
-                    unique_cities = df_all["City"].nunique()
+                    unique_cities = df_overview["City"].nunique()
                     st.metric("Cities", f"{unique_cities:,}")
 
             with col4:
                 if "Country" in df_overview.columns:
-                    unique_countries = df_all["Country"].nunique()
+                    unique_countries = df_overview["Country"].nunique()
                     st.metric("Countries", f"{unique_countries:,}")
 
             # Travel Request Analysis
