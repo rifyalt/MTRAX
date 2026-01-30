@@ -959,7 +959,7 @@ def main_app():
             "2060": "Integrated Marine Logistics Subholding",
             "2062": "Integrated Marine Logistics Subholding",
             "2110": "PT Pertamina Drilling Services Indonesia ",
-
+            "2052":"PT Pertamina Maintenance and Construction",
         }
 
         if "Company Code" in df_all.columns:
