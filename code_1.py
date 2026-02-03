@@ -97,6 +97,46 @@ def load_drive_data(folder_id, drop_cols):
 
     return pd.concat(dfs, ignore_index=True)
 
+def build_employee_cohort(df):
+    required_cols = ["Employee Id", "Issue Time", "Travel Request Number"]
+    if not all(col in df.columns for col in required_cols):
+        return pd.DataFrame()
+
+    df = df.copy()
+    df["Issue Time"] = pd.to_datetime(df["Issue Time"], errors="coerce")
+    df = df.dropna(subset=["Issue Time", "Employee Id"])
+
+    df["OrderMonth"] = df["Issue Time"].dt.to_period("M")
+    
+    # Cohort = first booking month per employee
+    df["CohortMonth"] = (
+        df.groupby("Employee Id")["OrderMonth"]
+        .transform("min")
+    )
+
+    # Cohort index (bulan ke-n sejak first booking)
+    df["CohortIndex"] = (
+        df["OrderMonth"].astype(int) -
+        df["CohortMonth"].astype(int)
+    )
+
+    cohort = (
+        df.groupby(["CohortMonth", "CohortIndex"])["Travel Request Number"]
+        .nunique()
+        .reset_index()
+    )
+
+    cohort_pivot = cohort.pivot(
+        index="CohortMonth",
+        columns="CohortIndex",
+        values="Travel Request Number"
+    ).fillna(0)
+
+    cohort_pivot.index = cohort_pivot.index.astype(str)
+
+    return cohort_pivot
+
+
 #==========================#
 # FUNGSI AUTO-CANONICAL MAPPING
 #==========================#
@@ -786,9 +826,11 @@ def main_app():
 
         # Drive options
         drive_options = {
+#            "2023–2025 (All Data)": "1vygKdg7enC5Kah7WbzVLsNI--S7Tyhvz",
             "2023": "1xDFRdGLDiiScIwW9gTucRyeFCmuqNyq_",
             "2024": "16ZMZ42BLN4GPbYKAd5h75ocbxFuyc85V",
-            "2025": "1chxbGHfk9hHNPZ8vlU6AqRVUKH1jEnxF"
+            "2025": "1chxbGHfk9hHNPZ8vlU6AqRVUKH1jEnxF",
+            "2026": "#",
         }
         
         selected_period = st.selectbox(
@@ -1862,65 +1904,56 @@ def main_app():
         # TAB 3: ANALYTICS
         # ======================================
         with tab3:
-            st.markdown("<div class='section-title'>Advanced Analytics</div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-title'>Employee Booking Cohort Analysis</div>", unsafe_allow_html=True)
 
-            if "Issue Time" in df_all.columns:
-                df_trend = df_all.copy()
-                df_trend["Issue Time"] = pd.to_datetime(df_trend["Issue Time"], errors="coerce")
-                df_trend = df_trend.dropna(subset=["Issue Time"])
-                df_trend["YearMonth"] = df_trend["Issue Time"].dt.to_period("M").astype(str)
+            cohort_df = build_employee_cohort(df_all)
 
-                st.markdown("### Monthly Booking Trends")
-                
-                monthly_bookings = df_trend.groupby("YearMonth").size().reset_index(name="Bookings")
-
-                fig_trend = px.line(
-                    monthly_bookings,
-                    x="YearMonth",
-                    y="Bookings",
-                    markers=True
+            if cohort_df.empty:
+                st.warning("Data tidak cukup untuk Cohort Analysis (butuh Employee Id & Issue Time).")
+            else:
+                st.caption(
+                    "Cohort berdasarkan bulan booking pertama (Issue Time) per Employee ID. "
+                    "Nilai menunjukkan jumlah Travel Request unik."
                 )
 
-                fig_trend.update_traces(
-                    line=dict(color="#9c5789", width=3),
-                    marker=dict(size=8)
+                fig = px.imshow(
+                    cohort_df,
+                    text_auto=True,
+                    aspect="auto",
+                    color_continuous_scale=["#ffffff", "#e0c7d8", "#9c5789"]
                 )
 
-                fig_trend.update_layout(
-                    height=400,
+                fig.update_layout(
+                    title="Employee Booking Cohort Heatmap",
+                    xaxis_title="Bulan ke-n sejak booking pertama",
+                    yaxis_title="Cohort (Bulan Pertama Booking)",
+                    height=500,
                     plot_bgcolor="white",
                     paper_bgcolor="white",
-                    hovermode="x unified"
+                    margin=dict(l=60, r=40, t=60, b=60),
+                    font=dict(size=11)
                 )
 
-                st.plotly_chart(fig_trend, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
 
-                # Seasonal patterns
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-                st.markdown("### Seasonal Patterns")
+                # =========================
+                # DOWNLOAD COHORT DATA
+                # =========================
+                output = BytesIO()
+                cohort_df.reset_index().to_excel(
+                    output,
+                    index=False,
+                    sheet_name="Employee Cohort"
+                )
+                output.seek(0)
 
-                df_trend["Month"] = df_trend["Issue Time"].dt.month_name()
-                monthly_avg = df_trend.groupby("Month").size().reindex([
-                    "January", "February", "March", "April", "May", "June",
-                    "July", "August", "September", "October", "November", "December"
-                ], fill_value=0)
-
-                fig_seasonal = px.bar(
-                    x=monthly_avg.index,
-                    y=monthly_avg.values
+                st.download_button(
+                    label="⬇️ Download Cohort Data (Excel)",
+                    data=output,
+                    file_name="employee_booking_cohort.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
-                fig_seasonal.update_traces(marker_color="#9c5789")
-
-                fig_seasonal.update_layout(
-                    height=400,
-                    plot_bgcolor="white",
-                    paper_bgcolor="white",
-                    xaxis_title="",
-                    yaxis_title="Average Bookings"
-                )
-
-                st.plotly_chart(fig_seasonal, use_container_width=True)
 
         # ======================================
         # TAB 4: ML MODELS
@@ -2158,4 +2191,3 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
-
