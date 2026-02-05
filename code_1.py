@@ -1248,6 +1248,8 @@ def main_app():
 
                 day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
                 # =========================
                 # CORE HEATMAP (COLOR)
                 # =========================
@@ -1325,6 +1327,7 @@ def main_app():
 
                 st.plotly_chart(fig, use_container_width=True)
 
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
             col1, col2 = st.columns(2)
 
@@ -1479,7 +1482,7 @@ def main_app():
                     output_tr_trend.seek(0)
 
                     st.download_button(
-                        label="⬇️ Download Data (Excel)",
+                        label="⬇️ Download Data",
                         data=output_tr_trend,
                         file_name="monthly_travel_request_trend.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -1595,7 +1598,7 @@ def main_app():
                     output_rn_trend.seek(0)
 
                     st.download_button(
-                        label="⬇️ Download Data (Excel)",
+                        label="⬇️ Download Data",
                         data=output_rn_trend,
                         file_name="monthly_room_nights_trend.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -1689,7 +1692,7 @@ def main_app():
                     output_hotels.seek(0)
 
                     st.download_button(
-                        label="⬇️ Download Data (Excel)",
+                        label="⬇️ Download Data",
                         data=output_hotels,
                         file_name="top_100_hotels_by_room_nights.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -1768,7 +1771,7 @@ def main_app():
                     output_cities.seek(0)
 
                     st.download_button(
-                        label="⬇️ Download Data (Excel)",
+                        label="⬇️ Download Data",
                         data=output_cities,
                         file_name="top_100_cities_by_room_nights.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -2191,4 +2194,5 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
+
 
