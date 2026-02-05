@@ -827,7 +827,7 @@ def main_app():
         # Drive options
         drive_options = {
 #            "2023–2025 (All Data)": "1vygKdg7enC5Kah7WbzVLsNI--S7Tyhvz",
-            "2023": "1xDFRdGLDiiScIwW9gTucRyeFCmuqNyq_",
+            "2023 ": "1xDFRdGLDiiScIwW9gTucRyeFCmuqNyq_",
             "2024": "16ZMZ42BLN4GPbYKAd5h75ocbxFuyc85V",
             "2025": "1chxbGHfk9hHNPZ8vlU6AqRVUKH1jEnxF",
             "2026": "14CbafYeVrKUXWBE1LPUFlRXHeXGXAaO4",
@@ -1023,7 +1023,7 @@ def main_app():
 
         # Tabs
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "Dashboard", "Explorer", "Analytics", "ML Models", "Forecast", "Export"
+            "Dashboard", "Explorer", "CRM", "ML Models", "Forecast", "Export"
         ])
 
         # ======================================
@@ -1951,12 +1951,156 @@ def main_app():
                 output.seek(0)
 
                 st.download_button(
-                    label="⬇️ Download Cohort Data (Excel)",
+                    label="⬇️ Download Data",
                     data=output,
                     file_name="employee_booking_cohort.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
+        # ======================================
+        # TAB 3: ANALYTICS — CRM
+        # ======================================
+        with tab3:
+
+            st.markdown("<div class='section-title'>CRM Analytics</div>", unsafe_allow_html=True)
+
+            df_crm = df_all.copy()
+
+            required_cols = ["Employee Id", "Travel Request Number", "Issue Time"]
+            if not all(col in df_crm.columns for col in required_cols):
+                st.warning("Data belum cukup untuk analisa CRM")
+            else:
+                df_crm["Issue Time"] = pd.to_datetime(df_crm["Issue Time"], errors="coerce")
+                df_crm = df_crm.dropna(subset=["Employee Id", "Issue Time"])
+
+                # ======================================
+                # CRM OVERVIEW METRICS
+                # ======================================
+                traveler_stats = (
+                    df_crm
+                    .groupby("Employee Id")
+                    .agg(
+                        total_tr=("Travel Request Number", "nunique"),
+                        total_booking=("Travel Request Number", "count"),
+                        last_booking=("Issue Time", "max"),
+                        first_booking=("Issue Time", "min")
+                    )
+                    .reset_index()
+                )
+
+                total_travelers = len(traveler_stats)
+                repeat_travelers = (traveler_stats["total_tr"] > 1).sum()
+                repeat_rate = repeat_travelers / total_travelers * 100
+                avg_booking = traveler_stats["total_booking"].mean()
+
+                col1, col2, col3, col4 = st.columns(4)
+
+                col1.metric("Active Travelers", f"{total_travelers:,}")
+                col2.metric("Repeat Traveler Rate", f"{repeat_rate:.1f}%")
+                col3.metric("Avg Booking / Traveler", f"{avg_booking:.1f}")
+                col4.metric("Repeat Travelers", f"{repeat_travelers:,}")
+
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                # ======================================
+                # RFM-LIKE SEGMENTATION
+                # ======================================
+                today = df_crm["Issue Time"].max()
+
+                traveler_stats["Recency (Days)"] = (
+                    today - traveler_stats["last_booking"]
+                ).dt.days
+
+                # Monetary
+                if "Invoice Amount" in df_crm.columns:
+                    spend = (
+                        df_crm.groupby("Employee Id")["Invoice Amount"]
+                        .sum()
+                        .reset_index(name="Total Spend")
+                    )
+                    traveler_stats = traveler_stats.merge(spend, on="Employee Id", how="left")
+                else:
+                    traveler_stats["Total Spend"] = 0
+
+                # Segment logic
+                def segment(row):
+                    if row["total_tr"] >= 10:
+                        return "High Value"
+                    elif row["total_tr"] >= 3:
+                        return "Medium Value"
+                    else:
+                        return "Low Value"
+
+                traveler_stats["Segment"] = traveler_stats.apply(segment, axis=1)
+
+                segment_summary = traveler_stats["Segment"].value_counts().reset_index()
+                segment_summary.columns = ["Segment", "Travelers"]
+
+                fig_seg = px.bar(
+                    segment_summary,
+                    x="Segment",
+                    y="Travelers",
+                    text="Travelers",
+                    color="Segment",
+                    color_discrete_sequence=["#9c5789", "#c983af", "#e7c3d9"]
+                )
+
+                fig_seg.update_layout(
+                    title="Traveler Segmentation",
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    showlegend=False
+                )
+
+                st.plotly_chart(fig_seg, use_container_width=True)
+
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                # ======================================
+                # COHORT RETENTION (TRAVELER)
+                # ======================================
+                st.markdown("<div class='section-title'>Traveler Retention (Cohort)</div>", unsafe_allow_html=True)
+
+                cohort_df = build_employee_cohort(df_crm)
+
+                if not cohort_df.empty:
+                    fig_cohort = px.imshow(
+                        cohort_df,
+                        text_auto=True,
+                        aspect="auto",
+                        color_continuous_scale=["#ffffff", "#ddd", "#9c5789"]
+                    )
+
+                    fig_cohort.update_layout(
+                        height=420,
+                        xaxis_title="Month Since First Booking",
+                        yaxis_title="Cohort Month",
+                        plot_bgcolor="white",
+                        paper_bgcolor="white"
+                    )
+
+                    st.plotly_chart(fig_cohort, use_container_width=True)
+                else:
+                    st.info("Data cohort belum mencukupi")
+
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                # ======================================
+                # TOP VALUABLE TRAVELERS
+                # ======================================
+                st.markdown("<div class='section-title'>Top Valuable Travelers</div>", unsafe_allow_html=True)
+
+                top_travelers = traveler_stats.sort_values(
+                    by=["total_tr", "Total Spend"],
+                    ascending=False
+                ).head(10)
+
+                st.dataframe(
+                    top_travelers[
+                        ["Employee Id", "total_tr", "total_booking", "Total Spend", "Segment"]
+                    ],
+                    use_container_width=True
+                )
 
         # ======================================
         # TAB 4: ML MODELS
