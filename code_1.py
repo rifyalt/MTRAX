@@ -2057,35 +2057,6 @@ def main_app():
                 st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
                 # ======================================
-                # COHORT RETENTION (TRAVELER)
-                # ======================================
-                st.markdown("<div class='section-title'>Traveler Retention (Cohort)</div>", unsafe_allow_html=True)
-
-                cohort_df = build_employee_cohort(df_crm)
-
-                if not cohort_df.empty:
-                    fig_cohort = px.imshow(
-                        cohort_df,
-                        text_auto=True,
-                        aspect="auto",
-                        color_continuous_scale=["#ffffff", "#ddd", "#9c5789"]
-                    )
-
-                    fig_cohort.update_layout(
-                        height=420,
-                        xaxis_title="Month Since First Booking",
-                        yaxis_title="Cohort Month",
-                        plot_bgcolor="white",
-                        paper_bgcolor="white"
-                    )
-
-                    st.plotly_chart(fig_cohort, use_container_width=True)
-                else:
-                    st.info("Data cohort belum mencukupi")
-
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                # ======================================
                 # TOP VALUABLE TRAVELERS
                 # ======================================
                 st.markdown("<div class='section-title'>Top Valuable Travelers</div>", unsafe_allow_html=True)
@@ -2338,5 +2309,6 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
+
 
 
