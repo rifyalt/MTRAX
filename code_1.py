@@ -17,7 +17,9 @@ from zoneinfo import ZoneInfo
 
 import plotly.graph_objects as go
 import plotly.express as px
+import networkx as nx
 import matplotlib.pyplot as plt
+
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
@@ -1022,8 +1024,8 @@ def main_app():
         # ======================================
 
         # Tabs
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "Dashboard", "Explorer", "CRM", "ML Models", "Forecast", "Export"
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+            "Dashboard", "Explorer", "CRM", "ML Models", "Forecast", "Data Hotel", "Export"
         ])
 
         # ======================================
@@ -1619,165 +1621,6 @@ def main_app():
                         .str.lower()
                         .str.title()
                     )
-
-            # ======================================
-            # TOP 100 ANALYSIS BY ROOM NIGHTS
-            # ======================================
-            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-            st.markdown("<div class='section-title'>Top 100 Analysis by Room Nights</div>", unsafe_allow_html=True)
-            
-            cols1, cols2 = st.columns(2)
-            
-            # -------------------------------
-            # COL 1 — Top 100 Hotel Name
-            # -------------------------------
-            with cols1:
-                if "Hotel Name" in df_overview.columns and "Number of Rooms Night" in df_overview.columns:
-                    top_hotels = (
-                        df_overview.groupby("Hotel Name")["Number of Rooms Night"]
-                        .sum()
-                        .sort_values(ascending=False)
-                        .head(100)
-                        .reset_index()
-                    )
-
-                    # Ranking & Highlight
-                    top_hotels["Rank"] = top_hotels.index + 1
-                    top_hotels["Highlight"] = top_hotels["Rank"].apply(
-                        lambda x: "Top 20" if x <= 20 else "Others"
-                    )
-
-                    fig_hotels = px.bar(
-                        top_hotels,
-                        x="Number of Rooms Night",
-                        y="Hotel Name",
-                        orientation="h",
-                        color="Highlight",
-                        color_discrete_map={
-                            "Top 20": "#9c5789",
-                            "Others": "#e0e0e0"
-                        },
-                        title="Top 100 Hotels by Total Room Nights"
-                    )
-
-                    fig_hotels.update_traces(
-                        texttemplate="%{x:,.0f}",
-                        textposition="outside",
-                        textfont_size=10
-                    )
-
-                    fig_hotels.update_layout(
-                        height=1700,
-                        yaxis=dict(
-                            autorange="reversed",
-                            tickfont=dict(size=10)
-                        ),
-                        xaxis=dict(
-                            tickfont=dict(size=10)
-                        ),
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=10, r=80, t=50, b=10),
-                        legend_title_text="",
-                        showlegend=True
-                    )
-
-                    st.plotly_chart(fig_hotels, use_container_width=True)
-
-                    # === DOWNLOAD TOP 100 HOTELS ===
-                    output_hotels = BytesIO()
-                    top_hotels.drop(columns=["Rank", "Highlight"]).to_excel(
-                        output_hotels, index=False, sheet_name="Top 100 Hotels"
-                    )
-                    output_hotels.seek(0)
-
-                    st.download_button(
-                        label="⬇️ Download Data",
-                        data=output_hotels,
-                        file_name="top_100_hotels_by_room_nights.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.warning("Kolom 'Hotel Name' atau 'Number of Rooms Night' tidak ditemukan.")
-
-
-            # -------------------------------
-            # COL 2 — Top 100 City
-            # -------------------------------
-            with cols2:
-                city_col = None
-                for c in ["City", "City Destination"]:
-                    if c in df_overview.columns:
-                        city_col = c
-                        break
-
-                if city_col and "Number of Rooms Night" in df_overview.columns:
-                    top_cities = (
-                        df_overview.groupby(city_col)["Number of Rooms Night"]
-                        .sum()
-                        .sort_values(ascending=False)
-                        .head(100)
-                        .reset_index()
-                    )
-
-                    # Ranking & Highlight
-                    top_cities["Rank"] = top_cities.index + 1
-                    top_cities["Highlight"] = top_cities["Rank"].apply(
-                        lambda x: "Top 20" if x <= 20 else "Others"
-                    )
-
-                    fig_cities = px.bar(
-                        top_cities,
-                        x="Number of Rooms Night",
-                        y=city_col,
-                        orientation="h",
-                        color="Highlight",
-                        color_discrete_map={
-                            "Top 20": "#9c5789",
-                            "Others": "#e0e0e0"
-                        },
-                        title="Top 100 Cities by Total Room Nights"
-                    )
-
-                    fig_cities.update_traces(
-                        texttemplate="%{x:,.0f}",
-                        textposition="outside",
-                        textfont_size=10
-                    )
-
-                    fig_cities.update_layout(
-                        height=1700,
-                        yaxis=dict(
-                            autorange="reversed",
-                            tickfont=dict(size=10)
-                        ),
-                        xaxis=dict(
-                            tickfont=dict(size=10)
-                        ),
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=10, r=80, t=50, b=10),
-                        legend_title_text="",
-                        showlegend=True
-                    )
-
-                    st.plotly_chart(fig_cities, use_container_width=True)
-
-                    # === DOWNLOAD TOP 100 CITIES ===
-                    output_cities = BytesIO()
-                    top_cities.drop(columns=["Rank", "Highlight"]).to_excel(
-                        output_cities, index=False, sheet_name="Top 100 Cities"
-                    )
-                    output_cities.seek(0)
-
-                    st.download_button(
-                        label="⬇️ Download Data",
-                        data=output_cities,
-                        file_name="top_100_cities_by_room_nights.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.warning("Kolom City / City Destination atau Number of Rooms Night tidak ditemukan.")
         
         # ======================================
         # TAB 2: EXPLORER
@@ -2079,70 +1922,164 @@ def main_app():
         with tab4:
             st.markdown("<div class='section-title'>Machine Learning Insights</div>", unsafe_allow_html=True)
 
-            st.markdown("### Hotel Clustering Analysis")
+            # =====================================================
+            # INTERACTIVE SOCIAL NETWORK ANALYSIS (Plotly)
+            # =====================================================
+            st.markdown("### Interactive Social Network Analysis: Employee ↔ Hotel")
 
-            if "Hotel Name" in df_all.columns:
-                hotel_data = df_all.groupby("Hotel Name").agg({
-                    "Travel Request Number": "count",
-                    "Number of Rooms Night": "sum"
-                }).reset_index()
+            required_cols = ["Employee Id", "Hotel Name"]
 
-                hotel_data.columns = ["Hotel Name", "Bookings", "Total_Nights"]
+            if all(col in df_all.columns for col in required_cols):
 
-                if "Hotel Price" in df_all.columns:
-                    avg_price = df_all.groupby("Hotel Name")["Hotel Price"].mean()
-                    hotel_data = hotel_data.merge(
-                        avg_price.rename("Avg_Price"),
-                        left_on="Hotel Name",
-                        right_index=True,
-                        how="left"
+                df_sna = (
+                    df_all
+                    .dropna(subset=required_cols)
+                    .groupby(required_cols)
+                    .size()
+                    .reset_index(name="weight")
+                )
+
+                # -------------------------------
+                # INTERACTIVE FILTER
+                # -------------------------------
+                col1, col2 = st.columns(2)
+                with col1:
+                    top_emp = st.slider("Top Employee", 5, 100, 100)
+                with col2:
+                    top_htl = st.slider("Top Hotel", 5, 50, 10)
+
+                top_employees = (
+                    df_sna.groupby("Employee Id")["weight"]
+                    .sum().sort_values(ascending=False)
+                    .head(top_emp).index
+                )
+
+                top_hotels = (
+                    df_sna.groupby("Hotel Name")["weight"]
+                    .sum().sort_values(ascending=False)
+                    .head(top_htl).index
+                )
+
+                df_filtered = df_sna[
+                    df_sna["Employee Id"].isin(top_employees) &
+                    df_sna["Hotel Name"].isin(top_hotels)
+                ]
+
+                # -------------------------------
+                # BUILD GRAPH
+                # -------------------------------
+                G = nx.Graph()
+                for _, row in df_filtered.iterrows():
+                    G.add_edge(
+                        row["Employee Id"],
+                        row["Hotel Name"],
+                        weight=row["weight"]
                     )
-                    hotel_data["Avg_Price"].fillna(0, inplace=True)
-                else:
-                    hotel_data["Avg_Price"] = 0
 
-                hotel_features = hotel_data[["Hotel Name", "Bookings", "Total_Nights", "Avg_Price"]].copy()
+                pos = nx.spring_layout(G, seed=42, k=0.6)
 
-                if len(hotel_features) >= 5:
-                    scaler = StandardScaler()
-                    features_for_clustering = hotel_features[["Bookings", "Total_Nights", "Avg_Price"]]
-                    features_scaled = scaler.fit_transform(features_for_clustering)
+                # -------------------------------
+                # NODE METRICS
+                # -------------------------------
+                degree = dict(G.degree())
+                node_x, node_y, node_text, node_size, node_color = [], [], [], [], []
 
-                    n_clusters = min(5, len(hotel_features))
-                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                    hotel_features["Cluster"] = kmeans.fit_predict(features_scaled)
+                for node in G.nodes():
+                    x, y = pos[node]
+                    node_x.append(x)
+                    node_y.append(y)
 
-                    fig_cluster = px.scatter(
-                        hotel_features,
-                        x="Bookings",
-                        y="Avg_Price",
-                        color="Cluster",
-                        size="Total_Nights",
-                        hover_data=["Hotel Name"],
-                        title="Hotel Clusters",
-                        color_continuous_scale=["#9c5789", "#b36d9c", "#c983af", "#df99c2", "#f5afd5"]
+                    is_employee = node in top_employees
+                    node_color.append("#4C78A8" if is_employee else "#B279A2")
+                    node_size.append(12 + degree[node] * 3)
+
+                    node_text.append(
+                        f"<b>{node}</b><br>"
+                        f"Connections: {degree[node]}"
                     )
 
-                    fig_cluster.update_layout(
-                        height=500,
-                        plot_bgcolor="white",
-                        paper_bgcolor="white"
+                # -------------------------------
+                # EDGE TRACE
+                # -------------------------------
+                edge_x, edge_y = [], []
+                for u, v in G.edges():
+                    x0, y0 = pos[u]
+                    x1, y1 = pos[v]
+                    edge_x += [x0, x1, None]
+                    edge_y += [y0, y1, None]
+
+                edge_trace = go.Scatter(
+                    x=edge_x,
+                    y=edge_y,
+                    mode="lines",
+                    line=dict(width=1, color="#D3D3D3"),
+                    hoverinfo="none"
+                )
+
+                # -------------------------------
+                # NODE TRACE
+                # -------------------------------
+                node_trace = go.Scatter(
+                    x=node_x,
+                    y=node_y,
+                    mode="markers",
+                    hoverinfo="text",
+                    text=node_text,
+                    marker=dict(
+                        size=node_size,
+                        color=node_color,
+                        line=dict(width=1, color="white")
                     )
+                )
 
-                    st.plotly_chart(fig_cluster, use_container_width=True)
+                fig = go.Figure(
+                    data=[edge_trace, node_trace],
+                    layout=go.Layout(
+                        title="Employee ↔ Hotel Interaction Network",
+                        titlefont_size=16,
+                        showlegend=False,
+                        hovermode="closest",
+                        margin=dict(b=20, l=20, r=20, t=40),
+                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        plot_bgcolor="white"
+                    )
+                )
 
-                    st.markdown("### Cluster Summary")
-                    cluster_summary = hotel_features.groupby("Cluster").agg({
-                        "Bookings": ["mean", "count"],
-                        "Total_Nights": "mean",
-                        "Avg_Price": "mean"
-                    }).round(2)
+                st.plotly_chart(fig, use_container_width=True)
 
-                    st.dataframe(cluster_summary, use_container_width=True)
-                else:
-                    st.warning("Not enough data for clustering analysis")
+                # =====================================================
+                # TOP INFLUENCER TABLE
+                # =====================================================
+                st.markdown("### Network Influencer Ranking")
+
+                centrality_df = (
+                    pd.DataFrame.from_dict(degree, orient="index", columns=["Connections"])
+                    .sort_values("Connections", ascending=False)
+                    .reset_index()
+                    .rename(columns={"index": "Node"})
+                )
+
+                st.dataframe(centrality_df.head(10), use_container_width=True)
+
+                # =====================================================
+                # AUTO INSIGHT
+                # =====================================================
+                st.markdown("### Key Insight")
+                st.markdown(
+                    f"""
+                    - Network menampilkan **hubungan aktual Employee dan Hotel**
+                    - **Node terbesar** menunjukkan tingkat konektivitas tertinggi
+                    - Hotel dengan koneksi tinggi → **potensi vendor dependency**
+                    - Employee dengan koneksi tinggi → **traveler kunci / policy influencer**
+                    - Pola ini **tidak terlihat di laporan konvensional**
+                    """
+                )
+
             else:
-                st.error("Hotel Name column not found")
+                st.warning("Kolom Employee Id atau Hotel Name tidak tersedia.")
+
+
 
         # ======================================
         # TAB 5: FORECAST
@@ -2211,9 +2148,177 @@ def main_app():
                 st.error("Issue Time column not found")
 
         # ======================================
-        # TAB 6: EXPORT
+        # TAB 6: HOTEL
         # ======================================
         with tab6:
+            st.markdown("<div class='section-title'>Data Hotel</div>", unsafe_allow_html=True)
+
+#            st.markdown("Export your data in various formats for further analysis.")
+
+            # ======================================
+            # TOP 100 ANALYSIS BY ROOM NIGHTS
+            # ======================================
+#            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-title'>Top 100 Analysis by Room Nights</div>", unsafe_allow_html=True)
+            
+            cols1, cols2 = st.columns(2)
+            
+            # -------------------------------
+            # COL 1 — Top 100 Hotel Name
+            # -------------------------------
+            with cols1:
+                if "Hotel Name" in df_overview.columns and "Number of Rooms Night" in df_overview.columns:
+                    top_hotels = (
+                        df_overview.groupby("Hotel Name")["Number of Rooms Night"]
+                        .sum()
+                        .sort_values(ascending=False)
+                        .head(100)
+                        .reset_index()
+                    )
+
+                    # Ranking & Highlight
+                    top_hotels["Rank"] = top_hotels.index + 1
+                    top_hotels["Highlight"] = top_hotels["Rank"].apply(
+                        lambda x: "Top 20" if x <= 20 else "Others"
+                    )
+
+                    fig_hotels = px.bar(
+                        top_hotels,
+                        x="Number of Rooms Night",
+                        y="Hotel Name",
+                        orientation="h",
+                        color="Highlight",
+                        color_discrete_map={
+                            "Top 20": "#9c5789",
+                            "Others": "#e0e0e0"
+                        },
+                        title="Top 100 Hotels by Total Room Nights"
+                    )
+
+                    fig_hotels.update_traces(
+                        texttemplate="%{x:,.0f}",
+                        textposition="outside",
+                        textfont_size=10
+                    )
+
+                    fig_hotels.update_layout(
+                        height=1700,
+                        yaxis=dict(
+                            autorange="reversed",
+                            tickfont=dict(size=10)
+                        ),
+                        xaxis=dict(
+                            tickfont=dict(size=10)
+                        ),
+                        plot_bgcolor="white",
+                        paper_bgcolor="white",
+                        margin=dict(l=10, r=80, t=50, b=10),
+                        legend_title_text="",
+                        showlegend=True
+                    )
+
+                    st.plotly_chart(fig_hotels, use_container_width=True)
+
+                    # === DOWNLOAD TOP 100 HOTELS ===
+                    output_hotels = BytesIO()
+                    top_hotels.drop(columns=["Rank", "Highlight"]).to_excel(
+                        output_hotels, index=False, sheet_name="Top 100 Hotels"
+                    )
+                    output_hotels.seek(0)
+
+                    st.download_button(
+                        label="⬇️ Download Data",
+                        data=output_hotels,
+                        file_name="top_100_hotels_by_room_nights.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("Kolom 'Hotel Name' atau 'Number of Rooms Night' tidak ditemukan.")
+
+
+            # -------------------------------
+            # COL 2 — Top 100 City
+            # -------------------------------
+            with cols2:
+                city_col = None
+                for c in ["City", "City Destination"]:
+                    if c in df_overview.columns:
+                        city_col = c
+                        break
+
+                if city_col and "Number of Rooms Night" in df_overview.columns:
+                    top_cities = (
+                        df_overview.groupby(city_col)["Number of Rooms Night"]
+                        .sum()
+                        .sort_values(ascending=False)
+                        .head(100)
+                        .reset_index()
+                    )
+
+                    # Ranking & Highlight
+                    top_cities["Rank"] = top_cities.index + 1
+                    top_cities["Highlight"] = top_cities["Rank"].apply(
+                        lambda x: "Top 20" if x <= 20 else "Others"
+                    )
+
+                    fig_cities = px.bar(
+                        top_cities,
+                        x="Number of Rooms Night",
+                        y=city_col,
+                        orientation="h",
+                        color="Highlight",
+                        color_discrete_map={
+                            "Top 20": "#9c5789",
+                            "Others": "#e0e0e0"
+                        },
+                        title="Top 100 Cities by Total Room Nights"
+                    )
+
+                    fig_cities.update_traces(
+                        texttemplate="%{x:,.0f}",
+                        textposition="outside",
+                        textfont_size=10
+                    )
+
+                    fig_cities.update_layout(
+                        height=1700,
+                        yaxis=dict(
+                            autorange="reversed",
+                            tickfont=dict(size=10)
+                        ),
+                        xaxis=dict(
+                            tickfont=dict(size=10)
+                        ),
+                        plot_bgcolor="white",
+                        paper_bgcolor="white",
+                        margin=dict(l=10, r=80, t=50, b=10),
+                        legend_title_text="",
+                        showlegend=True
+                    )
+
+                    st.plotly_chart(fig_cities, use_container_width=True)
+
+                    # === DOWNLOAD TOP 100 CITIES ===
+                    output_cities = BytesIO()
+                    top_cities.drop(columns=["Rank", "Highlight"]).to_excel(
+                        output_cities, index=False, sheet_name="Top 100 Cities"
+                    )
+                    output_cities.seek(0)
+
+                    st.download_button(
+                        label="⬇️ Download Data",
+                        data=output_cities,
+                        file_name="top_100_cities_by_room_nights.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("Kolom City / City Destination atau Number of Rooms Night tidak ditemukan.")
+
+
+        # ======================================
+        # TAB 7: EXPORT
+        # ======================================
+        with tab7:
             st.markdown("<div class='section-title'>Export Data</div>", unsafe_allow_html=True)
 
             st.markdown("Export your data in various formats for further analysis.")
@@ -2309,6 +2414,5 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
-
 
 
