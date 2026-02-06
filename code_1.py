@@ -2035,8 +2035,10 @@ def main_app():
                 fig = go.Figure(
                     data=[edge_trace, node_trace],
                     layout=go.Layout(
-                        title="Employee ↔ Hotel Interaction Network",
-                        titlefont_size=16,
+                        title=dict(
+                            text="Employee ↔ Hotel Interaction Network",
+                            font=dict(size=16)
+                        ),
                         showlegend=False,
                         hovermode="closest",
                         margin=dict(b=20, l=20, r=20, t=40),
@@ -2414,5 +2416,6 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
+
 
 
