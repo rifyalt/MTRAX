@@ -2394,20 +2394,6 @@ def main_app():
         st.info("👆 Please load data from Cloud/Drive or upload files to begin")
 
     # ======================================
-    # FOOTER
-    # ======================================
-    st.markdown("""
-    <div class='divider' style='margin-top:50px;'></div>
-
-    <div style='text-align:center;padding:25px;color:#888888;font-size:0.85em;'>
-        © 2025 Dikembangkan oleh 
-        <a href="https://www.linkedin.com/in/rifyalt/" target="_blank" style='color:#9c5789;text-decoration:none;font-weight:500;'>
-            Rifyal Tumber
-        </a> · MTRAX Travel Analytics
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ======================================
     # DISCLAIMER
     # ======================================
 
@@ -2424,6 +2410,20 @@ def main_app():
         Aplikasi ini disediakan untuk tujuan analisis internal. Output yang dihasilkan tidak bersifat final, tidak mengikat, dan harus melalui proses validasi serta persetujuan sesuai kebijakan perusahaan yang berlaku.
     </div>
     """, unsafe_allow_html=True)
+    
+    # ======================================
+    # FOOTER
+    # ======================================
+    st.markdown("""
+    <div class='divider' style='margin-top:50px;'></div>
+
+    <div style='text-align:center;padding:25px;color:#888888;font-size:0.85em;'>
+        © 2025 Dikembangkan oleh 
+        <a href="https://www.linkedin.com/in/rifyalt/" target="_blank" style='color:#9c5789;text-decoration:none;font-weight:500;'>
+            Rifyal Tumber
+        </a> · MTRAX Travel Analytics
+    </div>
+    """, unsafe_allow_html=True)
 
 # ======================================
 # RUN APP
@@ -2433,3 +2433,4 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
+
