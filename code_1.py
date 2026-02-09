@@ -1025,7 +1025,7 @@ def main_app():
 
         # Tabs
         tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-            "Dashboard", "Explorer", "CRM", "ML Models", "Forecast", "Data Hotel", "Export", "Disclaimer"
+            "Dashboard", "Explorer", "CRM", "ML Models", "Forecast", "Data Hotel", "Export", "Other"
         ])
 
         # ======================================
@@ -2433,4 +2433,5 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
+
 
