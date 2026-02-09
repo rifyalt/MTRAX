@@ -1024,8 +1024,8 @@ def main_app():
         # ======================================
 
         # Tabs
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-            "Dashboard", "Explorer", "CRM", "ML Models", "Forecast", "Data Hotel", "Export"
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            "Dashboard", "Explorer", "CRM", "ML Models", "Forecast", "Data Hotel", "Export", "Disclaimer"
         ])
 
         # ======================================
@@ -2407,6 +2407,23 @@ def main_app():
     </div>
     """, unsafe_allow_html=True)
 
+    # ======================================
+    # DISCLAIMER
+    # ======================================
+
+    st.markdown("""
+    <div style="
+        background:white;
+        padding:20px;
+        border-radius:4px;
+        border-left:4px solid #9c5789;
+        font-size:0.9em;
+    ">
+        <b>Disclaimer & Compliance Notice</b><br><br>
+
+        Aplikasi ini disediakan untuk tujuan analisis internal. Output yang dihasilkan tidak bersifat final, tidak mengikat, dan harus melalui proses validasi serta persetujuan sesuai kebijakan perusahaan yang berlaku.
+    </div>
+    """, unsafe_allow_html=True)
 
 # ======================================
 # RUN APP
@@ -2416,6 +2433,3 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
-
-
-
