@@ -1437,7 +1437,7 @@ def main_app():
                 # MONTHLY TREND — TRAVEL REQUEST
                 # ================================
                 st.markdown("<div style='height:25px;'></div>", unsafe_allow_html=True)
-                st.markdown("<div class='section-title'>Monthly Trend — Travel Requests</div>", unsafe_allow_html=True)
+#                st.markdown("<div class='section-title'>Monthly Trend — Travel Requests</div>", unsafe_allow_html=True)
 
                 if "Issue Time" in df_overview.columns and "Travel Request Number" in df_overview.columns:
 
@@ -2433,5 +2433,6 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
+
 
 
