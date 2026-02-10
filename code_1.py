@@ -1944,7 +1944,7 @@ def main_app():
                 # -------------------------------
                 col1, col2 = st.columns(2)
                 with col1:
-                    top_emp = st.slider("Top Employee", 10, 200, 1000)
+                    top_emp = st.slider("Top Employee", 10, 500, 100)
                 with col2:
                     top_htl = st.slider("Top Hotel", 5, 50, 10)
 
@@ -2433,6 +2433,7 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
+
 
 
 
