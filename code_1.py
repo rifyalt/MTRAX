@@ -2161,7 +2161,7 @@ def main_app():
             # TOP 100 ANALYSIS BY ROOM NIGHTS
             # ======================================
 #            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-            st.markdown("<div class='section-title'>Top 100 Analysis by Room Nights</div>", unsafe_allow_html=True)
+#            st.markdown("<div class='section-title'>Top 100 Analysis by Room Nights</div>", unsafe_allow_html=True)
             
             cols1, cols2 = st.columns(2)
             
@@ -2433,6 +2433,7 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
+
 
 
 
