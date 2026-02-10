@@ -2097,7 +2097,7 @@ def main_app():
                     agg="nunique"
                 )
 
-                st.markdown("### Historical Trend")
+#                st.markdown("### Historical Trend")
 
                 fig_forecast = px.line(
                     forecast_data,
@@ -2433,6 +2433,7 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
+
 
 
 
