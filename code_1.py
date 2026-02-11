@@ -1944,9 +1944,9 @@ def main_app():
                 # -------------------------------
                 col1, col2 = st.columns(2)
                 with col1:
-                    top_emp = st.slider("Top Employee", 10, 1000, 499)
+                    top_emp = st.slider("Top Employee", 5, 100, 100)
                 with col2:
-                    top_htl = st.slider("Top Hotel", 5, 100, 10)
+                    top_htl = st.slider("Top Hotel", 5, 50, 10)
 
                 top_employees = (
                     df_sna.groupby("Employee Id")["weight"]
@@ -2081,73 +2081,260 @@ def main_app():
             else:
                 st.warning("Kolom Employee Id atau Hotel Name tidak tersedia.")
 
-
-
         # ======================================
-        # TAB 5: FORECAST
+        # TAB 5: SPEND CONCENTRATION (PARETO 80/20)
         # ======================================
         with tab5:
-            st.markdown("<div class='section-title'>Demand Forecast</div>", unsafe_allow_html=True)
 
-            if "Issue Time" in df_all.columns:
-                forecast_data = prepare_monthly_trend(
-                    df_all,
-                    date_col="Issue Time",
-                    value_col="Travel Request Number",
-                    agg="nunique"
-                )
+            st.markdown("<div class='section-title'>Spend Concentration Analysis (Pareto 80/20)</div>", unsafe_allow_html=True)
 
-#                st.markdown("### Historical Trend")
+            required_cols = ["Invoice Amount"]
 
-                fig_forecast = px.line(
-                    forecast_data,
-                    x="YearMonth",
-                    y="Value",
-                    markers=True
-                )
-
-                fig_forecast.update_traces(
-                    line=dict(color="#9c5789", width=3),
-                    marker=dict(size=8)
-                )
-
-                fig_forecast.update_layout(
-                    height=400,
-                    title="Monthly Travel Request Trend",
-                    plot_bgcolor="white",
-                    paper_bgcolor="white",
-                    hovermode="x unified"
-                )
-
-                st.plotly_chart(fig_forecast, use_container_width=True)
-
-                col1, col2, col3, col4 = st.columns(4)
-
-                with col1:
-                    avg_monthly = forecast_data["Value"].mean()
-                    st.metric("Avg Monthly", f"{avg_monthly:.0f}")
-
-                with col2:
-                    max_monthly = forecast_data["Value"].max()
-                    st.metric("Peak Month", f"{max_monthly:.0f}")
-
-                with col3:
-                    min_monthly = forecast_data["Value"].min()
-                    st.metric("Lowest Month", f"{min_monthly:.0f}")
-
-                with col4:
-                    std_monthly = forecast_data["Value"].std()
-                    st.metric("Std Deviation", f"{std_monthly:.0f}")
-
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                if TENSORFLOW_AVAILABLE:
-                    st.markdown("### LSTM Forecast")
-                    st.info("Advanced forecasting - Feature in development")
-                else:
-                    st.warning("TensorFlow not available")
+            if not all(col in df_all.columns for col in required_cols):
+                st.warning("Kolom Invoice Amount tidak tersedia.")
             else:
-                st.error("Issue Time column not found")
+
+                df_sc = df_all.copy()
+                df_sc = df_sc.dropna(subset=["Invoice Amount"])
+
+                # ======================================
+                # DIMENSION SELECTION
+                # ======================================
+                st.markdown("### Pilih Dimensi Analisa")
+
+                dimension_options = []
+
+                if "Hotel Name" in df_sc.columns:
+                    dimension_options.append("Hotel Name")
+
+                if "City" in df_sc.columns:
+                    dimension_options.append("City")
+
+                if "Supplier Name" in df_sc.columns:
+                    dimension_options.append("Supplier Name")
+
+                if len(dimension_options) == 0:
+                    st.warning("Tidak ada dimensi yang tersedia untuk dianalisa.")
+                else:
+
+                    dimension = st.selectbox(
+                        "Analisa berdasarkan:",
+                        dimension_options
+                    )
+
+                    # ======================================
+                    # PARETO CALCULATION
+                    # ======================================
+                    pareto_df = (
+                        df_sc.groupby(dimension)["Invoice Amount"]
+                        .sum()
+                        .reset_index()
+                        .sort_values("Invoice Amount", ascending=False)
+                    )
+
+                    total_spend = pareto_df["Invoice Amount"].sum()
+
+                    pareto_df["Spend %"] = pareto_df["Invoice Amount"] / total_spend * 100
+                    pareto_df["Cumulative %"] = pareto_df["Spend %"].cumsum()
+                    pareto_df["Rank"] = range(1, len(pareto_df) + 1)
+
+                    # ======================================
+                    # TOP 20% CONTRIBUTORS
+                    # ======================================
+                    top_20_percent_count = max(1, int(len(pareto_df) * 0.2))
+
+                    top_contributors = pareto_df.head(top_20_percent_count)
+                    top_spend = top_contributors["Invoice Amount"].sum()
+                    top_spend_pct = top_spend / total_spend * 100
+
+                    # ======================================
+                    # KPI SUMMARY
+                    # ======================================
+                    col1, col2, col3 = st.columns(3)
+
+                    col1.metric("Total Spend", f"Rp {total_spend:,.0f}")
+                    col2.metric("Top 20% Contributors", f"{top_20_percent_count}")
+                    col3.metric("Spend Contribution (Top 20%)", f"{top_spend_pct:.1f}%")
+
+                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                    # ======================================
+                    # PARETO CHART (THEME ALIGNED)
+                    # ======================================
+                    st.markdown("### Pareto Chart")
+
+                    theme_primary = "#9c5789"
+                    theme_secondary = "#4b1f3f"
+
+                    fig = go.Figure()
+
+                    fig.add_trace(
+                        go.Bar(
+                            x=pareto_df[dimension],
+                            y=pareto_df["Invoice Amount"],
+                            name="Spend",
+                            marker=dict(color=theme_primary),
+                            hovertemplate="Rp %{y:,.0f}<extra></extra>"
+                        )
+                    )
+
+                    fig.add_trace(
+                        go.Scatter(
+                            x=pareto_df[dimension],
+                            y=pareto_df["Cumulative %"],
+                            name="Cumulative %",
+                            yaxis="y2",
+                            mode="lines+markers",
+                            line=dict(color=theme_secondary, width=3),
+                            marker=dict(size=6)
+                        )
+                    )
+
+                    fig.update_layout(
+                        yaxis=dict(title="Spend (Rp)", showgrid=False),
+                        yaxis2=dict(
+                            title="Cumulative %",
+                            overlaying="y",
+                            side="right",
+                            range=[0, 100],
+                            showgrid=False
+                        ),
+                        height=900,
+                        plot_bgcolor="white",
+                        paper_bgcolor="white",
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        ),
+                        margin=dict(l=40, r=40, t=60, b=40)
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    st.markdown("### Penjelasan Pareto Chart")
+
+                    st.markdown(
+                        f"""
+                        **Apa yang Ditampilkan pada Grafik Ini?**
+
+                        Grafik Pareto menunjukkan distribusi total pengeluaran berdasarkan **{dimension}**, 
+                        yang diurutkan dari kontribusi terbesar hingga terkecil.
+
+                        - Batang (Bar Chart) menunjukkan total *Invoice Amount* masing-masing {dimension}.
+                        - Garis (Line Chart) menunjukkan persentase kumulatif kontribusi terhadap total spending.
+
+                        **Bagaimana Cara Menghitungnya?**
+
+                        1. Total pengeluaran dihitung dengan menjumlahkan seluruh *Invoice Amount*.
+                        
+                        Total Spend = Σ Invoice Amount
+
+                        2. Data kemudian dikelompokkan berdasarkan {dimension} dan dijumlahkan.
+                        
+                        Spend per {dimension} = Σ Invoice Amount per {dimension}
+
+                        3. Setiap nilai dihitung kontribusi persentasenya terhadap total.
+                        
+                        Spend % = (Spend per {dimension} / Total Spend) × 100
+
+                        4. Persentase kumulatif dihitung secara bertahap dari ranking terbesar ke terkecil.
+                        
+                        Cumulative % = Akumulasi Spend % dari atas ke bawah
+
+                        **Bagaimana Menginterpretasikan Grafik Ini?**
+
+                        - Jika garis kumulatif naik tajam di awal, berarti sebagian kecil {dimension} 
+                        menyumbang porsi besar dari total pengeluaran.
+                        - Prinsip Pareto (80/20) menyatakan bahwa sekitar 20% kategori biasanya 
+                        menyumbang sekitar 80% biaya.
+                        - Fokus efisiensi sebaiknya diarahkan pada kelompok dengan kontribusi terbesar 
+                        karena memberikan leverage finansial paling signifikan.
+                        """
+                    )
+
+
+                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                    # ======================================
+                    # SAVING SIMULATION
+                    # ======================================
+                    st.markdown("### Saving Simulation (Strategic Renegotiation)")
+
+                    renegotiation_rate = st.slider(
+                        "Simulasi % penurunan rate pada Top 20% Contributor",
+                        min_value=0,
+                        max_value=20,
+                        value=5,
+                        step=1
+                    )
+
+                    potential_saving = top_spend * (renegotiation_rate / 100)
+
+                    st.success(
+                        f"Potensi Penghematan: Rp {potential_saving:,.0f} "
+                        f"jika dilakukan penurunan {renegotiation_rate}% pada Top 20% contributor."
+                    )
+
+                    # ======================================
+                    # NARASI PERHITUNGAN
+                    # ======================================
+                    st.markdown("#### Bagaimana Perhitungan Saving Dilakukan?")
+
+                    st.markdown(
+                        f"""
+                        **Langkah Perhitungan:**
+
+                        1. Sistem mengelompokkan data berdasarkan **{dimension}**.
+                        2. Total pengeluaran dihitung dari akumulasi *Invoice Amount*.
+                        3. Diambil **Top 20% penyumbang biaya terbesar** berdasarkan ranking spend.
+                        4. Total nilai spend kelompok tersebut = **Rp {top_spend:,.0f}**
+                        5. Dilakukan simulasi penurunan harga sebesar **{renegotiation_rate}%**
+
+                        **Rumus:**
+
+                        Potensi Penghematan = Total Spend Top 20% × (% Renegotiation / 100)
+
+                        = Rp {top_spend:,.0f} × {renegotiation_rate}%  
+                        = **Rp {potential_saving:,.0f}**
+
+                        Simulasi ini mengasumsikan volume booking tetap dan hanya terjadi optimalisasi 
+                        harga melalui renegosiasi kontrak, konsolidasi volume, atau penguatan corporate rate.
+                        """
+                    )
+
+                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                    # ======================================
+                    # TOP CONTRIBUTORS TABLE
+                    # ======================================
+                    st.markdown("### Top Contributors Detail")
+
+                    st.dataframe(
+                        top_contributors[[dimension, "Invoice Amount", "Spend %", "Cumulative %"]]
+                        .style.format({
+                            "Invoice Amount": "Rp {:,.0f}",
+                            "Spend %": "{:.2f}%",
+                            "Cumulative %": "{:.2f}%"
+                        }),
+                        use_container_width=True
+                    )
+
+                    # ======================================
+                    # EXECUTIVE INSIGHT
+                    # ======================================
+                    st.markdown("### Executive Insight")
+
+                    st.markdown(
+                        f"""
+                        - Total pengeluaran terkonsentrasi pada sebagian kecil {dimension}.
+                        - Top 20% {dimension} menyumbang {top_spend_pct:.1f}% dari total biaya.
+                        - Fokus renegosiasi pada kelompok ini memberikan leverage finansial terbesar.
+                        - Strategi konsolidasi volume dan penguatan kontrak dapat meningkatkan efisiensi secara signifikan.
+                        """
+                    )
 
         # ======================================
         # TAB 6: HOTEL
@@ -2433,14 +2620,3 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
-
-
-
-
-
-
-
-
-
-
-
