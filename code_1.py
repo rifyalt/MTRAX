@@ -1909,12 +1909,23 @@ def main_app():
                     ascending=False
                 ).head(10)
 
+                display_cols = ["Employee Id", "total_tr", "total_booking", "Total Spend", "Segment"]
+
+                numeric_cols = ["total_tr", "total_booking", "Total Spend"]
+
                 st.dataframe(
-                    top_travelers[
-                        ["Employee Id", "total_tr", "total_booking", "Total Spend", "Segment"]
-                    ],
+                    top_travelers[display_cols]
+                        .style
+                        .format({
+                            "Total Spend": lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0"
+                        })
+                        .set_properties(
+                            subset=numeric_cols,
+                            **{"text-align": "right"}
+                        ),
                     use_container_width=True
                 )
+
 
         # ======================================
         # TAB 4: ML MODELS
@@ -2308,19 +2319,49 @@ def main_app():
                     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
                     # ======================================
-                    # TOP CONTRIBUTORS TABLE
+                    # TOP CONTRIBUTORS DETAIL TABLE
                     # ======================================
-                    st.markdown("### Top Contributors Detail")
+                    st.markdown("<div class='section-title'>Top Contributors Detail</div>", unsafe_allow_html=True)
+
+                    top_detail = top_contributors.copy()
+
+                    # Format display (tanpa mengubah data asli)
+                    top_display = top_detail.copy()
+                    top_display["Invoice Amount"] = top_display["Invoice Amount"].apply(
+                        lambda x: f"Rp {x:,.0f}"
+                    )
+
+                    top_display["Spend %"] = top_display["Spend %"].apply(
+                        lambda x: f"{x:.2f}%"
+                    )
+
+                    top_display["Cumulative %"] = top_display["Cumulative %"].apply(
+                        lambda x: f"{x:.2f}%"
+                    )
 
                     st.dataframe(
-                        top_contributors[[dimension, "Invoice Amount", "Spend %", "Cumulative %"]]
-                        .style.format({
-                            "Invoice Amount": "Rp {:,.0f}",
-                            "Spend %": "{:.2f}%",
-                            "Cumulative %": "{:.2f}%"
-                        }),
+                        top_display[[dimension, "Invoice Amount", "Spend %", "Cumulative %", "Rank"]],
                         use_container_width=True
                     )
+
+                    # ======================================
+                    # DOWNLOAD BUTTON
+                    # ======================================
+                    output_top = BytesIO()
+                    top_detail.to_excel(
+                        output_top,
+                        index=False,
+                        sheet_name="Top Contributors Detail"
+                    )
+                    output_top.seek(0)
+
+                    st.download_button(
+                        label="⬇️ Download Top Contributors Detail",
+                        data=output_top,
+                        file_name="top_contributors_detail.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
 
                     # ======================================
                     # EXECUTIVE INSIGHT
