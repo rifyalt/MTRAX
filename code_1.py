@@ -1020,6 +1020,32 @@ def main_app():
             )
 
         # ======================================
+        # GLOBAL CITY STANDARDIZATION
+        # ======================================
+
+        if "City" in df_all.columns:
+            df_all["City"] = (
+                df_all["City"]
+                .astype(str)
+                .str.strip()
+                .str.replace(r"\s+", " ", regex=True)
+                .str.lower()
+                .str.title()
+            )
+            df_all.loc[df_all["City"] == "Nan", "City"] = np.nan
+
+        if "City Destination" in df_all.columns:
+            df_all["City Destination"] = (
+                df_all["City Destination"]
+                .astype(str)
+                .str.strip()
+                .str.replace(r"\s+", " ", regex=True)
+                .str.lower()
+                .str.title()
+            )
+            df_all.loc[df_all["City Destination"] == "Nan", "City Destination"] = np.nan
+
+        # ======================================
         # TAB SEMUA
         # ======================================
 
@@ -1621,7 +1647,8 @@ def main_app():
                         .str.lower()
                         .str.title()
                     )
-        
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
         # ======================================
         # TAB 2: EXPLORER
         # ======================================
@@ -1745,10 +1772,55 @@ def main_app():
             else:
                 st.info("Tidak ada mapping canonical yang terbentuk.")
 
+        # ======================================
+        # TAB 3: ANALYTICS — CRM
+        # ======================================
+        with tab3:
+
+            st.markdown("<div class='section-title'>CRM Analytics</div>", unsafe_allow_html=True)
+
+            df_crm = df_all.copy()
+
+            required_cols = ["Employee Id", "Travel Request Number", "Issue Time"]
+            if not all(col in df_crm.columns for col in required_cols):
+                st.warning("Data belum cukup untuk analisa CRM")
+            else:
+                df_crm["Issue Time"] = pd.to_datetime(df_crm["Issue Time"], errors="coerce")
+                df_crm = df_crm.dropna(subset=["Employee Id", "Issue Time"])
+
+                # ======================================
+                # CRM OVERVIEW METRICS
+                # ======================================
+                traveler_stats = (
+                    df_crm
+                    .groupby("Employee Id")
+                    .agg(
+                        total_tr=("Travel Request Number", "nunique"),
+                        total_booking=("Travel Request Number", "count"),
+                        last_booking=("Issue Time", "max"),
+                        first_booking=("Issue Time", "min")
+                    )
+                    .reset_index()
+                )
+
+                total_travelers = len(traveler_stats)
+                repeat_travelers = (traveler_stats["total_tr"] > 1).sum()
+                repeat_rate = repeat_travelers / total_travelers * 100
+                avg_booking = traveler_stats["total_booking"].mean()
+
+                col1, col2, col3, col4 = st.columns(4)
+
+                col1.metric("Active Travelers", f"{total_travelers:,}")
+                col2.metric("Repeat Traveler Rate", f"{repeat_rate:.1f}%")
+                col3.metric("Avg Booking / Traveler", f"{avg_booking:.1f}")
+                col4.metric("Repeat Travelers", f"{repeat_travelers:,}")
+
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
         # ======================================
         # TAB 3: ANALYTICS
         # ======================================
+
         with tab3:
             st.markdown("<div class='section-title'>Employee Booking Cohort Analysis</div>", unsafe_allow_html=True)
 
@@ -1800,51 +1872,6 @@ def main_app():
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
-        # ======================================
-        # TAB 3: ANALYTICS — CRM
-        # ======================================
-        with tab3:
-
-            st.markdown("<div class='section-title'>CRM Analytics</div>", unsafe_allow_html=True)
-
-            df_crm = df_all.copy()
-
-            required_cols = ["Employee Id", "Travel Request Number", "Issue Time"]
-            if not all(col in df_crm.columns for col in required_cols):
-                st.warning("Data belum cukup untuk analisa CRM")
-            else:
-                df_crm["Issue Time"] = pd.to_datetime(df_crm["Issue Time"], errors="coerce")
-                df_crm = df_crm.dropna(subset=["Employee Id", "Issue Time"])
-
-                # ======================================
-                # CRM OVERVIEW METRICS
-                # ======================================
-                traveler_stats = (
-                    df_crm
-                    .groupby("Employee Id")
-                    .agg(
-                        total_tr=("Travel Request Number", "nunique"),
-                        total_booking=("Travel Request Number", "count"),
-                        last_booking=("Issue Time", "max"),
-                        first_booking=("Issue Time", "min")
-                    )
-                    .reset_index()
-                )
-
-                total_travelers = len(traveler_stats)
-                repeat_travelers = (traveler_stats["total_tr"] > 1).sum()
-                repeat_rate = repeat_travelers / total_travelers * 100
-                avg_booking = traveler_stats["total_booking"].mean()
-
-                col1, col2, col3, col4 = st.columns(4)
-
-                col1.metric("Active Travelers", f"{total_travelers:,}")
-                col2.metric("Repeat Traveler Rate", f"{repeat_rate:.1f}%")
-                col3.metric("Avg Booking / Traveler", f"{avg_booking:.1f}")
-                col4.metric("Repeat Travelers", f"{repeat_travelers:,}")
-
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
                 # ======================================
                 # RFM-LIKE SEGMENTATION
                 # ======================================
@@ -1879,26 +1906,6 @@ def main_app():
                 segment_summary = traveler_stats["Segment"].value_counts().reset_index()
                 segment_summary.columns = ["Segment", "Travelers"]
 
-                fig_seg = px.bar(
-                    segment_summary,
-                    x="Segment",
-                    y="Travelers",
-                    text="Travelers",
-                    color="Segment",
-                    color_discrete_sequence=["#9c5789", "#c983af", "#e7c3d9"]
-                )
-
-                fig_seg.update_layout(
-                    title="Traveler Segmentation",
-                    plot_bgcolor="white",
-                    paper_bgcolor="white",
-                    showlegend=False
-                )
-
-                st.plotly_chart(fig_seg, use_container_width=True)
-
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
                 # ======================================
                 # TOP VALUABLE TRAVELERS
                 # ======================================
@@ -1917,7 +1924,7 @@ def main_app():
                     top_travelers[display_cols]
                         .style
                         .format({
-                            "Total Spend": lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0"
+                            "Total Spend": lambda x: f"Rp{x:,.0f}" if pd.notnull(x) else "Rp 0"
                         })
                         .set_properties(
                             subset=numeric_cols,
@@ -1926,6 +1933,610 @@ def main_app():
                     use_container_width=True
                 )
 
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                # ==============================
+                # RADAR ANALYSIS
+                # ==============================                
+
+                with tab3:
+
+                    st.markdown("### Behavioral Persona Clustering") 
+
+                    df_behavior = df_all.copy()
+
+                    required_cols = [
+                        "Travel Request Number",
+                        "Employee Id",
+                        "Issue Time",
+                        "Check in Date",
+                        "Check out Date",
+                        "Number of Rooms Night"
+                    ]
+
+                    if all(col in df_behavior.columns for col in required_cols):
+
+                        # =====================================================
+                        # DATE CONVERSION
+                        # =====================================================
+
+                        df_behavior["Issue Time"] = pd.to_datetime(df_behavior["Issue Time"], errors="coerce")
+                        df_behavior["Check in Date"] = pd.to_datetime(df_behavior["Check in Date"], errors="coerce")
+                        df_behavior["Check out Date"] = pd.to_datetime(df_behavior["Check out Date"], errors="coerce")
+
+                        # =====================================================
+                        # FEATURE ENGINEERING
+                        # =====================================================
+
+                        # Lead Time
+                        df_behavior["Lead_Time"] = (
+                            df_behavior["Check in Date"] - df_behavior["Issue Time"]
+                        ).dt.days
+
+                        # Last Minute (<=2 hari)
+                        df_behavior["Last_Minute"] = df_behavior["Lead_Time"].apply(
+                            lambda x: 1 if pd.notnull(x) and x <= 2 else 0
+                        )
+
+                        # Weekend Stay (berdasarkan check-in)
+                        df_behavior["Weekend_Stay"] = df_behavior["Check in Date"].dt.weekday.apply(
+                            lambda x: 1 if pd.notnull(x) and x >= 5 else 0
+                        )
+
+                        # =====================================================
+                        # AGGREGATE PER EMPLOYEE
+                        # =====================================================
+
+                        employee_features = df_behavior.groupby("Employee Id").agg(
+                            Booking_Frequency=("Travel Request Number", "nunique"),
+                            Avg_Lead_Time=("Lead_Time", "mean"),
+                            Last_Minute_Ratio=("Last_Minute", "mean"),
+                            Avg_Stay=("Number of Rooms Night", "mean"),
+                            Weekend_Ratio=("Weekend_Stay", "mean")
+                        ).reset_index()
+
+                        employee_features = employee_features.fillna(0)
+
+                        # =====================================================
+                        # SCALING
+                        # =====================================================
+
+                        feature_cols = [
+                            "Booking_Frequency",
+                            "Avg_Lead_Time",
+                            "Last_Minute_Ratio",
+                            "Avg_Stay",
+                            "Weekend_Ratio"
+                        ]
+
+                        scaler = StandardScaler()
+                        X_scaled = scaler.fit_transform(employee_features[feature_cols])
+
+                        # =====================================================
+                        # CLUSTERING (dynamic cluster count)
+                        # =====================================================
+
+                        n_employee = len(employee_features)
+
+                        if n_employee >= 4:
+                            n_cluster = 4
+                        elif n_employee >= 2:
+                            n_cluster = 2
+                        else:
+                            n_cluster = 1
+
+                        kmeans = KMeans(n_clusters=n_cluster, random_state=42, n_init=10)
+                        employee_features["Cluster"] = kmeans.fit_predict(X_scaled)
+
+                        # =====================================================
+                        # PERSONA LABELING (berdasarkan karakter dominan cluster)
+                        # =====================================================
+
+                        cluster_profile = employee_features.groupby("Cluster")[feature_cols].mean()
+
+                        persona_map = {}
+
+                        for cluster_id, row in cluster_profile.iterrows():
+
+                            if row["Last_Minute_Ratio"] > 0.5:
+                                persona = "Last Minute Traveler"
+                            elif row["Avg_Lead_Time"] > 14:
+                                persona = "Strategic Planner"
+                            elif row["Weekend_Ratio"] > 0.4:
+                                persona = "Weekend Traveler"
+                            elif row["Booking_Frequency"] > employee_features["Booking_Frequency"].median():
+                                persona = "Frequent Traveler"
+                            else:
+                                persona = "Regular Business Traveler"
+
+                            persona_map[cluster_id] = persona
+
+                        employee_features["Persona"] = employee_features["Cluster"].map(persona_map)
+
+                        # =====================================================
+                        # SELECT EMPLOYEE
+                        # =====================================================
+
+                        selected_employee = st.selectbox(
+                            "Select Employee Id",
+                            employee_features["Employee Id"]
+                        )
+
+                        selected_data = employee_features[
+                            employee_features["Employee Id"] == selected_employee
+                        ]
+
+                        selected_cluster = selected_data["Cluster"].values[0]
+                        selected_persona = selected_data["Persona"].values[0]
+
+                        st.success(f"Persona: {selected_persona}")
+
+                # =====================================================
+                # 2 COLUMN EXECUTIVE LAYOUT - ENHANCED VERSION
+                # =====================================================
+
+                if not selected_data.empty:
+
+                    # Custom CSS untuk styling modern dengan tema #9c5789
+                    st.markdown("""
+                    <style>
+                    /* Gradient Metric Cards - Minimalis dengan background cerah */
+                    .metric-card {
+                        background: white;
+                        padding: 20px 16px;
+                        border-radius: 8px;
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+                        text-align: center;
+                        transition: all 0.3s ease;
+                        margin-bottom: 12px;
+                        border: 1px solid #f0f0f0;
+                        border-top: 3px solid #9c5789;
+                    }
+                    
+                    .metric-card:hover {
+                        transform: translateY(-2px);
+                        box-shadow: 0 4px 12px rgba(156, 87, 137, 0.12);
+                        border-top-color: #8a4d78;
+                    }
+                    
+                    .metric-value {
+                        font-size: 32px;
+                        font-weight: 700;
+                        margin: 8px 0;
+                        color: #9c5789;
+                    }
+                    
+                    .metric-label {
+                        font-size: 11px;
+                        color: #888888;
+                        text-transform: uppercase;
+                        letter-spacing: 1px;
+                        font-weight: 500;
+                    }
+                    
+                    .metric-icon {
+                        font-size: 20px;
+                        margin-bottom: 8px;
+                        opacity: 0.7;
+                    }
+                    
+                    /* Insight Cards dengan warna berbeda */
+                    .insight-card {
+                        background: white;
+                        border-radius: 6px;
+                        padding: 16px;
+                        margin-bottom: 10px;
+                        border-left: 4px solid;
+                        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+                        transition: all 0.3s ease;
+                        font-size: 14px;
+                        line-height: 1.6;
+                    }
+                    
+                    .insight-card:hover {
+                        box-shadow: 0 3px 10px rgba(0,0,0,0.08);
+                        transform: translateX(4px);
+                    }
+                    
+                    .insight-success { 
+                        border-left-color: #10b981; 
+                        background: linear-gradient(to right, #ecfdf5, white); 
+                    }
+                    
+                    .insight-warning { 
+                        border-left-color: #f59e0b; 
+                        background: linear-gradient(to right, #fffbeb, white); 
+                    }
+                    
+                    .insight-info { 
+                        border-left-color: #9c5789; 
+                        background: linear-gradient(to right, #f8f4f7, white); 
+                    }
+                    
+                    .insight-error { 
+                        border-left-color: #ef4444; 
+                        background: linear-gradient(to right, #fef2f2, white); 
+                    }
+                    
+                    /* Enhanced Persona Badge dengan tema ungu */
+                    .persona-badge {
+                        background: linear-gradient(135deg, #9c5789 0%, #c983af 100%);
+                        padding: 24px;
+                        border-radius: 8px;
+                        text-align: center;
+                        color: white;
+                        font-size: 19px;
+                        font-weight: 600;
+                        box-shadow: 0 4px 16px rgba(156, 87, 137, 0.2);
+                        margin: 15px 0;
+                        position: relative;
+                        overflow: hidden;
+                    }
+                    
+                    .persona-badge::before {
+                        content: '';
+                        position: absolute;
+                        top: -50%;
+                        right: -50%;
+                        width: 200%;
+                        height: 200%;
+                        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+                        animation: pulse 3s ease-in-out infinite;
+                    }
+                    
+                    @keyframes pulse {
+                        0%, 100% { transform: scale(1); opacity: 0.5; }
+                        50% { transform: scale(1.08); opacity: 0.7; }
+                    }
+                    
+                    /* Section Headers dengan tema ungu */
+                    .section-header {
+                        font-size: 18px;
+                        font-weight: 600;
+                        color: #1a1a1a;
+                        margin: 30px 0 18px 0;
+                        padding-bottom: 8px;
+                        border-bottom: 2px solid #9c5789;
+                    }
+                    
+                    /* Progress Bar untuk Breakdown */
+                    .progress-container {
+                        background: #f0f0f0;
+                        height: 6px;
+                        border-radius: 3px;
+                        overflow: hidden;
+                        margin-top: 6px;
+                    }
+                    
+                    .progress-bar {
+                        height: 100%;
+                        border-radius: 3px;
+                        transition: width 0.4s ease;
+                    }
+                    
+                    /* Quick Stats dengan tema ungu - Minimalis */
+                    .quick-stat {
+                        text-align: center;
+                        padding: 16px;
+                        background: white;
+                        border-radius: 6px;
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+                        border: 1px solid #f0f0f0;
+                        border-top: 2px solid #9c5789;
+                    }
+                    
+                    .quick-stat:hover {
+                        box-shadow: 0 3px 8px rgba(156, 87, 137, 0.12);
+                    }
+                    
+                    .stat-value {
+                        font-size: 26px;
+                        font-weight: 700;
+                        color: #9c5789;
+                    }
+                    
+                    .stat-label {
+                        font-size: 10px;
+                        opacity: 0.7;
+                        text-transform: uppercase;
+                        letter-spacing: 1px;
+                        margin-top: 6px;
+                        color: #888888;
+                    }
+                    
+                    /* Breakdown Card - Minimalis */
+                    .breakdown-card {
+                        background: white;
+                        padding: 12px 14px;
+                        border-radius: 6px;
+                        margin-bottom: 8px;
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+                        border: 1px solid #f0f0f0;
+                        transition: all 0.2s ease;
+                    }
+                    
+                    .breakdown-card:hover {
+                        box-shadow: 0 2px 6px rgba(156, 87, 137, 0.08);
+                        border-color: #e7c3d9;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+
+                    col1, col2 = st.columns([1, 1.4], gap="large")
+
+                    # =====================================================
+                    # COLUMN 1 → ENHANCED METRICS + INSIGHTS
+                    # =====================================================
+
+                    with col1:
+
+                        st.markdown('<div class="section-header">📊 Behavioral Overview</div>', unsafe_allow_html=True)
+
+                        # Extract metrics
+                        bf = selected_data["Booking_Frequency"].values[0]
+                        lead = selected_data["Avg_Lead_Time"].values[0]
+                        lf = selected_data["Last_Minute_Ratio"].values[0]
+                        weekend = selected_data["Weekend_Ratio"].values[0]
+                        stay = selected_data["Avg_Stay"].values[0]
+
+                        # ===== MODERN METRIC CARDS - MINIMALIS =====
+                        st.markdown('<div class="section-header">Key Performance Indicators</div>', unsafe_allow_html=True)
+                                                
+                        # Row 1
+                        m1, m2 = st.columns(2)
+                        with m1:
+                            st.markdown(f"""
+                            <div class="metric-card">
+                                <div class="metric-icon"></div>
+                                <div class="metric-label">Booking Frequency</div>
+                                <div class="metric-value">{round(bf, 1)}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        with m2:
+                            st.markdown(f"""
+                            <div class="metric-card">
+                                <div class="metric-icon"></div>
+                                <div class="metric-label">Lead Time (Days)</div>
+                                <div class="metric-value">{round(lead, 1)}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                        # Row 2
+                        m3, m4 = st.columns(2)
+                        with m3:
+                            st.markdown(f"""
+                            <div class="metric-card">
+                                <div class="metric-icon"></div>
+                                <div class="metric-label">Last Minute Ratio</div>
+                                <div class="metric-value">{round(lf*100, 1)}%</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        with m4:
+                            st.markdown(f"""
+                            <div class="metric-card">
+                                <div class="metric-icon"></div>
+                                <div class="metric-label">Weekend Ratio</div>
+                                <div class="metric-value">{round(weekend*100, 1)}%</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                        # Row 3 - Full Width
+                        st.markdown(f"""
+                        <div class="metric-card">
+                            <div class="metric-icon"></div>
+                            <div class="metric-label">Average Stay Duration</div>
+                            <div class="metric-value">{round(stay, 1)} <span style="font-size:18px; font-weight:500;">nights</span></div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    # =====================================================
+                    # COLUMN 2 → ENHANCED RADAR CHART
+                    # =====================================================
+
+                    with col2:
+
+                        st.markdown('<div class="section-header">🎯 Behavioral Radar Profile</div>', unsafe_allow_html=True)
+
+                        from sklearn.preprocessing import MinMaxScaler
+
+                        # Calculate cluster profile
+                        cluster_profile = employee_features.groupby("Cluster")[feature_cols].mean()
+                        minmax_scaler = MinMaxScaler()
+                        cluster_scaled = minmax_scaler.fit_transform(cluster_profile)
+
+                        profile_row = cluster_scaled[selected_cluster]
+                        radar_values = list(profile_row) + [profile_row[0]]
+                        radar_labels = feature_cols + [feature_cols[0]]
+
+                        # Enhanced Radar Chart
+                        fig = go.Figure()
+
+                        # Main profile trace dengan warna tema
+                        fig.add_trace(go.Scatterpolar(
+                            r=radar_values,
+                            theta=radar_labels,
+                            fill='toself',
+                            line=dict(width=4, color="#9c5789"),
+                            fillcolor="rgba(156, 87, 137, 0.25)",
+                            name='Profile',
+                            hovertemplate='<b>%{theta}</b><br>Score: %{r:.2f}<extra></extra>'
+                        ))
+
+                        # Benchmark line
+                        benchmark = [0.5] * len(radar_labels)
+                        fig.add_trace(go.Scatterpolar(
+                            r=benchmark,
+                            theta=radar_labels,
+                            line=dict(width=2, color="rgba(138, 77, 120, 0.4)", dash='dash'),
+                            name='Benchmark',
+                            hovertemplate='Benchmark<extra></extra>'
+                        ))
+
+                        fig.update_layout(
+                            polar=dict(
+                                radialaxis=dict(
+                                    visible=True,
+                                    range=[0, 1],
+                                    gridcolor="rgba(150,150,150,0.12)",
+                                    gridwidth=1.5,
+                                    tickfont=dict(size=10, color="#64748b"),
+                                    tickmode='linear',
+                                    tick0=0,
+                                    dtick=0.2
+                                ),
+                                angularaxis=dict(
+                                    tickfont=dict(size=12, color="#1e293b", family="Arial"),
+                                    linecolor="rgba(150,150,150,0.15)",
+                                    gridcolor="rgba(150,150,150,0.12)",
+                                )
+                            ),
+                            showlegend=True,
+                            legend=dict(
+                                orientation="h",
+                                yanchor="bottom",
+                                y=1.01,
+                                xanchor="center",
+                                x=0.5,
+                                font=dict(size=11)
+                            ),
+                            height=580,
+                            margin=dict(l=50, r=50, t=50, b=50),
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            font=dict(family="Arial")
+                        )
+
+                        st.plotly_chart(fig, use_container_width=True)
+
+                # =====================================================
+                # ROW 2: BEHAVIORAL INSIGHTS + METRIC BREAKDOWN (SEJAJAR)
+                # =====================================================
+                
+                if not selected_data.empty:
+                    
+                    col1, col2 = st.columns([1, 1.4], gap="large")
+                    
+                    with col1:
+                        
+                        # ===== SMART INSIGHTS SECTION =====
+                        st.markdown('<div class="section-header">💡 Behavioral Insights</div>', unsafe_allow_html=True)
+
+                        # Booking Pattern Insight
+                        if lf > 0.5:
+                            st.markdown("""
+                            <div class="insight-card insight-error">
+                                <strong>⚠️ Reactive Traveler</strong><br>
+                                High last-minute booking ratio detected. Consider advance planning incentives.
+                            </div>
+                            """, unsafe_allow_html=True)
+                        elif lead > 7:
+                            st.markdown("""
+                            <div class="insight-card insight-success">
+                                <strong>✅ Strategic Planner</strong><br>
+                                Excellent advance planning. Maximizes cost savings through early bookings.
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown("""
+                            <div class="insight-card insight-info">
+                                <strong>ℹ️ Balanced Approach</strong><br>
+                                Shows balanced booking behavior with mix of planned & flexible travel.
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                        # Travel Intensity
+                        avg_bf = employee_features["Booking_Frequency"].mean()
+                        if bf > avg_bf:
+                            intensity_pct = ((bf - avg_bf) / avg_bf * 100)
+                            st.markdown(f"""
+                            <div class="insight-card insight-warning">
+                                <strong>📊 High Activity</strong><br>
+                                Travel intensity <strong>{round(intensity_pct, 1)}%</strong> above peer average.
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown("""
+                            <div class="insight-card insight-success">
+                                <strong>📊 Normal Activity</strong><br>
+                                Travel intensity aligns with organizational baseline.
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                        # Weekend Pattern
+                        if weekend > 0.4:
+                            st.markdown("""
+                            <div class="insight-card insight-info">
+                                <strong>🌅 Weekend Preference</strong><br>
+                                Strong weekend tendency. May indicate client-facing role.
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown("""
+                            <div class="insight-card insight-info">
+                                <strong>💼 Weekday Focus</strong><br>
+                                Primarily weekday travel - typical corporate pattern.
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                        # Stay Duration
+                        avg_stay = employee_features["Avg_Stay"].mean()
+                        if stay > avg_stay:
+                            st.markdown(f"""
+                            <div class="insight-card insight-warning">
+                                <strong>🏨 Extended Stays</strong><br>
+                                <strong>{round((stay-avg_stay), 1)}</strong> nights above average duration.
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown("""
+                            <div class="insight-card insight-success">
+                                <strong>🏨 Quick Visits</strong><br>
+                                Efficient short trips for routine business meetings.
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                    # =====================================================
+                    # COLUMN 2 → METRIC BREAKDOWN + SUMMARY
+                    # =====================================================
+
+                    with col2:
+
+                        # ===== DETAILED BREAKDOWN =====
+                        st.markdown('<div class="section-header">📋 Metric Breakdown</div>', unsafe_allow_html=True)
+                        
+                        for i, feature in enumerate(feature_cols):
+                            score = profile_row[i]
+                            
+                            # Determine status and color dengan tema ungu
+                            if score > 0.7:
+                                status = "High"
+                                status_icon = "🟢"
+                                color = "#9c5789"
+                            elif score > 0.4:
+                                status = "Medium"
+                                status_icon = "🟡"
+                                color = "#c983af"
+                            else:
+                                status = "Low"
+                                status_icon = "🔴"
+                                color = "#e7c3d9"
+                            
+                            progress_width = int(score * 100)
+                            
+                            st.markdown(f"""
+                            <div class="breakdown-card">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                    <strong style="color: #1a1a1a; font-size: 13px; flex: 1;">{feature.replace("_", " ")}</strong>
+                                    <span style="color: #888888; font-weight: 500; font-size: 11px; margin: 0 10px;">{score:.2f}</span>
+                                    <span style="color: {color}; font-weight: 600; font-size: 11px; min-width: 70px; text-align: right;">{status_icon} {status}</span>
+                                </div>
+                                <div class="progress-container">
+                                    <div class="progress-bar" style="background: {color}; width: {progress_width}%;"></div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
 
         # ======================================
         # TAB 4: ML MODELS
@@ -2093,16 +2704,33 @@ def main_app():
                 st.warning("Kolom Employee Id atau Hotel Name tidak tersedia.")
 
         # ======================================
-        # TAB 5: SPEND CONCENTRATION (PARETO 80/20)
+        # TAB 5: SPEND CONCENTRATION (PARETO 80/20) - MINIMALIST
         # ======================================
         with tab5:
 
-            st.markdown("<div class='section-title'>Spend Concentration Analysis (Pareto 80/20)</div>", unsafe_allow_html=True)
+            # ======================================
+            # CLEAN HEADER
+            # ======================================
+            st.markdown("""
+            <div style="
+                background: linear-gradient(135deg, #9c5789 0%, #b07a9e 100%);
+                padding: 25px 30px;
+                border-radius: 8px;
+                margin-bottom: 25px;
+            ">
+                <h2 style="color: white; margin: 0; font-weight: 500;">
+                    Spend Concentration Analysis
+                </h2>
+                <p style="color: rgba(255,255,255,0.85); margin: 8px 0 0 0; font-size: 0.95em;">
+                    Pareto 80/20 Analysis
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
 
             required_cols = ["Invoice Amount"]
 
             if not all(col in df_all.columns for col in required_cols):
-                st.warning("Kolom Invoice Amount tidak tersedia.")
+                st.warning("⚠️ Kolom Invoice Amount tidak tersedia.")
             else:
 
                 df_sc = df_all.copy()
@@ -2111,8 +2739,7 @@ def main_app():
                 # ======================================
                 # DIMENSION SELECTION
                 # ======================================
-                st.markdown("### Pilih Dimensi Analisa")
-
+                
                 dimension_options = []
 
                 if "Hotel Name" in df_sc.columns:
@@ -2125,7 +2752,7 @@ def main_app():
                     dimension_options.append("Supplier Name")
 
                 if len(dimension_options) == 0:
-                    st.warning("Tidak ada dimensi yang tersedia untuk dianalisa.")
+                    st.warning("⚠️ Tidak ada dimensi yang tersedia untuk dianalisa.")
                 else:
 
                     dimension = st.selectbox(
@@ -2159,36 +2786,85 @@ def main_app():
                     top_spend_pct = top_spend / total_spend * 100
 
                     # ======================================
-                    # KPI SUMMARY
+                    # MINIMALIST KPI CARDS
                     # ======================================
-                    col1, col2, col3 = st.columns(3)
+                    
+                    col1, col2, col3, col4 = st.columns(4)
 
-                    col1.metric("Total Spend", f"Rp {total_spend:,.0f}")
-                    col2.metric("Top 20% Contributors", f"{top_20_percent_count}")
-                    col3.metric("Spend Contribution (Top 20%)", f"{top_spend_pct:.1f}%")
+                    with col1:
+                        st.markdown(f"""
+                        <div style="
+                            background: white;
+                            padding: 18px;
+                            border-radius: 6px;
+                            border-left: 3px solid #9c5789;
+                        ">
+                            <div style="color: #999; font-size: 0.8em; margin-bottom: 6px;">Total Spend</div>
+                            <div style="color: #9c5789; font-size: 1.6em; font-weight: 500;">Rp{total_spend:,.0f}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col2:
+                        st.markdown(f"""
+                        <div style="
+                            background: white;
+                            padding: 18px;
+                            border-radius: 6px;
+                            border-left: 3px solid #9c5789;
+                        ">
+                            <div style="color: #999; font-size: 0.8em; margin-bottom: 6px;">Top 20% Count</div>
+                            <div style="color: #9c5789; font-size: 1.6em; font-weight: 500;">{top_20_percent_count}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col3:
+                        st.markdown(f"""
+                        <div style="
+                            background: white;
+                            padding: 18px;
+                            border-radius: 6px;
+                            border-left: 3px solid #9c5789;
+                        ">
+                            <div style="color: #999; font-size: 0.8em; margin-bottom: 6px;">Top 20% Contribution</div>
+                            <div style="color: #9c5789; font-size: 1.6em; font-weight: 500;">{top_spend_pct:.1f}%</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col4:
+                        st.markdown(f"""
+                        <div style="
+                            background: white;
+                            padding: 18px;
+                            border-radius: 6px;
+                            border-left: 3px solid #9c5789;
+                        ">
+                            <div style="color: #999; font-size: 0.8em; margin-bottom: 6px;">Bottom 80% Spend</div>
+                            <div style="color: #9c5789; font-size: 1.6em; font-weight: 500;">Rp{(total_spend - top_spend):,.0f}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
 
                     # ======================================
-                    # PARETO CHART (THEME ALIGNED)
+                    # CLEAN PARETO CHART
                     # ======================================
-                    st.markdown("### Pareto Chart")
-
-                    theme_primary = "#9c5789"
-                    theme_secondary = "#4b1f3f"
-
+                    
                     fig = go.Figure()
 
+                    # Simple bar chart with theme color
+                    colors = ['#9c5789' if i < top_20_percent_count else '#d4d4d4' for i in range(len(pareto_df))]
+                    
                     fig.add_trace(
                         go.Bar(
                             x=pareto_df[dimension],
                             y=pareto_df["Invoice Amount"],
                             name="Spend",
-                            marker=dict(color=theme_primary),
-                            hovertemplate="Rp %{y:,.0f}<extra></extra>"
+                            marker=dict(color=colors),
+                            hovertemplate="<b>%{x}</b><br>Rp%{y:,.0f}<extra></extra>"
                         )
                     )
 
+                    # Cumulative line
                     fig.add_trace(
                         go.Scatter(
                             x=pareto_df[dimension],
@@ -2196,13 +2872,30 @@ def main_app():
                             name="Cumulative %",
                             yaxis="y2",
                             mode="lines+markers",
-                            line=dict(color=theme_secondary, width=3),
-                            marker=dict(size=6)
+                            line=dict(color='#9c5789', width=2.5),
+                            marker=dict(size=5),
+                            hovertemplate="<b>%{x}</b><br>%{y:.1f}%<extra></extra>"
                         )
                     )
 
+                    # 80% reference line
+                    fig.add_hline(
+                        y=80, 
+                        yref='y2',
+                        line_dash="dash", 
+                        line_color="#9c5789",
+                        opacity=0.4,
+                        annotation_text="80%",
+                        annotation_position="right"
+                    )
+
                     fig.update_layout(
-                        yaxis=dict(title="Spend (Rp)", showgrid=False),
+                        template="plotly_white",
+                        yaxis=dict(
+                            title="Spend (Rp)", 
+                            showgrid=True,
+                            gridcolor='rgba(0,0,0,0.05)'
+                        ),
                         yaxis2=dict(
                             title="Cumulative %",
                             overlaying="y",
@@ -2210,7 +2903,7 @@ def main_app():
                             range=[0, 100],
                             showgrid=False
                         ),
-                        height=900,
+                        height=500,
                         plot_bgcolor="white",
                         paper_bgcolor="white",
                         legend=dict(
@@ -2220,162 +2913,143 @@ def main_app():
                             xanchor="right",
                             x=1
                         ),
-                        margin=dict(l=40, r=40, t=60, b=40)
+                        margin=dict(l=60, r=60, t=40, b=100),
+                        xaxis=dict(
+                            tickangle=-45,
+                            tickfont=dict(size=9)
+                        ),
+                        hovermode='x unified'
                     )
 
                     st.plotly_chart(fig, use_container_width=True)
 
-                    st.markdown("### Penjelasan Pareto Chart")
+                    st.markdown("<br>", unsafe_allow_html=True)
 
-                    st.markdown(
-                        f"""
-                        **Apa yang Ditampilkan pada Grafik Ini?**
+                    # ======================================
+                    # CLEAN TABS
+                    # ======================================
+                    
+                    tab_sim, tab_detail, tab_insight = st.tabs([
+                        "Saving Simulation", 
+                        "Detail Data",
+                        "Insight"
+                    ])
 
-                        Grafik Pareto menunjukkan distribusi total pengeluaran berdasarkan **{dimension}**, 
-                        yang diurutkan dari kontribusi terbesar hingga terkecil.
-
-                        - Batang (Bar Chart) menunjukkan total *Invoice Amount* masing-masing {dimension}.
-                        - Garis (Line Chart) menunjukkan persentase kumulatif kontribusi terhadap total spending.
-
-                        **Bagaimana Cara Menghitungnya?**
-
-                        1. Total pengeluaran dihitung dengan menjumlahkan seluruh *Invoice Amount*.
+                    with tab_sim:
+                        st.markdown("### Saving Simulation")
                         
-                        Total Spend = Σ Invoice Amount
+                        renegotiation_rate = st.slider(
+                            "Target diskon pada Top 20% contributors (%)",
+                            min_value=0,
+                            max_value=25,
+                            value=5,
+                            step=1
+                        )
 
-                        2. Data kemudian dikelompokkan berdasarkan {dimension} dan dijumlahkan.
+                        potential_saving = top_spend * (renegotiation_rate / 100)
+
+                        col_s1, col_s2 = st.columns(2)
                         
-                        Spend per {dimension} = Σ Invoice Amount per {dimension}
-
-                        3. Setiap nilai dihitung kontribusi persentasenya terhadap total.
+                        with col_s1:
+                            st.markdown(f"""
+                            <div style="
+                                background: #9c5789;
+                                padding: 20px;
+                                border-radius: 6px;
+                                color: white;
+                            ">
+                                <div style="font-size: 0.85em; margin-bottom: 6px; opacity: 0.9;">Potensi Saving</div>
+                                <div style="font-size: 2em; font-weight: 500; margin: 8px 0;">Rp{potential_saving:,.0f}</div>
+                                <div style="font-size: 0.8em; opacity: 0.8;">dengan diskon {renegotiation_rate}%</div>
+                            </div>
+                            """, unsafe_allow_html=True)
                         
-                        Spend % = (Spend per {dimension} / Total Spend) × 100
+                        with col_s2:
+                            st.markdown(f"""
+                            <div style="
+                                background: #f5f5f5;
+                                padding: 20px;
+                                border-radius: 6px;
+                                border-left: 3px solid #9c5789;
+                            ">
+                                <div style="font-size: 0.85em; margin-bottom: 6px; color: #666;">Perhitungan</div>
+                                <div style="font-size: 0.9em; color: #333; line-height: 1.6;">
+                                    Top 20% Spend: <strong>Rp{top_spend:,.0f}</strong><br>
+                                    Diskon: <strong>{renegotiation_rate}%</strong><br>
+                                    Saving: <strong>Rp{potential_saving:,.0f}</strong>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
 
-                        4. Persentase kumulatif dihitung secara bertahap dari ranking terbesar ke terkecil.
+                    with tab_detail:
+                        st.markdown("### Top Contributors")
                         
-                        Cumulative % = Akumulasi Spend % dari atas ke bawah
+                        display_cols = [dimension, "Invoice Amount", "Spend %", "Cumulative %", "Rank"]
+                        
+                        st.dataframe(
+                            top_contributors[display_cols]
+                                .style
+                                .format({
+                                    "Invoice Amount": "Rp{:,.0f}",
+                                    "Spend %": "{:.2f}%",
+                                    "Cumulative %": "{:.2f}%"
+                                })
+                                .background_gradient(subset=["Spend %"], cmap="Purples")
+                                .set_properties(
+                                    subset=["Invoice Amount", "Spend %", "Cumulative %", "Rank"],
+                                    **{"text-align": "right"}
+                                ),
+                            use_container_width=True
+                        )
 
-                        **Bagaimana Menginterpretasikan Grafik Ini?**
+                        # Download
+                        output_excel = BytesIO()
+                        top_contributors.to_excel(output_excel, index=False, sheet_name="Top Contributors")
+                        output_excel.seek(0)
+                        
+                        st.download_button(
+                            label="Download Excel",
+                            data=output_excel,
+                            file_name=f"pareto_{dimension.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
 
-                        - Jika garis kumulatif naik tajam di awal, berarti sebagian kecil {dimension} 
-                        menyumbang porsi besar dari total pengeluaran.
-                        - Prinsip Pareto (80/20) menyatakan bahwa sekitar 20% kategori biasanya 
-                        menyumbang sekitar 80% biaya.
-                        - Fokus efisiensi sebaiknya diarahkan pada kelompok dengan kontribusi terbesar 
-                        karena memberikan leverage finansial paling signifikan.
-                        """
-                    )
-
-
-                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                    # ======================================
-                    # SAVING SIMULATION
-                    # ======================================
-                    st.markdown("### Saving Simulation (Strategic Renegotiation)")
-
-                    renegotiation_rate = st.slider(
-                        "Simulasi % penurunan rate pada Top 20% Contributor",
-                        min_value=0,
-                        max_value=20,
-                        value=5,
-                        step=1
-                    )
-
-                    potential_saving = top_spend * (renegotiation_rate / 100)
-
-                    st.success(
-                        f"Potensi Penghematan: Rp {potential_saving:,.0f} "
-                        f"jika dilakukan penurunan {renegotiation_rate}% pada Top 20% contributor."
-                    )
-
-                    # ======================================
-                    # NARASI PERHITUNGAN
-                    # ======================================
-                    st.markdown("#### Bagaimana Perhitungan Saving Dilakukan?")
-
-                    st.markdown(
-                        f"""
-                        **Langkah Perhitungan:**
-
-                        1. Sistem mengelompokkan data berdasarkan **{dimension}**.
-                        2. Total pengeluaran dihitung dari akumulasi *Invoice Amount*.
-                        3. Diambil **Top 20% penyumbang biaya terbesar** berdasarkan ranking spend.
-                        4. Total nilai spend kelompok tersebut = **Rp {top_spend:,.0f}**
-                        5. Dilakukan simulasi penurunan harga sebesar **{renegotiation_rate}%**
-
-                        **Rumus:**
-
-                        Potensi Penghematan = Total Spend Top 20% × (% Renegotiation / 100)
-
-                        = Rp {top_spend:,.0f} × {renegotiation_rate}%  
-                        = **Rp {potential_saving:,.0f}**
-
-                        Simulasi ini mengasumsikan volume booking tetap dan hanya terjadi optimalisasi 
-                        harga melalui renegosiasi kontrak, konsolidasi volume, atau penguatan corporate rate.
-                        """
-                    )
-
-                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                    # ======================================
-                    # TOP CONTRIBUTORS DETAIL TABLE
-                    # ======================================
-                    st.markdown("<div class='section-title'>Top Contributors Detail</div>", unsafe_allow_html=True)
-
-                    top_detail = top_contributors.copy()
-
-                    # Format display (tanpa mengubah data asli)
-                    top_display = top_detail.copy()
-                    top_display["Invoice Amount"] = top_display["Invoice Amount"].apply(
-                        lambda x: f"Rp {x:,.0f}"
-                    )
-
-                    top_display["Spend %"] = top_display["Spend %"].apply(
-                        lambda x: f"{x:.2f}%"
-                    )
-
-                    top_display["Cumulative %"] = top_display["Cumulative %"].apply(
-                        lambda x: f"{x:.2f}%"
-                    )
-
-                    st.dataframe(
-                        top_display[[dimension, "Invoice Amount", "Spend %", "Cumulative %", "Rank"]],
-                        use_container_width=True
-                    )
-
-                    # ======================================
-                    # DOWNLOAD BUTTON
-                    # ======================================
-                    output_top = BytesIO()
-                    top_detail.to_excel(
-                        output_top,
-                        index=False,
-                        sheet_name="Top Contributors Detail"
-                    )
-                    output_top.seek(0)
-
-                    st.download_button(
-                        label="⬇️ Download Top Contributors Detail",
-                        data=output_top,
-                        file_name="top_contributors_detail.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-
-
-                    # ======================================
-                    # EXECUTIVE INSIGHT
-                    # ======================================
-                    st.markdown("### Executive Insight")
-
-                    st.markdown(
-                        f"""
-                        - Total pengeluaran terkonsentrasi pada sebagian kecil {dimension}.
-                        - Top 20% {dimension} menyumbang {top_spend_pct:.1f}% dari total biaya.
-                        - Fokus renegosiasi pada kelompok ini memberikan leverage finansial terbesar.
-                        - Strategi konsolidasi volume dan penguatan kontrak dapat meningkatkan efisiensi secara signifikan.
-                        """
-                    )
+                    with tab_insight:
+                        st.markdown("### Key Insights")
+                        
+                        st.markdown(f"""
+                        <div style="
+                            background: #f9f9f9;
+                            padding: 20px;
+                            border-radius: 6px;
+                            border-left: 3px solid #9c5789;
+                        ">
+                            <p style="margin: 0 0 12px 0; color: #333;">
+                                <strong>Konsentrasi Spending:</strong><br>
+                                Top 20% ({top_20_percent_count} {dimension}) menyumbang <strong>{top_spend_pct:.1f}%</strong> dari total pengeluaran.
+                            </p>
+                            <p style="margin: 0; color: #666; font-size: 0.9em;">
+                                Fokus renegosiasi pada kelompok ini dapat memberikan dampak finansial terbesar.
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        
+                        # Simple methodology
+                        with st.expander("Metodologi Perhitungan"):
+                            st.markdown(f"""
+                            **Pareto Analysis** mengidentifikasi kontributor terbesar terhadap total spending.
+                            
+                            **Langkah Perhitungan:**
+                            1. Total pengeluaran dikelompokkan per {dimension}
+                            2. Data diurutkan dari terbesar ke terkecil
+                            3. Dihitung persentase kontribusi masing-masing
+                            4. Dihitung persentase kumulatif
+                            5. Diambil Top 20% sebagai fokus analisa
+                            
+                            **Prinsip 80/20:** Umumnya 20% kategori menyumbang 80% biaya total.
+                            """)
 
         # ======================================
         # TAB 6: HOTEL
@@ -2465,7 +3139,6 @@ def main_app():
                 else:
                     st.warning("Kolom 'Hotel Name' atau 'Number of Rooms Night' tidak ditemukan.")
 
-
             # -------------------------------
             # COL 2 — Top 100 City
             # -------------------------------
@@ -2544,7 +3217,6 @@ def main_app():
                 else:
                     st.warning("Kolom City / City Destination atau Number of Rooms Night tidak ditemukan.")
 
-
         # ======================================
         # TAB 7: EXPORT
         # ======================================
@@ -2617,6 +3289,193 @@ def main_app():
 
             with col4:
                 st.metric("Est. File Size", f"{memory_usage * 0.8:.2f} MB")
+
+        # ======================================
+        # TAB 8: OTHER
+        # ======================================
+ 
+        with tab8:
+
+            st.subheader("Hotel Price Intelligence & Negotiation Simulator")
+
+#            import pandas as pd
+#            import numpy as np
+
+            df = df_all.copy()
+            
+            # ==============================
+            # FILTER
+            # ==============================
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                selected_company = st.selectbox(
+                    "Filter Nama Perusahaan",
+                    ["All"] + sorted(df["Nama Perusahaan"].dropna().unique()),
+                    key="neg_company"
+                )
+
+            with col2:
+                selected_city = st.selectbox(
+                    "Filter City",
+                    ["All"] + sorted(df["City"].dropna().unique()),
+                    key="neg_city"
+                )
+
+            if selected_company != "All":
+                df = df[df["Nama Perusahaan"] == selected_company]
+
+            if selected_city != "All":
+                df = df[df["City"] == selected_city]
+
+            # ==============================
+            # FILTER INDONESIA (TARUH DI SINI)
+            # ==============================
+
+            only_indonesia = st.checkbox(
+                "Tampilkan hanya hotel di Indonesia",
+                value=True
+            )
+
+            if only_indonesia and "Country" in df.columns:
+                df = df[df["Country"].str.contains("indonesia", case=False, na=False)]
+
+            # ==============================
+            # PREPARE DATA
+            # ==============================
+
+            df["Number of Rooms Night"] = pd.to_numeric(
+                df["Number of Rooms Night"], errors="coerce"
+            ).fillna(1)
+
+            df["Invoice Amount"] = pd.to_numeric(
+                df["Invoice Amount"], errors="coerce"
+            ).fillna(0)
+
+            df["ADR"] = df["Invoice Amount"] / df["Number of Rooms Night"]
+
+            # ==============================
+            # AGGREGATION PER HOTEL
+            # ==============================
+
+            hotel_price = df.groupby(["Hotel Name", "City"]).agg(
+                Min_ADR=("ADR", "min"),
+                Median_ADR=("ADR", "median"),
+                Mean_ADR=("ADR", "mean"),
+                Max_ADR=("ADR", "max"),
+                Total_RoomNight=("Number of Rooms Night", "sum"),
+                Total_Revenue=("Invoice Amount", "sum")
+            ).reset_index()
+
+            hotel_price["Price_Range"] = (
+                hotel_price["Max_ADR"] - hotel_price["Min_ADR"]
+            )
+
+            # ==============================
+            # RECOMMENDED CONTRACT RANGE
+            # ==============================
+
+            hotel_price["Recommended_Lower"] = hotel_price["Min_ADR"]
+            hotel_price["Recommended_Upper"] = hotel_price["Median_ADR"] * 0.95
+
+            # ==============================
+            # DISCOUNT SIMULATOR
+            # ==============================
+
+            st.markdown("### Negotiation Discount Simulator")
+
+            discount_slider = st.slider(
+                "Pilih Target Diskon (%) dari Median ADR",
+                min_value=0,
+                max_value=100,
+                value=10,
+                step=1
+            )
+
+            discount_pct = discount_slider / 100
+
+            hotel_price["Negotiated_ADR"] = (
+                hotel_price["Median_ADR"] * (1 - discount_pct)
+            )
+
+            hotel_price["Saving_per_Night"] = (
+                hotel_price["Median_ADR"] - hotel_price["Negotiated_ADR"]
+            )
+
+            hotel_price["Potential_Total_Saving"] = (
+                hotel_price["Saving_per_Night"] *
+                hotel_price["Total_RoomNight"]
+            )
+
+            hotel_price = hotel_price.sort_values(
+                by="Potential_Total_Saving",
+                ascending=False
+            )
+
+            # ==============================
+            # DISPLAY
+            # ==============================
+
+            st.markdown("### Hotel Historical Price Analysis")
+
+            display_cols = [
+                "Hotel Name",
+                "City",
+                "Total_RoomNight",   # ← TAMBAHKAN INI
+                "Min_ADR",
+                "Median_ADR",
+                "Mean_ADR",
+                "Max_ADR",
+                "Price_Range",
+                "Recommended_Lower",
+                "Recommended_Upper",
+                "Negotiated_ADR",
+                "Potential_Total_Saving"
+            ]
+
+            currency_cols = [
+                "Min_ADR",
+                "Median_ADR",
+                "Mean_ADR",
+                "Max_ADR",
+                "Price_Range",
+                "Recommended_Lower",
+                "Recommended_Upper",
+                "Negotiated_ADR",
+                "Potential_Total_Saving"
+            ]
+
+            # Fungsi format Rupiah Indonesia
+            def format_rupiah(x):
+                try:
+                    return "Rp{:,.0f}".format(x).replace(",", ".")
+                except:
+                    return x
+
+            # Copy dataframe
+            hotel_display = hotel_price.copy()
+
+            # Hitung total saving dari numeric dataframe
+            total_saving = hotel_price["Potential_Total_Saving"].sum()
+
+            # Format kolom currency
+            for col in currency_cols:
+                hotel_display[col] = hotel_display[col].apply(format_rupiah)
+
+            hotel_display["Total_RoomNight"] = hotel_display["Total_RoomNight"].apply(
+                lambda x: f"{int(x):,}".replace(",", ".")
+            )
+
+            # Tampilkan total saving dengan format Indonesia
+            st.success(
+                f"💰 Total Potential Saving dengan diskon {discount_slider}%: {format_rupiah(total_saving)}"
+            )
+
+            st.dataframe(
+                hotel_display[display_cols],
+                use_container_width=True
+            )
 
     else:
         st.info("👆 Please load data from Cloud/Drive or upload files to begin")
