@@ -2512,15 +2512,15 @@ def main_app():
                             # Determine status and color dengan tema ungu
                             if score > 0.7:
                                 status = "High"
-                                status_icon = "🤯"
+                                status_icon = "🔴"
                                 color = "#9c5789"
                             elif score > 0.4:
                                 status = "Medium"
-                                status_icon = "😱"
+                                status_icon = "🟡"
                                 color = "#c983af"
                             else:
                                 status = "Low"
-                                status_icon = "😊"
+                                status_icon = "🟢"
                                 color = "#e7c3d9"
                             
                             progress_width = int(score * 100)
