@@ -2512,15 +2512,15 @@ def main_app():
                             # Determine status and color dengan tema ungu
                             if score > 0.7:
                                 status = "High"
-                                status_icon = "🟢"
+                                status_icon = "🤯"
                                 color = "#9c5789"
                             elif score > 0.4:
                                 status = "Medium"
-                                status_icon = "🟡"
+                                status_icon = "😱"
                                 color = "#c983af"
                             else:
                                 status = "Low"
-                                status_icon = "🔴"
+                                status_icon = "😊"
                                 color = "#e7c3d9"
                             
                             progress_width = int(score * 100)
@@ -2994,7 +2994,7 @@ def main_app():
                                     "Spend %": "{:.2f}%",
                                     "Cumulative %": "{:.2f}%"
                                 })
-                                .background_gradient(subset=["Spend %"], cmap="Purples")
+                                .background_gradient(subset=["Spend %"], cmap="BuPu")
                                 .set_properties(
                                     subset=["Invoice Amount", "Spend %", "Cumulative %", "Rank"],
                                     **{"text-align": "right"}
@@ -3423,11 +3423,11 @@ def main_app():
                 "Hotel Name",
                 "City",
                 "Total_RoomNight",   # ← TAMBAHKAN INI
-                "Min_ADR",
+#                "Min_ADR",
                 "Median_ADR",
                 "Mean_ADR",
                 "Max_ADR",
-                "Price_Range",
+#                "Price_Range",
                 "Recommended_Lower",
                 "Recommended_Upper",
                 "Negotiated_ADR",
@@ -3435,11 +3435,11 @@ def main_app():
             ]
 
             currency_cols = [
-                "Min_ADR",
+#                "Min_ADR",
                 "Median_ADR",
                 "Mean_ADR",
                 "Max_ADR",
-                "Price_Range",
+#                "Price_Range",
                 "Recommended_Lower",
                 "Recommended_Upper",
                 "Negotiated_ADR",
