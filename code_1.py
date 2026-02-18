@@ -1051,7 +1051,14 @@ def main_app():
 
         # Tabs
         tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-            "Dashboard", "Explorer", "CRM", "ML Models", "Forecast", "Data Hotel", "Export", "Other"
+            "Dashboard", 
+            "Explorer", 
+            "CRM", 
+            "Network", 
+            "Price Intelligence", 
+            "Top Hotel/City",
+            "Export", 
+            "Value Creation (soon)"
         ])
 
         # ======================================
@@ -2538,16 +2545,80 @@ def main_app():
                             </div>
                             """, unsafe_allow_html=True)
 
-        # ======================================
-        # TAB 4: ML MODELS
+# ======================================
+        # TAB 4: INTERACTIVE SOCIAL NETWORK ANALYSIS
         # ======================================
         with tab4:
-            st.markdown("<div class='section-title'>Machine Learning Insights</div>", unsafe_allow_html=True)
 
-            # =====================================================
-            # INTERACTIVE SOCIAL NETWORK ANALYSIS (Plotly)
-            # =====================================================
-            st.markdown("### Interactive Social Network Analysis: Employee ↔ Hotel")
+            # ── Hero Header ──────────────────────────────────────────
+            st.markdown("""
+                <div style="
+                    background: linear-gradient(135deg, #1a1a2e 0%, #2d1b3d 50%, #1a1a2e 100%);
+                    border-radius: 12px;
+                    padding: 32px 36px;
+                    margin-bottom: 28px;
+                    position: relative;
+                    overflow: hidden;
+                ">
+                    <div style="
+                        position: absolute; top: -40px; right: -40px;
+                        width: 200px; height: 200px;
+                        background: radial-gradient(circle, rgba(156,87,137,0.3) 0%, transparent 70%);
+                        border-radius: 50%;
+                    "></div>
+                    <div style="
+                        position: absolute; bottom: -30px; left: 20%;
+                        width: 150px; height: 150px;
+                        background: radial-gradient(circle, rgba(88,121,192,0.2) 0%, transparent 70%);
+                        border-radius: 50%;
+                    "></div>
+                    <div style="position: relative; z-index: 1;">
+                        <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 10px;">
+                            <span style="font-size: 2em;">🕸️</span>
+                            <div>
+                                <div style="font-size: 1.35em; font-weight: 700; color: #ffffff; letter-spacing: -0.3px;">
+                                    Social Network Analysis
+                                </div>
+                                <div style="font-size: 0.85em; color: rgba(255,255,255,0.55); margin-top: 3px;">
+                                    Employee ↔ Hotel Interaction Network
+                                </div>
+                            </div>
+                        </div>
+                        <div style="
+                            display: flex; gap: 20px; margin-top: 16px;
+                            flex-wrap: wrap;
+                        ">
+                            <div style="
+                                background: rgba(156,87,137,0.2);
+                                border: 1px solid rgba(156,87,137,0.4);
+                                border-radius: 20px;
+                                padding: 5px 14px;
+                                font-size: 0.78em;
+                                color: #d4a0c8;
+                                font-weight: 500;
+                            ">⬤ Employee Nodes</div>
+                            <div style="
+                                background: rgba(88,121,192,0.2);
+                                border: 1px solid rgba(88,121,192,0.4);
+                                border-radius: 20px;
+                                padding: 5px 14px;
+                                font-size: 0.78em;
+                                color: #a0b8e8;
+                                font-weight: 500;
+                            ">⬤ Hotel Nodes</div>
+                            <div style="
+                                background: rgba(255,255,255,0.06);
+                                border: 1px solid rgba(255,255,255,0.12);
+                                border-radius: 20px;
+                                padding: 5px 14px;
+                                font-size: 0.78em;
+                                color: rgba(255,255,255,0.5);
+                                font-weight: 500;
+                            ">◯ Node size = degree centrality</div>
+                        </div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
 
             required_cols = ["Employee Id", "Hotel Name"]
 
@@ -2561,147 +2632,502 @@ def main_app():
                     .reset_index(name="weight")
                 )
 
-                # -------------------------------
-                # INTERACTIVE FILTER
-                # -------------------------------
-                col1, col2 = st.columns(2)
-                with col1:
-                    top_emp = st.slider("Top Employee", 5, 100, 100)
-                with col2:
-                    top_htl = st.slider("Top Hotel", 5, 50, 10)
+                # ── Network Statistics Summary ────────────────────────
+                total_emp_count  = df_sna["Employee Id"].nunique()
+                total_htl_count  = df_sna["Hotel Name"].nunique()
+                total_edges      = len(df_sna)
+                avg_connections  = df_sna.groupby("Employee Id")["weight"].sum().mean()
 
+                stat_cols = st.columns(4)
+                stat_data = [
+                    ("👤", "Total Employees",   f"{total_emp_count:,}",    "#9c5789"),
+                    ("🏨", "Total Hotels",      f"{total_htl_count:,}",    "#5879c0"),
+                    ("🔗", "Total Interactions", f"{total_edges:,}",        "#5a9c7e"),
+                    ("📊", "Avg Trips / Emp",   f"{avg_connections:.1f}",  "#c07840"),
+                ]
+                for col, (icon, label, val, color) in zip(stat_cols, stat_data):
+                    with col:
+                        st.markdown(f"""
+                            <div style="
+                                background: white;
+                                border-radius: 10px;
+                                padding: 16px 18px;
+                                border-top: 3px solid {color};
+                                box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+                                text-align: center;
+                                margin-bottom: 20px;
+                            ">
+                                <div style="font-size:1.4em; margin-bottom:5px;">{icon}</div>
+                                <div style="font-size:0.7em; font-weight:600; color:#888;
+                                            text-transform:uppercase; letter-spacing:0.7px;">{label}</div>
+                                <div style="font-size:1.3em; font-weight:700; color:#1a1a1a;
+                                            margin-top:6px;">{val}</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+
+                # ── Filters ───────────────────────────────────────────
+                st.markdown("""
+                    <div style="
+                        background: white;
+                        border-radius: 10px;
+                        padding: 20px 24px 8px 24px;
+                        box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+                        margin-bottom: 20px;
+                    ">
+                        <div style="font-size:0.8em; font-weight:700; color:#9c5789;
+                                    text-transform:uppercase; letter-spacing:0.8px;
+                                    margin-bottom:14px;">
+                            🎛️ Filter Network
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                fcol1, fcol2, fcol3 = st.columns([2, 2, 1])
+                with fcol1:
+                    top_emp = st.slider(
+                        "👤 Top Employees (by trip volume)",
+                        min_value=5, max_value=min(100, total_emp_count),
+                        value=min(50, total_emp_count),
+                        help="Tampilkan N karyawan dengan volume perjalanan tertinggi"
+                    )
+                with fcol2:
+                    top_htl = st.slider(
+                        "🏨 Top Hotels (by visit frequency)",
+                        min_value=5, max_value=min(50, total_htl_count),
+                        value=min(15, total_htl_count),
+                        help="Tampilkan N hotel dengan frekuensi kunjungan tertinggi"
+                    )
+                with fcol3:
+                    layout_algo = st.selectbox(
+                        "📐 Layout",
+                        ["Spring", "Kamada-Kawai", "Circular"],
+                        help="Algoritma layout graph"
+                    )
+
+                # ── Build Graph ───────────────────────────────────────
                 top_employees = (
                     df_sna.groupby("Employee Id")["weight"]
                     .sum().sort_values(ascending=False)
                     .head(top_emp).index
                 )
-
                 top_hotels = (
                     df_sna.groupby("Hotel Name")["weight"]
                     .sum().sort_values(ascending=False)
                     .head(top_htl).index
                 )
-
                 df_filtered = df_sna[
                     df_sna["Employee Id"].isin(top_employees) &
                     df_sna["Hotel Name"].isin(top_hotels)
                 ]
 
-                # -------------------------------
-                # BUILD GRAPH
-                # -------------------------------
                 G = nx.Graph()
                 for _, row in df_filtered.iterrows():
-                    G.add_edge(
-                        row["Employee Id"],
-                        row["Hotel Name"],
-                        weight=row["weight"]
-                    )
+                    G.add_edge(row["Employee Id"], row["Hotel Name"], weight=row["weight"])
 
-                pos = nx.spring_layout(G, seed=42, k=0.6)
+                # layout
+                seed = 42
+                if layout_algo == "Spring":
+                    pos = nx.spring_layout(G, seed=seed, k=0.7)
+                elif layout_algo == "Kamada-Kawai":
+                    try:
+                        pos = nx.kamada_kawai_layout(G)
+                    except Exception:
+                        pos = nx.spring_layout(G, seed=seed)
+                else:
+                    pos = nx.circular_layout(G)
 
-                # -------------------------------
-                # NODE METRICS
-                # -------------------------------
-                degree = dict(G.degree())
-                node_x, node_y, node_text, node_size, node_color = [], [], [], [], []
+                # ── Node metrics ──────────────────────────────────────
+                degree      = dict(G.degree())
+                betweenness = nx.betweenness_centrality(G)
+                max_weight  = max((G[u][v]["weight"] for u, v in G.edges()), default=1)
+                max_degree  = max(degree.values(), default=1)
 
-                for node in G.nodes():
-                    x, y = pos[node]
-                    node_x.append(x)
-                    node_y.append(y)
-
-                    is_employee = node in top_employees
-                    node_color.append("#4C78A8" if is_employee else "#B279A2")
-                    node_size.append(12 + degree[node] * 3)
-
-                    node_text.append(
-                        f"<b>{node}</b><br>"
-                        f"Connections: {degree[node]}"
-                    )
-
-                # -------------------------------
-                # EDGE TRACE
-                # -------------------------------
-                edge_x, edge_y = [], []
+                # ── Edge traces (color by weight) ─────────────────────
+                edge_traces = []
                 for u, v in G.edges():
                     x0, y0 = pos[u]
                     x1, y1 = pos[v]
-                    edge_x += [x0, x1, None]
-                    edge_y += [y0, y1, None]
+                    w = G[u][v]["weight"]
+                    opacity = 0.15 + 0.65 * (w / max_weight)
+                    width   = 0.5 + 3.5 * (w / max_weight)
+                    edge_traces.append(
+                        go.Scatter(
+                            x=[x0, x1, None],
+                            y=[y0, y1, None],
+                            mode="lines",
+                            line=dict(
+                                width=width,
+                                color=f"rgba(156,87,137,{opacity:.2f})"
+                            ),
+                            hoverinfo="none",
+                            showlegend=False
+                        )
+                    )
 
-                edge_trace = go.Scatter(
-                    x=edge_x,
-                    y=edge_y,
-                    mode="lines",
-                    line=dict(width=1, color="#D3D3D3"),
-                    hoverinfo="none"
-                )
+                # ── Employee nodes ────────────────────────────────────
+                emp_x, emp_y, emp_text, emp_size, emp_marker_color = [], [], [], [], []
+                for node in G.nodes():
+                    if node not in top_employees:
+                        continue
+                    x, y = pos[node]
+                    emp_x.append(x)
+                    emp_y.append(y)
+                    deg  = degree[node]
+                    bet  = betweenness.get(node, 0)
+                    size = 14 + (deg / max_degree) * 30
 
-                # -------------------------------
-                # NODE TRACE
-                # -------------------------------
-                node_trace = go.Scatter(
-                    x=node_x,
-                    y=node_y,
+                    # total trips from employee
+                    total_trips = df_filtered[df_filtered["Employee Id"] == node]["weight"].sum()
+                    hotels_visited = df_filtered[df_filtered["Employee Id"] == node]["Hotel Name"].nunique()
+
+                    emp_size.append(size)
+                    emp_marker_color.append(deg)
+                    emp_text.append(
+                        f"<b>👤 {node}</b><br>"
+                        f"Type: Employee<br>"
+                        f"Hotel Connections: <b>{deg}</b><br>"
+                        f"Total Stays: <b>{int(total_trips):,}</b><br>"
+                        f"Unique Hotels: <b>{hotels_visited}</b><br>"
+                        f"Betweenness: <b>{bet:.3f}</b>"
+                    )
+
+                employee_trace = go.Scatter(
+                    x=emp_x,
+                    y=emp_y,
                     mode="markers",
+                    name="Employee",
                     hoverinfo="text",
-                    text=node_text,
+                    text=emp_text,
                     marker=dict(
-                        size=node_size,
-                        color=node_color,
-                        line=dict(width=1, color="white")
+                        size=emp_size,
+                        color=emp_marker_color,
+                        colorscale=[
+                            [0.0, "#d4a0c8"],
+                            [0.5, "#9c5789"],
+                            [1.0, "#5c1f4a"]
+                        ],
+                        showscale=True,
+                        colorbar=dict(
+                            title=dict(
+                                text="Degree<br>(Employee)",
+                                font=dict(size=11, color="#666")
+                            ),
+                            thickness=10,
+                            len=0.45,
+                            y=0.75,
+                            x=1.01,
+                            tickfont=dict(size=10)
+                        ),
+                        line=dict(width=2, color="white"),
+                        symbol="circle"
                     )
                 )
 
+                # ── Hotel nodes ───────────────────────────────────────
+                htl_x, htl_y, htl_text, htl_size, htl_marker_color = [], [], [], [], []
+                for node in G.nodes():
+                    if node not in top_hotels:
+                        continue
+                    x, y = pos[node]
+                    htl_x.append(x)
+                    htl_y.append(y)
+                    deg  = degree[node]
+                    bet  = betweenness.get(node, 0)
+                    size = 18 + (deg / max_degree) * 28
+
+                    total_stays  = df_filtered[df_filtered["Hotel Name"] == node]["weight"].sum()
+                    unique_emps  = df_filtered[df_filtered["Hotel Name"] == node]["Employee Id"].nunique()
+
+                    htl_size.append(size)
+                    htl_marker_color.append(deg)
+                    htl_text.append(
+                        f"<b>🏨 {node}</b><br>"
+                        f"Type: Hotel<br>"
+                        f"Employee Connections: <b>{deg}</b><br>"
+                        f"Total Stays: <b>{int(total_stays):,}</b><br>"
+                        f"Unique Travelers: <b>{unique_emps}</b><br>"
+                        f"Betweenness: <b>{bet:.3f}</b>"
+                    )
+
+                hotel_trace = go.Scatter(
+                    x=htl_x,
+                    y=htl_y,
+                    mode="markers",
+                    name="Hotel",
+                    hoverinfo="text",
+                    text=htl_text,
+                    marker=dict(
+                        size=htl_size,
+                        color=htl_marker_color,
+                        colorscale=[
+                            [0.0, "#a0b8e8"],
+                            [0.5, "#5879c0"],
+                            [1.0, "#1a3a7a"]
+                        ],
+                        showscale=True,
+                        colorbar=dict(
+                            title=dict(
+                                text="Degree<br>(Hotel)",
+                                font=dict(size=11, color="#666")
+                            ),
+                            thickness=10,
+                            len=0.45,
+                            y=0.28,
+                            x=1.01,
+                            tickfont=dict(size=10)
+                        ),
+                        line=dict(width=2, color="white"),
+                        symbol="diamond"
+                    )
+                )
+
+                # ── Build Figure ──────────────────────────────────────
                 fig = go.Figure(
-                    data=[edge_trace, node_trace],
+                    data=edge_traces + [employee_trace, hotel_trace],
                     layout=go.Layout(
                         title=dict(
-                            text="Employee ↔ Hotel Interaction Network",
-                            font=dict(size=16)
+                            text=(
+                                f"<b>Employee ↔ Hotel Network</b>  "
+                                f"<span style='font-size:0.75em; color:#888;'>"
+                                f"Top {top_emp} Employees · Top {top_htl} Hotels · "
+                                f"{G.number_of_nodes()} nodes · {G.number_of_edges()} edges"
+                                f"</span>"
+                            ),
+                            font=dict(size=15, color="#1a1a1a"),
+                            x=0.0,
+                            xanchor="left"
                         ),
-                        showlegend=False,
+                        showlegend=True,
+                        legend=dict(
+                            orientation="h",
+                            y=-0.05,
+                            x=0.5,
+                            xanchor="center",
+                            bgcolor="rgba(255,255,255,0.9)",
+                            bordercolor="#e0e0e0",
+                            borderwidth=1,
+                            font=dict(size=12)
+                        ),
                         hovermode="closest",
-                        margin=dict(b=20, l=20, r=20, t=40),
+                        margin=dict(b=60, l=10, r=80, t=60),
                         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                        plot_bgcolor="white"
+                        plot_bgcolor="#fafafa",
+                        paper_bgcolor="white",
+                        height=640,
+                        annotations=[
+                            dict(
+                                text=(
+                                    "◆ = Hotel (diamond)  &nbsp;&nbsp;&nbsp;  "
+                                    "● = Employee (circle)  &nbsp;&nbsp;&nbsp;  "
+                                    "Edge thickness = visit frequency"
+                                ),
+                                showarrow=False,
+                                xref="paper", yref="paper",
+                                x=0.5, y=-0.085,
+                                xanchor="center",
+                                font=dict(size=11, color="#888888")
+                            )
+                        ]
                     )
                 )
 
+                # Wrap graph in styled container
+                st.markdown("""
+                    <div style="
+                        background: white;
+                        border-radius: 12px;
+                        padding: 20px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                        margin-bottom: 24px;
+                    ">
+                """, unsafe_allow_html=True)
                 st.plotly_chart(fig, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
 
-                # =====================================================
-                # TOP INFLUENCER TABLE
-                # =====================================================
-                st.markdown("### Network Influencer Ranking")
+                # ── Influencer Ranking + Dependency Table ─────────────
+                st.markdown("""
+                    <div style="
+                        font-size: 1.05em; font-weight: 700; color: #1a1a1a;
+                        margin: 4px 0 16px 0;
+                        display: flex; align-items: center; gap: 8px;
+                    ">
+                        🏆 Network Influencer Ranking
+                    </div>
+                """, unsafe_allow_html=True)
 
-                centrality_df = (
-                    pd.DataFrame.from_dict(degree, orient="index", columns=["Connections"])
-                    .sort_values("Connections", ascending=False)
-                    .reset_index()
-                    .rename(columns={"index": "Node"})
+                rank_col1, rank_col2 = st.columns(2)
+
+                # Top employees by degree
+                emp_rank = []
+                for node in top_employees:
+                    if node not in G.nodes():
+                        continue
+                    deg         = degree.get(node, 0)
+                    bet         = betweenness.get(node, 0)
+                    total_stays = df_filtered[df_filtered["Employee Id"] == node]["weight"].sum()
+                    emp_rank.append({
+                        "Employee ID": str(node),
+                        "Connections": deg,
+                        "Total Stays": int(total_stays),
+                        "Centrality": round(bet, 4)
+                    })
+                emp_rank_df = pd.DataFrame(emp_rank).sort_values("Connections", ascending=False).head(10).reset_index(drop=True)
+                emp_rank_df.index = emp_rank_df.index + 1
+                emp_rank_df.index.name = "Rank"
+
+                # Top hotels by degree
+                htl_rank = []
+                for node in top_hotels:
+                    if node not in G.nodes():
+                        continue
+                    deg          = degree.get(node, 0)
+                    bet          = betweenness.get(node, 0)
+                    total_stays  = df_filtered[df_filtered["Hotel Name"] == node]["weight"].sum()
+                    unique_emps  = df_filtered[df_filtered["Hotel Name"] == node]["Employee Id"].nunique()
+                    htl_rank.append({
+                        "Hotel Name": str(node),
+                        "Travelers": deg,
+                        "Total Stays": int(total_stays),
+                        "Centrality": round(bet, 4)
+                    })
+                htl_rank_df = pd.DataFrame(htl_rank).sort_values("Travelers", ascending=False).head(10).reset_index(drop=True)
+                htl_rank_df.index = htl_rank_df.index + 1
+                htl_rank_df.index.name = "Rank"
+
+                with rank_col1:
+                    st.markdown("""
+                        <div style="
+                            background: linear-gradient(135deg, #f5eef3 0%, #ffffff 100%);
+                            border-radius: 10px;
+                            padding: 14px 18px 4px 18px;
+                            border-left: 3px solid #9c5789;
+                            margin-bottom: 8px;
+                        ">
+                            <div style="font-size:0.78em; font-weight:700; color:#9c5789;
+                                        text-transform:uppercase; letter-spacing:0.7px;">
+                                👤 Top Employees by Connectivity
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    st.dataframe(
+                        emp_rank_df,
+                        use_container_width=True,
+                        column_config={
+                            "Connections": st.column_config.ProgressColumn(
+                                "Connections",
+                                min_value=0,
+                                max_value=int(emp_rank_df["Connections"].max()) if len(emp_rank_df) > 0 else 1,
+                                format="%d"
+                            ),
+                            "Total Stays": st.column_config.NumberColumn(
+                                "Total Stays",
+                                format="%d"
+                            )
+                        }
+                    )
+
+                with rank_col2:
+                    st.markdown("""
+                        <div style="
+                            background: linear-gradient(135deg, #eef3f5 0%, #ffffff 100%);
+                            border-radius: 10px;
+                            padding: 14px 18px 4px 18px;
+                            border-left: 3px solid #5879c0;
+                            margin-bottom: 8px;
+                        ">
+                            <div style="font-size:0.78em; font-weight:700; color:#5879c0;
+                                        text-transform:uppercase; letter-spacing:0.7px;">
+                                🏨 Top Hotels by Dependency Risk
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    st.dataframe(
+                        htl_rank_df,
+                        use_container_width=True,
+                        column_config={
+                            "Travelers": st.column_config.ProgressColumn(
+                                "Travelers",
+                                min_value=0,
+                                max_value=int(htl_rank_df["Travelers"].max()) if len(htl_rank_df) > 0 else 1,
+                                format="%d"
+                            ),
+                            "Total Stays": st.column_config.NumberColumn(
+                                "Total Stays",
+                                format="%d"
+                            )
+                        }
+                    )
+
+                # ── Key Insights ──────────────────────────────────────
+                st.markdown("<div style='margin-top: 24px;'></div>", unsafe_allow_html=True)
+
+                # Auto-compute insights
+                top_emp_node  = emp_rank_df.iloc[0]["Employee ID"] if len(emp_rank_df) > 0 else "—"
+                top_emp_conn  = emp_rank_df.iloc[0]["Connections"] if len(emp_rank_df) > 0 else 0
+                top_htl_node  = htl_rank_df.iloc[0]["Hotel Name"] if len(htl_rank_df) > 0 else "—"
+                top_htl_conn  = htl_rank_df.iloc[0]["Travelers"] if len(htl_rank_df) > 0 else 0
+
+                # vendor dependency: hotel with highest betweenness
+                htl_bet_top = max(
+                    [(n, betweenness[n]) for n in G.nodes() if n in top_hotels],
+                    key=lambda x: x[1],
+                    default=("—", 0)
                 )
 
-                st.dataframe(centrality_df.head(10), use_container_width=True)
+                insight_cols = st.columns(3)
+                insights = [
+                    (
+                        "🧑‍✈️", "Key Traveler",
+                        f"<b>{top_emp_node}</b> adalah employee paling terhubung dengan "
+                        f"<b>{top_emp_conn}</b> hotel berbeda — kandidat utama program loyalty.",
+                        "#9c5789", "#f5eef3", "#e8d5e3"
+                    ),
+                    (
+                        "🏨", "Vendor Dependency",
+                        f"<b>{top_htl_node}</b> dikunjungi oleh <b>{top_htl_conn}</b> karyawan — "
+                        f"risiko vendor dependency tinggi, pertimbangkan diversifikasi.",
+                        "#5879c0", "#eef3f5", "#d5e3e8"
+                    ),
+                    (
+                        "🔍", "Hidden Bottleneck",
+                        f"<b>{htl_bet_top[0]}</b> memiliki betweenness centrality tertinggi "
+                        f"({htl_bet_top[1]:.3f}) — hotel ini adalah jembatan kritis dalam jaringan.",
+                        "#5a9c7e", "#eef5f1", "#d5e8df"
+                    ),
+                ]
 
-                # =====================================================
-                # AUTO INSIGHT
-                # =====================================================
-                st.markdown("### Key Insight")
-                st.markdown(
-                    f"""
-                    - Network menampilkan **hubungan aktual Employee dan Hotel**
-                    - **Node terbesar** menunjukkan tingkat konektivitas tertinggi
-                    - Hotel dengan koneksi tinggi → **potensi vendor dependency**
-                    - Employee dengan koneksi tinggi → **traveler kunci / policy influencer**
-                    - Pola ini **tidak terlihat di laporan konvensional**
-                    """
-                )
+                for col, (icon, title, desc, color, bg, border_color) in zip(insight_cols, insights):
+                    with col:
+                        st.markdown(f"""
+                            <div style="
+                                background: {bg};
+                                border-radius: 10px;
+                                padding: 18px 20px;
+                                border: 1px solid {border_color};
+                                height: 100%;
+                            ">
+                                <div style="font-size: 1.5em; margin-bottom: 8px;">{icon}</div>
+                                <div style="font-size: 0.75em; font-weight: 700; color: {color};
+                                            text-transform: uppercase; letter-spacing: 0.7px;
+                                            margin-bottom: 8px;">{title}</div>
+                                <div style="font-size: 0.85em; color: #444; line-height: 1.6;">{desc}</div>
+                            </div>
+                        """, unsafe_allow_html=True)
 
             else:
-                st.warning("Kolom Employee Id atau Hotel Name tidak tersedia.")
+                st.markdown("""
+                    <div style="
+                        background: #fff8e1;
+                        border-radius: 10px;
+                        padding: 20px 24px;
+                        border-left: 4px solid #f0a500;
+                        font-size: 0.9em;
+                        color: #555;
+                    ">
+                        ⚠️ Kolom <b>Employee Id</b> atau <b>Hotel Name</b> tidak tersedia dalam dataset.
+                    </div>
+                """, unsafe_allow_html=True)
 
         # ======================================
         # TAB 5: SPEND CONCENTRATION (PARETO 80/20) - MINIMALIST
@@ -3051,6 +3477,366 @@ def main_app():
                             **Prinsip 80/20:** Umumnya 20% kategori menyumbang 80% biaya total.
                             """)
 
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                # =====================================================
+                # HOTEL PRICE INTELLIGENCE & NEGOTIATION SIMULATOR
+                # =====================================================
+
+                # ── Page Hero Header ──────────────────────────────
+                st.markdown("""
+                    <div style="
+                        background: white;
+                        border-radius: 8px;
+                        padding: 28px 32px;
+                        margin-bottom: 24px;
+                        border-left: 4px solid #9c5789;
+                        display: flex;
+                        align-items: center;
+                        gap: 16px;
+                        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+                    ">
+                        <div style="
+                            background: #f5eef3;
+                            border-radius: 50%;
+                            width: 52px; height: 52px;
+                            display: flex; align-items: center; justify-content: center;
+                            font-size: 1.6em; flex-shrink: 0;
+                        ">🏨</div>
+                        <div>
+                            <div style="font-size:1.25em; font-weight:700; color:#1a1a1a; line-height:1.2;">
+                                Hotel Price Intelligence
+                            </div>
+                            <div style="font-size:0.88em; color:#888888; margin-top:4px;">
+                                Analisis harga historis & simulasi negosiasi kontrak hotel
+                            </div>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                if df_all.empty:
+                    st.warning("No data loaded.")
+                else:
+
+                    # =====================================================
+                    # HOTEL SELECTION
+                    # =====================================================
+
+                    if "Canonical Hotel Name" in df_all.columns:
+                        df_all["Hotel Display"] = (
+                            df_all["Canonical Hotel Name"]
+                            .astype(str)
+                            .str.strip()
+                            .str.replace(r"\s+", " ", regex=True)
+                            .str.title()
+                        )
+                    else:
+                        df_all["Hotel Display"] = (
+                            df_all["Hotel Name"]
+                            .astype(str)
+                            .str.strip()
+                            .str.replace(r"\s+", " ", regex=True)
+                            .str.title()
+                        )
+
+                    hotel_list = sorted(df_all["Hotel Display"].dropna().unique())
+
+                    # ── Selection Card ─────────────────────────────────
+                    st.markdown("""
+                        <div style="
+                            background: white;
+                            border-radius: 8px;
+                            padding: 20px 24px 8px 24px;
+                            margin-bottom: 6px;
+                            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+                        ">
+                            <div style="font-size:0.78em; font-weight:600; color:#9c5789;
+                                        text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">
+                                🔍 Pilih Hotel
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                    selected_hotel = st.selectbox(
+                        "Select Hotel",
+                        hotel_list,
+                        label_visibility="collapsed"
+                    )
+
+                    df_hotel = df_all[df_all["Hotel Display"] == selected_hotel].copy()
+
+                    # =====================================================
+                    # PRICE CALCULATION
+                    # =====================================================
+
+                    if not df_hotel.empty:
+
+                        if "Invoice Amount" in df_hotel.columns and "Number of Rooms Night" in df_hotel.columns:
+
+                            df_valid = df_hotel[
+                                (df_hotel["Invoice Amount"].notna()) &
+                                (df_hotel["Number of Rooms Night"] > 0)
+                            ].copy()
+
+                            df_valid["Price Per Night"] = (
+                                df_valid["Invoice Amount"] /
+                                df_valid["Number of Rooms Night"]
+                            )
+
+                            avg_rate    = df_valid["Price Per Night"].mean()
+                            median_rate = df_valid["Price Per Night"].median()
+                            max_rate    = df_valid["Price Per Night"].max()
+                            min_rate    = df_valid["Price Per Night"].min()
+                            total_room_nights = df_valid["Number of Rooms Night"].sum()
+
+                            # ── KPI Cards (custom HTML) ────────────────────
+                            st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+
+                            col1, col2, col3, col4, col5 = st.columns(5)
+
+                            kpi_data = [
+                                ("📊", "Avg Rate",        f"Rp {avg_rate:,.0f}",          "#9c5789"),
+                                ("📍", "Median Rate",     f"Rp {median_rate:,.0f}",        "#7a4a6e"),
+                                ("🔺", "Max Rate",        f"Rp {max_rate:,.0f}",           "#c0556a"),
+                                ("🔻", "Min Rate",        f"Rp {min_rate:,.0f}",           "#5a9c7e"),
+                                ("🌙", "Total Room Nights", f"{total_room_nights:,.0f}",   "#5879c0"),
+                            ]
+
+                            for col, (icon, label, value, color) in zip(
+                                [col1, col2, col3, col4, col5], kpi_data
+                            ):
+                                with col:
+                                    st.markdown(f"""
+                                        <div style="
+                                            background: white;
+                                            border-radius: 8px;
+                                            padding: 18px 16px 16px 16px;
+                                            border-top: 3px solid {color};
+                                            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+                                            text-align: center;
+                                            height: 100%;
+                                        ">
+                                            <div style="font-size:1.5em; margin-bottom:6px;">{icon}</div>
+                                            <div style="font-size:0.72em; font-weight:600; color:#888888;
+                                                        text-transform:uppercase; letter-spacing:0.6px;
+                                                        margin-bottom:8px;">{label}</div>
+                                            <div style="font-size:1.05em; font-weight:700; color:#1a1a1a;
+                                                        line-height:1.3;">{value}</div>
+                                        </div>
+                                    """, unsafe_allow_html=True)
+
+                            st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+
+                            # =====================================================
+                            # NEGOTIATION SIMULATION
+                            # =====================================================
+
+                            st.markdown("""
+                                <div style="
+                                    background: white;
+                                    border-radius: 8px;
+                                    padding: 24px 28px 4px 28px;
+                                    margin-bottom: 6px;
+                                    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+                                ">
+                                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
+                                        <span style="font-size:1.1em;">🤝</span>
+                                        <span style="font-size:1em; font-weight:700; color:#1a1a1a;">
+                                            Negotiation Simulator
+                                        </span>
+                                    </div>
+                                    <div style="font-size:0.82em; color:#888888; margin-bottom:16px;">
+                                        Simulasikan potensi penghematan berdasarkan target diskon negosiasi
+                                    </div>
+                                </div>
+                            """, unsafe_allow_html=True)
+
+                            target_discount = st.slider(
+                                "🎯 Target Discount (%)",
+                                min_value=0,
+                                max_value=30,
+                                value=10,
+                                help="Geser untuk mengatur target diskon negosiasi"
+                            )
+
+                            negotiated_rate  = avg_rate * (1 - target_discount / 100)
+                            estimated_saving = (avg_rate - negotiated_rate) * total_room_nights
+
+                            # ── Result Banner ──────────────────────────────
+                            st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+
+                            res_col1, res_col2, res_col3 = st.columns(3)
+
+                            with res_col1:
+                                st.markdown(f"""
+                                    <div style="
+                                        background: #f5eef3;
+                                        border-radius: 8px;
+                                        padding: 20px;
+                                        text-align: center;
+                                        border: 1px solid #e8d5e3;
+                                    ">
+                                        <div style="font-size:0.75em; font-weight:600; color:#9c5789;
+                                                    text-transform:uppercase; letter-spacing:0.6px;">
+                                            Current Avg Rate
+                                        </div>
+                                        <div style="font-size:1.4em; font-weight:700; color:#1a1a1a; margin-top:8px;">
+                                            Rp {avg_rate:,.0f}
+                                        </div>
+                                        <div style="font-size:0.78em; color:#888888; margin-top:4px;">per malam</div>
+                                    </div>
+                                """, unsafe_allow_html=True)
+
+                            with res_col2:
+                                st.markdown(f"""
+                                    <div style="
+                                        background: #eef3f5;
+                                        border-radius: 8px;
+                                        padding: 20px;
+                                        text-align: center;
+                                        border: 1px solid #d5e3e8;
+                                    ">
+                                        <div style="font-size:0.75em; font-weight:600; color:#5879c0;
+                                                    text-transform:uppercase; letter-spacing:0.6px;">
+                                            Negotiated Rate (-{target_discount}%)
+                                        </div>
+                                        <div style="font-size:1.4em; font-weight:700; color:#1a1a1a; margin-top:8px;">
+                                            Rp {negotiated_rate:,.0f}
+                                        </div>
+                                        <div style="font-size:0.78em; color:#888888; margin-top:4px;">per malam</div>
+                                    </div>
+                                """, unsafe_allow_html=True)
+
+                            with res_col3:
+                                st.markdown(f"""
+                                    <div style="
+                                        background: linear-gradient(135deg, #9c5789 0%, #7a4a6e 100%);
+                                        border-radius: 8px;
+                                        padding: 20px;
+                                        text-align: center;
+                                    ">
+                                        <div style="font-size:0.75em; font-weight:600; color:rgba(255,255,255,0.75);
+                                                    text-transform:uppercase; letter-spacing:0.6px;">
+                                            💰 Estimated Saving
+                                        </div>
+                                        <div style="font-size:1.4em; font-weight:700; color:#ffffff; margin-top:8px;">
+                                            Rp {estimated_saving:,.0f}
+                                        </div>
+                                        <div style="font-size:0.78em; color:rgba(255,255,255,0.65); margin-top:4px;">
+                                            total potensi hemat
+                                        </div>
+                                    </div>
+                                """, unsafe_allow_html=True)
+
+                            # =====================================================
+                            # NARASI PENJELASAN — Collapsible & Styled
+                            # =====================================================
+
+                            st.markdown("<div style='margin-top:24px;'></div>", unsafe_allow_html=True)
+
+                            with st.expander("📘 Cara Perhitungan Estimated Saving", expanded=False):
+
+                                step_col1, step_col2 = st.columns(2)
+
+                                with step_col1:
+                                    st.markdown(f"""
+                                        <div style="
+                                            background: #fafafa;
+                                            border-radius: 8px;
+                                            padding: 16px 18px;
+                                            border-left: 3px solid #9c5789;
+                                            margin-bottom: 12px;
+                                        ">
+                                            <div style="font-size:0.7em; font-weight:700; color:#9c5789;
+                                                        text-transform:uppercase; letter-spacing:0.8px;">
+                                                Step 1 — Current Average Rate
+                                            </div>
+                                            <div style="font-size:0.88em; color:#444; margin-top:8px; line-height:1.6;">
+                                                Rata-rata harga kamar hotel ini saat ini adalah
+                                                <b style="color:#1a1a1a;">Rp {avg_rate:,.0f}</b> per malam.
+                                            </div>
+                                        </div>
+
+                                        <div style="
+                                            background: #fafafa;
+                                            border-radius: 8px;
+                                            padding: 16px 18px;
+                                            border-left: 3px solid #5879c0;
+                                        ">
+                                            <div style="font-size:0.7em; font-weight:700; color:#5879c0;
+                                                        text-transform:uppercase; letter-spacing:0.8px;">
+                                                Step 3 — Total Room Nights
+                                            </div>
+                                            <div style="font-size:0.88em; color:#444; margin-top:8px; line-height:1.6;">
+                                                Total pemakaian kamar dalam periode data adalah
+                                                <b style="color:#1a1a1a;">{total_room_nights:,.0f} malam</b>.
+                                            </div>
+                                        </div>
+                                    """, unsafe_allow_html=True)
+
+                                with step_col2:
+                                    st.markdown(f"""
+                                        <div style="
+                                            background: #fafafa;
+                                            border-radius: 8px;
+                                            padding: 16px 18px;
+                                            border-left: 3px solid #7a4a6e;
+                                            margin-bottom: 12px;
+                                        ">
+                                            <div style="font-size:0.7em; font-weight:700; color:#7a4a6e;
+                                                        text-transform:uppercase; letter-spacing:0.8px;">
+                                                Step 2 — Negotiated Rate
+                                            </div>
+                                            <div style="font-size:0.88em; color:#444; margin-top:8px; line-height:1.6;">
+                                                Dengan diskon <b>{target_discount}%</b>, harga baru menjadi
+                                                <b style="color:#1a1a1a;">Rp {negotiated_rate:,.0f}</b> per malam.
+                                            </div>
+                                        </div>
+
+                                        <div style="
+                                            background: #f5eef3;
+                                            border-radius: 8px;
+                                            padding: 16px 18px;
+                                            border-left: 3px solid #9c5789;
+                                        ">
+                                            <div style="font-size:0.7em; font-weight:700; color:#9c5789;
+                                                        text-transform:uppercase; letter-spacing:0.8px;">
+                                                Step 4 — Formula Saving
+                                            </div>
+                                            <div style="font-size:0.83em; color:#444; margin-top:8px; line-height:1.7;
+                                                        font-family: monospace;">
+                                                (Rp {avg_rate:,.0f} − Rp {negotiated_rate:,.0f})
+                                                × {total_room_nights:,.0f}<br>
+                                                = <b style="color:#9c5789; font-size:1.05em;">
+                                                    Rp {estimated_saving:,.0f}
+                                                </b>
+                                            </div>
+                                        </div>
+                                    """, unsafe_allow_html=True)
+
+                                st.markdown(f"""
+                                    <div style="
+                                        background: white;
+                                        border-radius: 8px;
+                                        padding: 14px 18px;
+                                        margin-top: 14px;
+                                        border: 1px solid #e8d5e3;
+                                        font-size: 0.85em;
+                                        color: #555;
+                                        line-height: 1.6;
+                                    ">
+                                        📌 <b>Kesimpulan:</b> Jika diskon <b>{target_discount}%</b> berhasil dicapai
+                                        dan volume pemakaian tetap sama, perusahaan berpotensi menghemat
+                                        <b style="color:#9c5789;">Rp {estimated_saving:,.0f}</b>.
+                                    </div>
+                                """, unsafe_allow_html=True)
+
+                        else:
+                            st.warning("Required columns not available.")
+
+                    else:
+                        st.info("No data for selected hotel.")
         # ======================================
         # TAB 6: HOTEL
         # ======================================
@@ -3294,191 +4080,7 @@ def main_app():
         # TAB 8: OTHER
         # ======================================
  
-        with tab8:
 
-            st.subheader("Hotel Price Intelligence & Negotiation Simulator")
-
-#            import pandas as pd
-#            import numpy as np
-
-            df = df_all.copy()
-            
-            # ==============================
-            # FILTER
-            # ==============================
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                selected_company = st.selectbox(
-                    "Filter Nama Perusahaan",
-                    ["All"] + sorted(df["Nama Perusahaan"].dropna().unique()),
-                    key="neg_company"
-                )
-
-            with col2:
-                selected_city = st.selectbox(
-                    "Filter City",
-                    ["All"] + sorted(df["City"].dropna().unique()),
-                    key="neg_city"
-                )
-
-            if selected_company != "All":
-                df = df[df["Nama Perusahaan"] == selected_company]
-
-            if selected_city != "All":
-                df = df[df["City"] == selected_city]
-
-            # ==============================
-            # FILTER INDONESIA (TARUH DI SINI)
-            # ==============================
-
-            only_indonesia = st.checkbox(
-                "Tampilkan hanya hotel di Indonesia",
-                value=True
-            )
-
-            if only_indonesia and "Country" in df.columns:
-                df = df[df["Country"].str.contains("indonesia", case=False, na=False)]
-
-            # ==============================
-            # PREPARE DATA
-            # ==============================
-
-            df["Number of Rooms Night"] = pd.to_numeric(
-                df["Number of Rooms Night"], errors="coerce"
-            ).fillna(1)
-
-            df["Invoice Amount"] = pd.to_numeric(
-                df["Invoice Amount"], errors="coerce"
-            ).fillna(0)
-
-            df["ADR"] = df["Invoice Amount"] / df["Number of Rooms Night"]
-
-            # ==============================
-            # AGGREGATION PER HOTEL
-            # ==============================
-
-            hotel_price = df.groupby(["Hotel Name", "City"]).agg(
-                Min_ADR=("ADR", "min"),
-                Median_ADR=("ADR", "median"),
-                Mean_ADR=("ADR", "mean"),
-                Max_ADR=("ADR", "max"),
-                Total_RoomNight=("Number of Rooms Night", "sum"),
-                Total_Revenue=("Invoice Amount", "sum")
-            ).reset_index()
-
-            hotel_price["Price_Range"] = (
-                hotel_price["Max_ADR"] - hotel_price["Min_ADR"]
-            )
-
-            # ==============================
-            # RECOMMENDED CONTRACT RANGE
-            # ==============================
-
-            hotel_price["Recommended_Lower"] = hotel_price["Min_ADR"]
-            hotel_price["Recommended_Upper"] = hotel_price["Median_ADR"] * 0.95
-
-            # ==============================
-            # DISCOUNT SIMULATOR
-            # ==============================
-
-            st.markdown("### Negotiation Discount Simulator")
-
-            discount_slider = st.slider(
-                "Pilih Target Diskon (%) dari Median ADR",
-                min_value=0,
-                max_value=100,
-                value=10,
-                step=1
-            )
-
-            discount_pct = discount_slider / 100
-
-            hotel_price["Negotiated_ADR"] = (
-                hotel_price["Median_ADR"] * (1 - discount_pct)
-            )
-
-            hotel_price["Saving_per_Night"] = (
-                hotel_price["Median_ADR"] - hotel_price["Negotiated_ADR"]
-            )
-
-            hotel_price["Potential_Total_Saving"] = (
-                hotel_price["Saving_per_Night"] *
-                hotel_price["Total_RoomNight"]
-            )
-
-            hotel_price = hotel_price.sort_values(
-                by="Potential_Total_Saving",
-                ascending=False
-            )
-
-            # ==============================
-            # DISPLAY
-            # ==============================
-
-            st.markdown("### Hotel Historical Price Analysis")
-
-            display_cols = [
-                "Hotel Name",
-                "City",
-                "Total_RoomNight",   # ← TAMBAHKAN INI
-#                "Min_ADR",
-                "Median_ADR",
-                "Mean_ADR",
-                "Max_ADR",
-#                "Price_Range",
-                "Recommended_Lower",
-                "Recommended_Upper",
-                "Negotiated_ADR",
-                "Potential_Total_Saving"
-            ]
-
-            currency_cols = [
-#                "Min_ADR",
-                "Median_ADR",
-                "Mean_ADR",
-                "Max_ADR",
-#                "Price_Range",
-                "Recommended_Lower",
-                "Recommended_Upper",
-                "Negotiated_ADR",
-                "Potential_Total_Saving"
-            ]
-
-            # Fungsi format Rupiah Indonesia
-            def format_rupiah(x):
-                try:
-                    return "Rp{:,.0f}".format(x).replace(",", ".")
-                except:
-                    return x
-
-            # Copy dataframe
-            hotel_display = hotel_price.copy()
-
-            # Hitung total saving dari numeric dataframe
-            total_saving = hotel_price["Potential_Total_Saving"].sum()
-
-            # Format kolom currency
-            for col in currency_cols:
-                hotel_display[col] = hotel_display[col].apply(format_rupiah)
-
-            hotel_display["Total_RoomNight"] = hotel_display["Total_RoomNight"].apply(
-                lambda x: f"{int(x):,}".replace(",", ".")
-            )
-
-            # Tampilkan total saving dengan format Indonesia
-            st.success(
-                f"💰 Total Potential Saving dengan diskon {discount_slider}%: {format_rupiah(total_saving)}"
-            )
-
-            st.dataframe(
-                hotel_display[display_cols],
-                use_container_width=True
-            )
-
-    else:
-        st.info("👆 Please load data from Cloud/Drive or upload files to begin")
 
     # ======================================
     # DISCLAIMER
