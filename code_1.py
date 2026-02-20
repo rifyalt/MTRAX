@@ -3458,7 +3458,7 @@ def main_app():
                             .str.upper()
                         )
 
-                        if country_filter == "Indonesia":
+                        if country_filter == "Domestik":
                             df_sc_filtered = df_sc_country[df_sc_country["_country_upper"] == "INDONESIA"]
                             filter_label = "🇮🇩 Indonesia"
                         else:
@@ -4953,4 +4953,5 @@ if not st.session_state.get("authenticated"):
 else:
     check_session_timeout()
     main_app()
+
 
