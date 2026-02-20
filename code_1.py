@@ -1139,14 +1139,65 @@ def main_app():
                     .tolist()
                 )
 
-                selected_company = st.selectbox(
+                # ── Styling multiselect ───────────────────────────────
+                st.markdown("""
+                <style>
+                /* Label */
+                div[data-testid="stMultiSelect"] > label {
+                    font-size: 0.85em !important;
+                    color: #555 !important;
+                    font-weight: 400 !important;
+                    margin-bottom: 4px !important;
+                }
+                /* Container input */
+                div[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+                    border: 1px solid #e0e0e0 !important;
+                    border-radius: 6px !important;
+                    background: white !important;
+                    min-height: 38px !important;
+                    font-size: 0.875em !important;
+                }
+                div[data-testid="stMultiSelect"] [data-baseweb="select"] > div:focus-within {
+                    border-color: #9c5789 !important;
+                    box-shadow: 0 0 0 2px rgba(156,87,137,0.15) !important;
+                }
+                /* Tag / pill tiap item terpilih */
+                div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
+                    background: #9c5789 !important;
+                    border-radius: 50px !important;
+                    padding: 2px 10px !important;
+                    font-size: 0.78em !important;
+                    font-weight: 500 !important;
+                    color: white !important;
+                    border: none !important;
+                }
+                /* X pada tag */
+                div[data-testid="stMultiSelect"] [data-baseweb="tag"] span[role="presentation"] {
+                    color: rgba(255,255,255,0.75) !important;
+                    font-size: 1.1em !important;
+                }
+                /* Dropdown option hover */
+                div[data-testid="stMultiSelect"] [role="option"]:hover {
+                    background: rgba(156,87,137,0.08) !important;
+                }
+                /* Dropdown option selected */
+                div[data-testid="stMultiSelect"] [aria-selected="true"] {
+                    background: rgba(156,87,137,0.12) !important;
+                    color: #9c5789 !important;
+                    font-weight: 500 !important;
+                }
+                </style>
+                """, unsafe_allow_html=True)
+
+                selected_companies = st.multiselect(
                     "Filter Overview berdasarkan Nama Perusahaan",
-                    options=["All"] + company_list,
-                    index=0
+                    options=company_list,
+                    default=[],
+                    placeholder="Semua perusahaan (pilih untuk filter spesifik)…"
                 )
 
-                if selected_company != "All":
-                    df_overview = df_all[df_all[company_col] == selected_company]
+                if selected_companies:
+                    df_overview = df_all[df_all[company_col].isin(selected_companies)]
                 else:
                     df_overview = df_all.copy()
             else:
@@ -4686,7 +4737,7 @@ def main_app():
     """, unsafe_allow_html=True)
 
 # ===============================
-# ROUTING (WAJIB PALING BAWAH)
+# 6. ROUTING (WAJIB PALING BAWAH)
 # ===============================
 if not st.session_state.get("authenticated"):
     login_page()
