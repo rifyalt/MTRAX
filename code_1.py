@@ -3391,7 +3391,7 @@ def main_app():
                     )
 
                     # ======================================
-                    # FILTER INDONESIA / NON-INDONESIA
+                    # FILTER DOMESTIK / INTERNASIONAL
                     # ======================================
                     if "Country" in df_sc.columns:
 
@@ -3442,7 +3442,7 @@ def main_app():
 
                         country_filter = st.radio(
                             label="filter_wilayah",
-                            options=["Indonesia", "Non-Indonesia"],
+                            options=["Domestik", "Internasional"],
                             index=0,
                             horizontal=True,
                             label_visibility="collapsed",
@@ -3463,7 +3463,7 @@ def main_app():
                             filter_label = "🇮🇩 Indonesia"
                         else:
                             df_sc_filtered = df_sc_country[df_sc_country["_country_upper"] != "INDONESIA"]
-                            filter_label = "🌐 Non-Indonesia"
+                            filter_label = "🌐 Internasional"
 
                         df_sc_filtered = df_sc_filtered.drop(columns=["_country_upper"])
 
@@ -4953,3 +4953,4 @@ if not st.session_state.get("authenticated"):
 else:
     check_session_timeout()
     main_app()
+
