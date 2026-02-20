@@ -3460,10 +3460,10 @@ def main_app():
 
                         if country_filter == "Domestik":
                             df_sc_filtered = df_sc_country[df_sc_country["_country_upper"] == "INDONESIA"]
-                            filter_label = "🇮🇩 Indonesia"
+                            filter_label = "Indonesia"
                         else:
                             df_sc_filtered = df_sc_country[df_sc_country["_country_upper"] != "INDONESIA"]
-                            filter_label = "🌐 Internasional"
+                            filter_label = "Internasional"
 
                         df_sc_filtered = df_sc_filtered.drop(columns=["_country_upper"])
 
@@ -4953,5 +4953,6 @@ if not st.session_state.get("authenticated"):
 else:
     check_session_timeout()
     main_app()
+
 
 
