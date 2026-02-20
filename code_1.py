@@ -1574,15 +1574,12 @@ def main_app():
                     )
                     output_tr_trend.seek(0)
 
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(
-                            label="⬇️ Download Data",
-                            data=output_tr_trend,
-                            file_name="monthly_travel_request_trend.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.info('🔒 Download hanya tersedia untuk Admin.')
+                    st.download_button(
+                        label="⬇️ Download Data",
+                        data=output_tr_trend,
+                        file_name="monthly_travel_request_trend.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
             # ======================================
             # COLUMN 2: MARKET DISTRIBUTION & ROOM NIGHTS TREND
@@ -1693,15 +1690,12 @@ def main_app():
                     )
                     output_rn_trend.seek(0)
 
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(
-                            label="⬇️ Download Data",
-                            data=output_rn_trend,
-                            file_name="monthly_room_nights_trend.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.info('🔒 Download hanya tersedia untuk Admin.')
+                    st.download_button(
+                        label="⬇️ Download Data",
+                        data=output_rn_trend,
+                        file_name="monthly_room_nights_trend.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
                 else:
                     st.info("Column 'Issue Time' or 'Number of Rooms Night' not available.")
@@ -1806,15 +1800,12 @@ def main_app():
                     sim_df.to_excel(output, index=False, sheet_name="Hotel Name Similarity")
                     output.seek(0)
 
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(
-                            label="⬇️ Download Similarity Result (Excel)",
-                            data=output,
-                            file_name="hotel_name_similarity.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.info('🔒 Download hanya tersedia untuk Admin.')
+                    st.download_button(
+                        label="⬇️ Download Similarity Result (Excel)",
+                        data=output,
+                        file_name="hotel_name_similarity.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
                 else:
                     st.info("Tidak ditemukan hotel dengan tingkat kemiripan sesuai threshold.")
             else:
@@ -1837,15 +1828,12 @@ def main_app():
                 )
                 output.seek(0)
 
-                if st.session_state.get('role') == 'Admin':
-                    st.download_button(
-                        "⬇️ Download Canonical Mapping (Excel)",
-                        data=output,
-                        file_name="hotel_canonical_mapping.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.info('🔒 Download hanya tersedia untuk Admin.')
+                st.download_button(
+                    "⬇️ Download Canonical Mapping (Excel)",
+                    data=output,
+                    file_name="hotel_canonical_mapping.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
             else:
                 st.info("Tidak ada mapping canonical yang terbentuk.")
 
@@ -1942,15 +1930,12 @@ def main_app():
                 )
                 output.seek(0)
 
-                if st.session_state.get('role') == 'Admin':
-                    st.download_button(
-                        label="⬇️ Download Data",
-                        data=output,
-                        file_name="employee_booking_cohort.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.info('🔒 Download hanya tersedia untuk Admin.')
+                st.download_button(
+                    label="⬇️ Download Data",
+                    data=output,
+                    file_name="employee_booking_cohort.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
                 # ======================================
                 # RFM-LIKE SEGMENTATION
@@ -3260,10 +3245,94 @@ def main_app():
                     )
 
                     # ======================================
+                    # FILTER INDONESIA / NON-INDONESIA
+                    # ======================================
+                    if "Country" in df_sc.columns:
+
+                        # ── Pill Toggle: styled st.radio ─────────────────
+                        st.markdown("""
+                        <style>
+                        div[data-testid="stRadio"] > div[role="radiogroup"] {
+                            display: inline-flex !important;
+                            background: #9c5789;
+                            border-radius: 50px;
+                            padding: 3px;
+                            gap: 0;
+                            box-shadow: 0 1px 6px rgba(156,87,137,0.22);
+                        }
+                        div[data-testid="stRadio"] > div[role="radiogroup"] > label {
+                            cursor: pointer;
+                            padding: 4px 16px !important;
+                            border-radius: 50px !important;
+                            font-size: 0.78em !important;
+                            font-weight: 500 !important;
+                            color: rgba(255,255,255,0.80) !important;
+                            transition: all 0.2s ease;
+                            margin: 0 !important;
+                            line-height: 1.6 !important;
+                        }
+                        div[data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child {
+                            display: none !important;
+                        }
+                        div[data-testid="stRadio"] > div[role="radiogroup"] > label > div:last-child p {
+                            color: inherit !important;
+                            font-weight: 500 !important;
+                            font-size: 1em !important;
+                            margin: 0 !important;
+                        }
+                        div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) {
+                            background: white !important;
+                            color: #9c5789 !important;
+                            box-shadow: 0 1px 4px rgba(0,0,0,0.10) !important;
+                        }
+                        div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) > div:last-child p {
+                            color: #9c5789 !important;
+                        }
+                        div[data-testid="stRadio"] > label {
+                            display: none !important;
+                        }
+                        </style>
+                        """, unsafe_allow_html=True)
+
+                        country_filter = st.radio(
+                            label="filter_wilayah",
+                            options=["Indonesia", "Non-Indonesia"],
+                            index=0,
+                            horizontal=True,
+                            label_visibility="collapsed",
+                            key="pareto_country_radio"
+                        )
+
+                        # Apply filter berdasarkan radio value
+                        df_sc_country = df_sc.copy()
+                        df_sc_country["_country_upper"] = (
+                            df_sc_country["Country"]
+                            .astype(str)
+                            .str.strip()
+                            .str.upper()
+                        )
+
+                        if country_filter == "Indonesia":
+                            df_sc_filtered = df_sc_country[df_sc_country["_country_upper"] == "INDONESIA"]
+                            filter_label = "🇮🇩 Indonesia"
+                        else:
+                            df_sc_filtered = df_sc_country[df_sc_country["_country_upper"] != "INDONESIA"]
+                            filter_label = "🌐 Non-Indonesia"
+
+                        df_sc_filtered = df_sc_filtered.drop(columns=["_country_upper"])
+
+                        if df_sc_filtered.empty:
+                            st.warning(f"⚠️ Tidak ada data untuk filter: {filter_label}")
+                            st.stop()
+                    else:
+                        df_sc_filtered = df_sc.copy()
+                        filter_label = "🌏 Semua Wilayah"
+
+                    # ======================================
                     # PARETO CALCULATION
                     # ======================================
                     pareto_df = (
-                        df_sc.groupby(dimension)["Invoice Amount"]
+                        df_sc_filtered.groupby(dimension)["Invoice Amount"]
                         .sum()
                         .reset_index()
                         .sort_values("Invoice Amount", ascending=False)
@@ -3298,7 +3367,7 @@ def main_app():
                             border-radius: 6px;
                             border-left: 3px solid #9c5789;
                         ">
-                            <div style="color: #999; font-size: 0.8em; margin-bottom: 6px;">Total Spend</div>
+                            <div style="color: #999; font-size: 0.8em; margin-bottom: 6px;">Total Spend · {filter_label}</div>
                             <div style="color: #9c5789; font-size: 1.6em; font-weight: 500;">Rp{total_spend:,.0f}</div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -3506,15 +3575,12 @@ def main_app():
                         top_contributors.to_excel(output_excel, index=False, sheet_name="Top Contributors")
                         output_excel.seek(0)
                         
-                        if st.session_state.get('role') == 'Admin':
-                            st.download_button(
-                                label="Download Excel",
-                                data=output_excel,
-                                file_name=f"pareto_{dimension.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
-                        else:
-                            st.info('🔒 Download hanya tersedia untuk Admin.')
+                        st.download_button(
+                            label="Download Excel",
+                            data=output_excel,
+                            file_name=f"pareto_{dimension.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
 
                     with tab_insight:
                         st.markdown("### Key Insights")
@@ -3527,7 +3593,7 @@ def main_app():
                             border-left: 3px solid #9c5789;
                         ">
                             <p style="margin: 0 0 12px 0; color: #333;">
-                                <strong>Konsentrasi Spending:</strong><br>
+                                <strong>Konsentrasi Spending ({filter_label}):</strong><br>
                                 Top 20% ({top_20_percent_count} {dimension}) menyumbang <strong>{top_spend_pct:.1f}%</strong> dari total pengeluaran.
                             </p>
                             <p style="margin: 0; color: #666; font-size: 0.9em;">
@@ -3992,15 +4058,12 @@ def main_app():
                     )
                     output_hotels.seek(0)
 
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(
-                            label="⬇️ Download Data",
-                            data=output_hotels,
-                            file_name="top_100_hotels_by_room_nights.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.info('🔒 Download hanya tersedia untuk Admin.')
+                    st.download_button(
+                        label="⬇️ Download Data",
+                        data=output_hotels,
+                        file_name="top_100_hotels_by_room_nights.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
                 else:
                     st.warning("Kolom 'Hotel Name' atau 'Number of Rooms Night' tidak ditemukan.")
 
@@ -4073,15 +4136,12 @@ def main_app():
                     )
                     output_cities.seek(0)
 
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(
-                            label="⬇️ Download Data",
-                            data=output_cities,
-                            file_name="top_100_cities_by_room_nights.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.info('🔒 Download hanya tersedia untuk Admin.')
+                    st.download_button(
+                        label="⬇️ Download Data",
+                        data=output_cities,
+                        file_name="top_100_cities_by_room_nights.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
                 else:
                     st.warning("Kolom City / City Destination atau Number of Rooms Night tidak ditemukan.")
 
@@ -4101,16 +4161,13 @@ def main_app():
 
                 if st.button("Download CSV", use_container_width=True, type="primary"):
                     csv = df_all.to_csv(index=False).encode("utf-8")
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(
-                            "⬇️ Download",
-                            data=csv,
-                            file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
-                    else:
-                        st.info('🔒 Download hanya tersedia untuk Admin.')
+                    st.download_button(
+                        "⬇️ Download",
+                        data=csv,
+                        file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
 
             with col2:
                 st.markdown("#### Excel Format")
@@ -4121,16 +4178,13 @@ def main_app():
                     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
                         df_all.to_excel(writer, index=False, sheet_name="Travel Data")
 
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(
-                            "⬇️ Download",
-                            data=buffer.getvalue(),
-                            file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
-                    else:
-                        st.info('🔒 Download hanya tersedia untuk Admin.')
+                    st.download_button(
+                        "⬇️ Download",
+                        data=buffer.getvalue(),
+                        file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
 
             with col3:
                 st.markdown("#### JSON Format")
@@ -4138,16 +4192,13 @@ def main_app():
 
                 if st.button("Download JSON", use_container_width=True, type="primary"):
                     json_data = df_all.to_json(orient="records", date_format="iso")
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(
-                            "⬇️ Download",
-                            data=json_data,
-                            file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                            mime="application/json",
-                            use_container_width=True
-                        )
-                    else:
-                        st.info('🔒 Download hanya tersedia untuk Admin.')
+                    st.download_button(
+                        "⬇️ Download",
+                        data=json_data,
+                        file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json",
+                        use_container_width=True
+                    )
 
             st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
             st.markdown("### Export Statistics")
@@ -4635,7 +4686,7 @@ def main_app():
     """, unsafe_allow_html=True)
 
 # ===============================
-# 6. ROUTING (WAJIB PALING BAWAH)
+# ROUTING (WAJIB PALING BAWAH)
 # ===============================
 if not st.session_state.get("authenticated"):
     login_page()
