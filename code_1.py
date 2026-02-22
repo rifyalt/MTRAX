@@ -1116,7 +1116,7 @@ def main_app():
             "Price Intelligence", 
             "Top Hotel/City",
             "Export", 
-            "Value Creation (soon)"
+            "Value Creation"
         ])
 
         # ======================================
@@ -4953,6 +4953,7 @@ if not st.session_state.get("authenticated"):
 else:
     check_session_timeout()
     main_app()
+
 
 
 
