@@ -1108,7 +1108,7 @@ def main_app():
         # ======================================
 
         # Tabs
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
             "Value Creation",
             "Dashboard",
             "Explorer",
@@ -1117,6 +1117,7 @@ def main_app():
             "Price Intelligence",
             "Sankey Flow",
             "Top Hotel/City",
+            "Dendrogram",
             "Export"
         ])
 
@@ -4751,53 +4752,51 @@ def main_app():
                                 targets.append(ho_idx[row["Hotel Name"]])
                                 values.append(row["Invoice Amount"])
 
-                        # ── Color palette: Steel Blue → Copper → Mint ──────
-                        # Perusahaan : steel blue      #3d7abf
-                        # Kota       : warm copper     #c47a3d
-                        # Hotel      : soft mint       #3dab7a
-                        # Links Co→City   : electric blue ribbon
-                        # Links City→Hotel: amber ribbon
-                        import colorsys
+                        # ── Palette & per-link coloring (light mode, Tableau-style) ──────
+                        # ── Pastel palette per layer (seperti referensi: ungu/pink/hijau/teal/oranye) ──
+                        # Setiap node dapat warna unik dari satu pool pastel besar
+                        PASTEL_POOL = [
+                            # purples / mauves
+                            "#B39DDB","#9575CD","#7E57C2","#CE93D8","#AB47BC",
+                            # pinks / reds
+                            "#F48FB1","#F06292","#EF5350","#FF8A80","#FF80AB",
+                            # greens / teals
+                            "#A5D6A7","#66BB6A","#80CBC4","#4DB6AC","#80DEEA",
+                            # blues / cyan
+                            "#90CAF9","#64B5F6","#81D4FA","#4FC3F7","#80D8FF",
+                            # oranges / ambers / yellows
+                            "#FFCC80","#FFA726","#FFD54F","#A5D6A7","#C8E6C9",
+                            # extra teal / mint
+                            "#B2EBF2","#B2DFDB","#DCEDC8","#F0F4C3","#FFF9C4",
+                        ]
 
-                        def node_palette(hex_color, n, alpha=0.90, l_lo=0.32, l_hi=0.55):
-                            h, l, s = colorsys.rgb_to_hls(
-                                int(hex_color[1:3],16)/255,
-                                int(hex_color[3:5],16)/255,
-                                int(hex_color[5:7],16)/255,
-                            )
-                            out = []
-                            for i in range(max(n,1)):
-                                li = l_lo + (l_hi - l_lo) * i / max(n-1, 1)
-                                r, g, b = colorsys.hls_to_rgb(h, min(li, 0.78), s)
-                                out.append(f"rgba({int(r*255)},{int(g*255)},{int(b*255)},{alpha})")
-                            return out
+                        def assign_pastel(n, offset=0):
+                            """Assign distinct pastel colors cycling through pool."""
+                            return [PASTEL_POOL[(offset + i) % len(PASTEL_POOL)] for i in range(n)]
 
-                        # Triadic palette — maximum contrast, clean on dark bg
-                        co_colors = node_palette("#4a8fd4", len(companies), alpha=0.94, l_lo=0.30, l_hi=0.50)  # steel blue
-                        ci_colors = node_palette("#d4834a", len(cities),    alpha=0.92, l_lo=0.32, l_hi=0.52)  # warm copper
-                        ho_colors = node_palette("#4ad49a", len(hotels),    alpha=0.88, l_lo=0.28, l_hi=0.48)  # soft mint
+                        def pastel_to_rgba(hex_color, alpha=0.30):
+                            h = hex_color.lstrip("#")
+                            r2, g2, b2 = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+                            return f"rgba({r2},{g2},{b2},{alpha})"
 
+                        # Layer offsets so each layer starts at a distinct palette section
+                        co_colors   = assign_pastel(len(companies), offset=0)
+                        ci_colors   = assign_pastel(len(cities),    offset=10)
+                        ho_colors   = assign_pastel(len(hotels),    offset=20)
                         node_colors = co_colors + ci_colors + ho_colors
 
-                        # Flow ribbons: translucent, per-segment color
-                        # Co→City   : soft blue  — follows Perusahaan layer
-                        # City→Hotel: amber glow — follows Kota layer, warm contrast
-                        link_co_city    = "rgba( 74,143,212, 0.18)"   # blue ribbon
-                        link_city_hotel = "rgba(212,131, 74, 0.18)"   # amber ribbon
-                        link_colors = (
-                            [link_co_city]    * n_co_links +
-                            [link_city_hotel] * (len(sources) - n_co_links)
-                        )
+                        # Links: very soft pastel of the source node (alpha 0.28 → airy ribbons)
+                        link_colors = [pastel_to_rgba(node_colors[s], alpha=0.28) for s in sources]
 
-                        # ── Dark background Sankey figure ──────────────
-                        BG = "#0f0a14"
+                        # ── Light background Sankey figure ──────────────
+                        BG = "#FFFFFF"
 
                         fig_sankey = go.Figure(go.Sankey(
                             arrangement="snap",
                             node=dict(
-                                pad=22,
-                                thickness=18,
-                                line=dict(color="rgba(0,0,0,0)", width=0),
+                                pad=28,
+                                thickness=20,
+                                line=dict(color="rgba(0,0,0,0.12)", width=0.8),
                                 label=node_labels,
                                 color=node_colors,
                                 hovertemplate=(
@@ -4823,33 +4822,34 @@ def main_app():
                             paper_bgcolor=BG,
                             plot_bgcolor=BG,
                             height=chart_height,
-                            margin=dict(l=8, r=8, t=30, b=8),
+                            margin=dict(l=16, r=16, t=52, b=16),
                             font=dict(
-                                family="Arial, sans-serif",
+                                family="'Segoe UI', Arial, sans-serif",
                                 size=11,
-                                color="#e8d5e4"
+                                color="#333333"
                             ),
                             title=dict(
                                 text=(
-                                    f"<span style='color:#9c8fa0;font-size:11px;'>"
-                                    f"Top {top_n_company} Perusahaan  ·  "
-                                    f"Top {top_n_city} Kota  ·  "
-                                    f"Top {top_n_hotel} Hotel  ·  {sankey_label}"
+                                    f"<b>Sankey Flow: Perusahaan → Kota → Hotel</b>  "
+                                    f"<span style='color:#888;font-size:11px;'>  "
+                                    f"Top {top_n_company} Perusahaan · "
+                                    f"Top {top_n_city} Kota · "
+                                    f"Top {top_n_hotel} Hotel · {sankey_label}"
                                     f"</span>"
                                 ),
                                 x=0.01, xanchor="left",
-                                font=dict(size=11, color="#9c8fa0")
+                                font=dict(size=13, color="#333333")
                             )
                         )
 
-                        # ── Dark card wrapper for the chart ────────────
-                        st.markdown(f"""
+                        # ── Light card wrapper ────────────
+                        st.markdown("""
                         <div style="
-                            background:{BG};
+                            background:#FFFFFF;
                             border-radius:12px;
-                            padding:4px;
-                            box-shadow: 0 8px 40px rgba(0,0,0,0.45),
-                                        0 0 0 1px rgba(156,87,137,0.20);
+                            padding:6px 8px;
+                            box-shadow: 0 4px 24px rgba(0,0,0,0.10),
+                                        0 0 0 1px rgba(0,0,0,0.06);
                             margin-bottom:20px;
                         ">
                         """, unsafe_allow_html=True)
@@ -4860,25 +4860,26 @@ def main_app():
                         total_flow = df_sk["Invoice Amount"].sum()
                         k1, k2, k3, k4 = st.columns(4)
                         kpi_data = [
-                            (k1, "Total Spend", f"Rp{total_flow:,.0f}", "#9c5789"),
-                            (k2, "Perusahaan",  str(len(companies)),    "#7a6b8a"),
-                            (k3, "Kota",        str(len(cities)),       "#7a6b8a"),
-                            (k4, "Hotel",       str(len(hotels)),       "#7a6b8a"),
+                            (k1, "Total Spend",  f"Rp{total_flow:,.0f}", "#1B6CA8"),
+                            (k2, "Perusahaan",   str(len(companies)),    "#C0570A"),
+                            (k3, "Kota",         str(len(cities)),       "#1A9E5C"),
+                            (k4, "Hotel",        str(len(hotels)),       "#9c5789"),
                         ]
                         for col_k, lbl, val, accent in kpi_data:
                             with col_k:
                                 st.markdown(f"""
                                 <div style="
-                                    background: linear-gradient(135deg, #1a0f1e 0%, #231328 100%);
-                                    border: 1px solid rgba(156,87,137,0.20);
-                                    border-left: 3px solid {accent};
+                                    background: #FAFAFA;
+                                    border: 1px solid #E8E8E8;
+                                    border-left: 4px solid {accent};
                                     border-radius: 8px;
                                     padding: 14px 18px;
+                                    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
                                 ">
-                                    <div style="color:rgba(255,255,255,0.40);font-size:0.72em;
+                                    <div style="color:#888;font-size:0.72em;
                                                 text-transform:uppercase;letter-spacing:0.06em;
                                                 margin-bottom:6px;">{lbl} · {sankey_label}</div>
-                                    <div style="color:#e8d5e4;font-size:1.4em;font-weight:600;
+                                    <div style="color:#1a1a1a;font-size:1.35em;font-weight:700;
                                                 letter-spacing:-0.01em;">{val}</div>
                                 </div>""", unsafe_allow_html=True)
 
@@ -5253,7 +5254,7 @@ def main_app():
         # ======================================
         # TAB 7: EXPORT
         # ======================================
-        with tab9:
+        with tab10:
             st.markdown("<div class='section-title'>Export Data</div>", unsafe_allow_html=True)
 
             st.markdown("Export your data in various formats for further analysis.")
@@ -5381,6 +5382,641 @@ def main_app():
                 st.metric("Est. File Size", f"{memory_usage * 0.8:.2f} MB")
 
         # ======================================
+
+
+
+        # ======================================
+        # TAB 9: DENDROGRAM CLUSTERING
+        # ======================================
+        with tab9:
+
+            from plotly.subplots import make_subplots as _make_subplots
+            from scipy.cluster.hierarchy import (
+                linkage as sk_linkage,
+                dendrogram as scipy_dendrogram,
+                fcluster
+            )
+            from sklearn.preprocessing import normalize as sk_normalize
+
+            # ── Header ─────────────────────────────────────────────────────
+            st.markdown("""
+            <div style="
+                background: linear-gradient(135deg, #6a1a5a 0%, #9c5789 55%, #7a3568 100%);
+                border-radius: 14px; padding: 28px 32px; margin-bottom: 24px;
+                position: relative; overflow: hidden;
+                box-shadow: 0 8px 32px rgba(156,87,137,0.28);
+            ">
+                <div style="position:absolute;top:-30px;right:-30px;width:200px;height:200px;
+                            border-radius:50%;background:rgba(255,255,255,0.04);"></div>
+                <div style="position:absolute;bottom:-60px;left:38%;width:260px;height:260px;
+                            border-radius:50%;background:rgba(255,255,255,0.03);"></div>
+                <div style="position:relative;z-index:1;">
+                    <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px;">
+                        <div style="background:rgba(255,255,255,0.14);border-radius:10px;
+                                    padding:10px 14px;font-size:1.6em;line-height:1;">🌿</div>
+                        <div>
+                            <div style="color:#fff;font-size:1.45em;font-weight:700;
+                                        letter-spacing:-0.02em;line-height:1.1;">
+                                Hierarchical Clustering
+                            </div>
+                            <div style="color:rgba(255,255,255,0.60);font-size:0.82em;
+                                        margin-top:4px;letter-spacing:0.02em;">
+                                Dendrogram · Segmentasi Pola Perjalanan · Interactive
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                        <div style="background:rgba(255,255,255,0.10);
+                                    border:1px solid rgba(255,255,255,0.18);
+                                    border-radius:8px;padding:7px 14px;
+                                    color:rgba(255,255,255,0.85);font-size:0.77em;">
+                            📊 Ward · Complete · Average · Single
+                        </div>
+                        <div style="background:rgba(255,255,255,0.10);
+                                    border:1px solid rgba(255,255,255,0.18);
+                                    border-radius:8px;padding:7px 14px;
+                                    color:rgba(255,255,255,0.85);font-size:0.77em;">
+                            🏨 Hotel · Perusahaan · Kota
+                        </div>
+                        <div style="background:rgba(255,255,255,0.10);
+                                    border:1px solid rgba(255,255,255,0.18);
+                                    border-radius:8px;padding:7px 14px;
+                                    color:rgba(255,255,255,0.85);font-size:0.77em;">
+                            ✨ Hover · Zoom · Pan
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # ── Control Panel ──────────────────────────────────────────────
+            st.markdown("""
+            <div style="background:#fdf7fc;border:1px solid #e8d5e4;
+                        border-left:3px solid #9c5789;
+                        border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+                <div style="font-size:0.78em;font-weight:600;color:#9c5789;
+                            text-transform:uppercase;letter-spacing:0.08em;margin-bottom:12px;">
+                    ⚙️ KONFIGURASI ANALISIS
+                </div>
+            """, unsafe_allow_html=True)
+
+            dend_r1 = st.columns([2, 2, 2, 2])
+            with dend_r1[0]:
+                dend_entity = st.selectbox("🎯 Entitas",
+                    ["Hotel", "Perusahaan", "Kota"], key="dend_entity")
+            with dend_r1[1]:
+                dend_metric_col = st.selectbox("📐 Metric",
+                    ["Invoice Amount", "Number of Rooms Night", "Travel Request Number"],
+                    key="dend_metric")
+            with dend_r1[2]:
+                dend_method = st.selectbox("🔗 Linkage",
+                    ["ward", "complete", "average", "single"],
+                    key="dend_method",
+                    help="Ward: min variance · Complete: max dist · Average: mean · Single: min")
+            with dend_r1[3]:
+                dend_top_n = st.selectbox("🔢 Top N",
+                    [10, 15, 20, 25, 30, 40, 50], index=2, key="dend_top_n")
+
+            dend_r2 = st.columns([3, 2, 2])
+            with dend_r2[0]:
+                n_clusters_dend = st.slider("🎨 Jumlah Klaster", 2, 8, 4,
+                    key="dend_clusters")
+            with dend_r2[1]:
+                dend_orientation = st.selectbox("📐 Orientasi",
+                    ["top", "left"], key="dend_orient",
+                    help="top = vertikal · left = horizontal")
+            with dend_r2[2]:
+                dend_show_bar = st.checkbox("Bar spend chart",
+                    value=True, key="dend_bar")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # ── Data Prep ──────────────────────────────────────────────────
+            _city_col = next(
+                (c for c in df_all.columns if c in ["City", "City Destination"]), None
+            )
+            entity_map_dend = {
+                "Hotel":      "Hotel Name",
+                "Perusahaan": "Nama Perusahaan",
+                "Kota":       _city_col,
+            }
+            pivot_rows_dend = {
+                "Hotel":      "Nama Perusahaan",
+                "Perusahaan": _city_col if _city_col else "Hotel Name",
+                "Kota":       "Nama Perusahaan",
+            }
+
+            entity_col_dend = entity_map_dend.get(dend_entity)
+            row_col_dend    = pivot_rows_dend.get(dend_entity)
+            metric_col_dend = next(
+                (c for c in df_all.columns if c == dend_metric_col), None
+            )
+
+            if entity_col_dend is None or entity_col_dend not in df_all.columns:
+                st.warning(f"Kolom '{dend_entity}' tidak ditemukan di data.")
+            elif metric_col_dend is None:
+                st.warning(f"Kolom metric '{dend_metric_col}' tidak ditemukan.")
+            elif row_col_dend is None or row_col_dend not in df_all.columns:
+                st.warning(f"Kolom pivot '{row_col_dend}' tidak ditemukan.")
+            else:
+                df_dend = df_all[
+                    [entity_col_dend, row_col_dend, metric_col_dend]
+                ].dropna()
+                top_ent = (
+                    df_dend.groupby(entity_col_dend)[metric_col_dend]
+                    .sum().nlargest(dend_top_n).index
+                )
+                df_dend = df_dend[df_dend[entity_col_dend].isin(top_ent)]
+                pivot_dend = (
+                    df_dend.groupby([entity_col_dend, row_col_dend])[metric_col_dend]
+                    .sum().unstack(fill_value=0)
+                )
+                X_dend = sk_normalize(pivot_dend.values, norm="l2")
+
+                if X_dend.shape[0] < 2:
+                    st.warning("Data tidak cukup (minimal 2 entitas).")
+                else:
+                    # Clustering
+                    Z_dend = sk_linkage(X_dend, method=dend_method, metric="euclidean")
+                    cluster_ids_dend = fcluster(
+                        Z_dend, t=n_clusters_dend, criterion="maxclust"
+                    )
+
+                    # Palette inline dengan warna tema app (#9c5789 family)
+                    DEND_PALETTE = [
+                        "#9c5789",   # mauve utama (tema app)
+                        "#5B8DD9",   # steel blue
+                        "#3dab7a",   # mint green
+                        "#E07A3A",   # warm orange
+                        "#c47a3d",   # copper/amber
+                        "#7a6b8a",   # muted violet
+                        "#4AABB8",   # teal
+                        "#D45E8A",   # rose
+                    ]
+                    DEND_PALETTE_LIGHT = [
+                        "#f5e8f2",   # mauve light
+                        "#dde8f8",   # blue light
+                        "#d5f2e5",   # green light
+                        "#fae3d5",   # orange light
+                        "#fdf0e0",   # amber light
+                        "#ece8f0",   # violet light
+                        "#d5f0f5",   # teal light
+                        "#fae0eb",   # rose light
+                    ]
+
+                    labels_list = pivot_dend.index.tolist()
+                    leaf_colors_map_dend = {
+                        lbl: DEND_PALETTE[(cid - 1) % len(DEND_PALETTE)]
+                        for lbl, cid in zip(labels_list, cluster_ids_dend)
+                    }
+
+                    def fmt_val(v, col):
+                        return (
+                            f"Rp{v:,.0f}" if col == "Invoice Amount" else f"{v:,.0f}"
+                        )
+
+                    total_spend_dend = df_dend[metric_col_dend].sum()
+                    avg_spend_dend   = (
+                        total_spend_dend / len(pivot_dend) if len(pivot_dend) else 0
+                    )
+
+                    # ── KPI Cards ──────────────────────────────────────────
+                    kc1, kc2, kc3, kc4 = st.columns(4)
+                    for col_k, lbl_k, val_k, accent_k, icon_k, sub_k in [
+                        (kc1, "Total Entitas", str(len(pivot_dend)),
+                         "#9c5789", "🏢", f"Top {dend_top_n} {dend_entity}"),
+                        (kc2, "Jumlah Klaster", str(n_clusters_dend),
+                         "#7a6b8a", "🎯", f"Metode: {dend_method}"),
+                        (kc3, "Total " + dend_metric_col[:12],
+                         fmt_val(total_spend_dend, metric_col_dend),
+                         "#5B8DD9", "💰", metric_col_dend),
+                        (kc4, "Avg per Entitas",
+                         fmt_val(avg_spend_dend, metric_col_dend),
+                         "#3dab7a", "📊", "Rata-rata"),
+                    ]:
+                        with col_k:
+                            st.markdown(f"""
+                            <div style="background:linear-gradient(135deg,#fff 0%,#fdf7fc 100%);
+                                        border:1px solid #e8d5e4;
+                                        border-top:3px solid {accent_k};
+                                        border-radius:10px;padding:16px 18px;
+                                        box-shadow:0 2px 12px rgba(156,87,137,0.07);
+                                        margin-bottom:6px;">
+                                <div style="display:flex;justify-content:space-between;
+                                            align-items:flex-start;margin-bottom:8px;">
+                                    <div style="color:#9c8fa0;font-size:0.70em;
+                                                text-transform:uppercase;
+                                                letter-spacing:0.07em;font-weight:600;">
+                                        {lbl_k}
+                                    </div>
+                                    <div style="font-size:1.2em;opacity:0.75;">{icon_k}</div>
+                                </div>
+                                <div style="color:#2a1a2a;font-size:1.25em;font-weight:700;
+                                            margin-bottom:4px;">{val_k}</div>
+                                <div style="color:#b8a0b8;font-size:0.70em;">{sub_k}</div>
+                            </div>""", unsafe_allow_html=True)
+
+                    st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
+
+                    # ── Cut threshold ──────────────────────────────────────
+                    color_thresh_dend = (
+                        Z_dend[-(n_clusters_dend - 1), 2] if n_clusters_dend > 1 else 0
+                    )
+
+                    # ── Build interactive Plotly dendrogram ────────────────
+                    dend_no_plot = scipy_dendrogram(
+                        Z_dend, labels=labels_list,
+                        no_plot=True, color_threshold=color_thresh_dend
+                    )
+                    leaves_order_ply   = dend_no_plot["leaves"]
+                    labels_ordered_ply = [labels_list[i] for i in leaves_order_ply]
+                    leaf_xs = {
+                        lbl: 5 + 10 * i
+                        for i, lbl in enumerate(labels_ordered_ply)
+                    }
+
+                    spend_series_ply = (
+                        df_dend.groupby(entity_col_dend)[metric_col_dend]
+                        .sum().reindex(labels_ordered_ply).fillna(0)
+                    )
+
+                    # Figure layout
+                    if dend_show_bar:
+                        if dend_orientation == "top":
+                            fig_ply = _make_subplots(
+                                rows=2, cols=1,
+                                row_heights=[0.70, 0.30],
+                                vertical_spacing=0.03,
+                                shared_xaxes=True
+                            )
+                            dr, dc, br, bc = 1, 1, 2, 1
+                        else:
+                            fig_ply = _make_subplots(
+                                rows=1, cols=2,
+                                column_widths=[0.70, 0.30],
+                                horizontal_spacing=0.03,
+                                shared_yaxes=True
+                            )
+                            dr, dc, br, bc = 1, 1, 1, 2
+                    else:
+                        fig_ply = go.Figure()
+                        dr = dc = br = bc = None
+
+                    def _add(trace):
+                        if dend_show_bar:
+                            fig_ply.add_trace(trace, row=dr, col=dc)
+                        else:
+                            fig_ply.add_trace(trace)
+
+                    # Draw dendrogram branches
+                    for xi, yi in zip(dend_no_plot["icoord"], dend_no_plot["dcoord"]):
+                        _add(go.Scatter(
+                            x=xi if dend_orientation == "top" else yi,
+                            y=yi if dend_orientation == "top" else xi,
+                            mode="lines",
+                            line=dict(color="rgba(156,87,137,0.35)", width=1.8),
+                            hoverinfo="skip",
+                            showlegend=False
+                        ))
+
+                    # Leaf nodes with hover
+                    for lbl in labels_ordered_ply:
+                        xp  = leaf_xs[lbl]
+                        nc  = leaf_colors_map_dend.get(lbl, "#9c5789")
+                        cid = cluster_ids_dend[labels_list.index(lbl)]
+                        sv  = spend_series_ply.get(lbl, 0)
+                        _add(go.Scatter(
+                            x=[xp] if dend_orientation == "top" else [0],
+                            y=[0]  if dend_orientation == "top" else [xp],
+                            mode="markers+text",
+                            marker=dict(
+                                size=11, color=nc,
+                                line=dict(color="white", width=1.8),
+                                symbol="circle"
+                            ),
+                            text=[lbl],
+                            textposition=(
+                                "bottom center" if dend_orientation == "top"
+                                else "middle right"
+                            ),
+                            textfont=dict(size=8.5, color=nc, family="'Segoe UI', Arial"),
+                            hovertemplate=(
+                                f"<b>{lbl}</b><br>"
+                                f"Klaster: <b>{cid}</b><br>"
+                                f"{dend_metric_col}: <b>{fmt_val(sv, metric_col_dend)}</b>"
+                                "<extra></extra>"
+                            ),
+                            showlegend=False
+                        ))
+
+                    # Cut threshold line
+                    if n_clusters_dend > 1:
+                        x_r = [
+                            min(leaf_xs.values()) - 5,
+                            max(leaf_xs.values()) + 5
+                        ]
+                        _add(go.Scatter(
+                            x=x_r if dend_orientation == "top"
+                              else [color_thresh_dend, color_thresh_dend],
+                            y=[color_thresh_dend, color_thresh_dend]
+                              if dend_orientation == "top" else x_r,
+                            mode="lines",
+                            line=dict(color="#E05A2B", width=1.4, dash="dash"),
+                            name=f"Cut @ {color_thresh_dend:.3f}",
+                            hovertemplate=(
+                                f"Cut threshold: {color_thresh_dend:.4f}"
+                                "<extra></extra>"
+                            ),
+                            showlegend=True
+                        ))
+
+                    # Bar chart
+                    if dend_show_bar:
+                        bar_colors_ply = [
+                            leaf_colors_map_dend.get(l, "#9c5789")
+                            for l in labels_ordered_ply
+                        ]
+                        bar_hov = [
+                            (f"<b>{l}</b><br>{dend_metric_col}: "
+                             f"{fmt_val(v, metric_col_dend)}<extra></extra>")
+                            for l, v in zip(
+                                labels_ordered_ply, spend_series_ply.values
+                            )
+                        ]
+                        if dend_orientation == "top":
+                            fig_ply.add_trace(go.Bar(
+                                x=[leaf_xs[l] for l in labels_ordered_ply],
+                                y=spend_series_ply.values,
+                                marker=dict(
+                                    color=bar_colors_ply,
+                                    opacity=0.82,
+                                    line=dict(color="white", width=0.5)
+                                ),
+                                hovertemplate=bar_hov,
+                                showlegend=False, name="Spend"
+                            ), row=br, col=bc)
+                        else:
+                            fig_ply.add_trace(go.Bar(
+                                y=[leaf_xs[l] for l in labels_ordered_ply],
+                                x=spend_series_ply.values,
+                                orientation="h",
+                                marker=dict(
+                                    color=bar_colors_ply,
+                                    opacity=0.82,
+                                    line=dict(color="white", width=0.5)
+                                ),
+                                hovertemplate=bar_hov,
+                                showlegend=False, name="Spend"
+                            ), row=br, col=bc)
+
+                    # Cluster legend entries
+                    for i in range(n_clusters_dend):
+                        fig_ply.add_trace(go.Scatter(
+                            x=[None], y=[None], mode="markers",
+                            marker=dict(
+                                size=10,
+                                color=DEND_PALETTE[i % len(DEND_PALETTE)]
+                            ),
+                            name=f"Klaster {i + 1}",
+                            showlegend=True
+                        ))
+
+                    # Layout polish
+                    chart_h_ply = (
+                        max(540, dend_top_n * 19)
+                        if dend_orientation == "left" else 590
+                    )
+                    fig_ply.update_layout(
+                        height=chart_h_ply,
+                        paper_bgcolor="#fdf7fc",
+                        plot_bgcolor="#fdf7fc",
+                        font=dict(
+                            family="'Segoe UI', Arial", size=11, color="#2a1a2a"
+                        ),
+                        title=dict(
+                            text=(
+                                f"<b>Dendrogram — {dend_entity}</b>  "
+                                f"<span style='color:#9c8fa0;font-size:11px;'>"
+                                f"Linkage: {dend_method}  ·  "
+                                f"{n_clusters_dend} Klaster  ·  "
+                                f"{dend_metric_col}"
+                                f"</span>"
+                            ),
+                            x=0.01, xanchor="left",
+                            font=dict(size=13, color="#2a1a2a")
+                        ),
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom", y=1.01,
+                            xanchor="right",  x=1,
+                            bgcolor="rgba(253,247,252,0.95)",
+                            bordercolor="#e8d5e4",
+                            borderwidth=1,
+                            font=dict(size=9, color="#4a2a4a")
+                        ),
+                        margin=dict(l=20, r=20, t=60, b=20),
+                        hovermode="closest",
+                        bargap=0.12
+                    )
+
+                    _ax_style = dict(
+                        showgrid=True,
+                        gridcolor="rgba(156,87,137,0.08)",
+                        gridwidth=0.5,
+                        zeroline=False,
+                        tickfont=dict(size=8, color="#9c8fa0"),
+                        linecolor="#e8d5e4",
+                        linewidth=1,
+                        showline=True
+                    )
+                    fig_ply.update_xaxes(**_ax_style)
+                    fig_ply.update_yaxes(**_ax_style)
+
+                    if dend_show_bar:
+                        if dend_orientation == "top":
+                            fig_ply.update_xaxes(
+                                showticklabels=False, row=dr, col=dc
+                            )
+                            fig_ply.update_yaxes(
+                                title_text="Dissimilarity",
+                                title_font=dict(size=9, color="#9c8fa0"),
+                                row=dr, col=dc
+                            )
+                            fig_ply.update_yaxes(
+                                title_text=dend_metric_col[:18],
+                                title_font=dict(size=9, color="#9c8fa0"),
+                                row=br, col=bc
+                            )
+                        else:
+                            fig_ply.update_yaxes(
+                                showticklabels=False, row=dr, col=dc
+                            )
+                            fig_ply.update_xaxes(
+                                title_text="Dissimilarity",
+                                title_font=dict(size=9, color="#9c8fa0"),
+                                row=dr, col=dc
+                            )
+                            fig_ply.update_xaxes(
+                                title_text=dend_metric_col[:18],
+                                title_font=dict(size=9, color="#9c8fa0"),
+                                row=br, col=bc
+                            )
+
+                    # Chart card wrapper
+                    st.markdown("""
+                    <div style="background:#fdf7fc;border:1px solid #e8d5e4;
+                                border-radius:14px;padding:10px 12px;
+                                box-shadow:0 6px 28px rgba(156,87,137,0.10),
+                                           0 1px 4px rgba(0,0,0,0.04);
+                                margin-bottom:24px;">
+                    """, unsafe_allow_html=True)
+                    st.plotly_chart(fig_ply, use_container_width=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                    # ── Cluster Cards ──────────────────────────────────────
+                    st.markdown("""
+                    <div style="font-size:0.95em;font-weight:700;color:#2a1a2a;
+                                margin-bottom:14px;margin-top:4px;">
+                        📋 Komposisi Klaster
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    cluster_df_dend = pd.DataFrame({
+                        dend_entity: labels_list,
+                        "Klaster":   cluster_ids_dend,
+                        "Total": (
+                            df_dend.groupby(entity_col_dend)[metric_col_dend]
+                            .sum().reindex(labels_list).values
+                        )
+                    }).sort_values(["Klaster", "Total"], ascending=[True, False])
+
+                    unique_clusters = sorted(cluster_df_dend["Klaster"].unique())
+                    cluster_cols    = st.columns(min(4, len(unique_clusters)))
+
+                    for i, cid in enumerate(unique_clusters):
+                        c_color  = DEND_PALETTE[(cid - 1) % len(DEND_PALETTE)]
+                        c_light  = DEND_PALETTE_LIGHT[(cid - 1) % len(DEND_PALETTE_LIGHT)]
+                        sub_dend = cluster_df_dend[cluster_df_dend["Klaster"] == cid]
+                        total_c  = sub_dend["Total"].sum()
+                        pct_c    = (
+                            total_c / total_spend_dend * 100
+                            if total_spend_dend else 0
+                        )
+                        members  = ", ".join(sub_dend[dend_entity].tolist()[:5])
+                        more_n   = max(0, len(sub_dend) - 5)
+                        more_html = (
+                            f"<br><span style='color:#b8a0b8;font-size:0.85em;'>"
+                            f"+{more_n} lainnya</span>"
+                        ) if more_n > 0 else ""
+
+                        with cluster_cols[i % len(cluster_cols)]:
+                            st.markdown(f"""
+                            <div style="background:linear-gradient(145deg,{c_light} 0%,#fff 100%);
+                                        border:1px solid {c_color}30;
+                                        border-top:4px solid {c_color};
+                                        border-radius:10px;padding:16px 18px;
+                                        margin-bottom:12px;
+                                        box-shadow:0 3px 14px {c_color}12;">
+                                <div style="display:flex;justify-content:space-between;
+                                            align-items:center;margin-bottom:10px;">
+                                    <span style="font-weight:700;color:{c_color};
+                                                 font-size:0.95em;">
+                                        Klaster {cid}
+                                    </span>
+                                    <span style="background:{c_color}18;color:{c_color};
+                                                 border-radius:20px;padding:2px 10px;
+                                                 font-size:0.72em;font-weight:600;">
+                                        {len(sub_dend)} entitas
+                                    </span>
+                                </div>
+                                <div style="color:#4a3a4a;font-size:0.75em;
+                                            margin-bottom:10px;line-height:1.6;">
+                                    {members}{"..." if more_n > 0 else ""}{more_html}
+                                </div>
+                                <div style="background:{c_color}0f;border-radius:6px;
+                                            padding:8px 10px;">
+                                    <div style="display:flex;justify-content:space-between;
+                                                align-items:center;">
+                                        <span style="font-size:0.70em;color:#9c8fa0;">
+                                            Total {dend_metric_col[:14]}
+                                        </span>
+                                        <span style="font-size:0.70em;color:{c_color};
+                                                     font-weight:600;">
+                                            {pct_c:.1f}% of all
+                                        </span>
+                                    </div>
+                                    <div style="font-size:1.0em;font-weight:700;
+                                                color:{c_color};margin-top:3px;">
+                                        {fmt_val(total_c, metric_col_dend)}
+                                    </div>
+                                </div>
+                            </div>""", unsafe_allow_html=True)
+
+                    # ── Insight Box (tema #9c5789) ─────────────────────────
+                    insight_method = dend_method
+                    insight_count  = len(pivot_dend)
+                    insight_entity = dend_entity
+                    st.markdown(f"""
+                    <div style="
+                        background: linear-gradient(135deg, #6a1a5a 0%, #9c5789 100%);
+                        border-radius: 12px;
+                        padding: 22px 28px;
+                        margin-top: 8px;
+                        box-shadow: 0 4px 20px rgba(156,87,137,0.22);
+                    ">
+                        <div style="color:rgba(255,255,255,0.60);font-size:0.72em;
+                                    text-transform:uppercase;letter-spacing:0.10em;
+                                    margin-bottom:14px;font-weight:600;">
+                            &#x1F4A1; INTERPRETASI &amp; KEGUNAAN
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                            <div style="background:rgba(255,255,255,0.10);
+                                        border:1px solid rgba(255,255,255,0.18);
+                                        border-radius:8px;padding:14px 16px;">
+                                <div style="color:#fce8f8;font-size:0.80em;
+                                            font-weight:700;margin-bottom:8px;
+                                            letter-spacing:0.02em;">
+                                    &#x1F4CC; Membaca Dendrogram
+                                </div>
+                                <div style="color:rgba(255,255,255,0.80);font-size:0.78em;
+                                            line-height:1.7;">
+                                    Cabang <b style='color:#fff;'>pendek</b>
+                                    = pola spend sangat mirip.<br>
+                                    Cabang <b style='color:#fff;'>tinggi</b>
+                                    = kelompok berbeda signifikan.<br>
+                                    Garis oranye putus-putus = batas potongan klaster.
+                                </div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.10);
+                                        border:1px solid rgba(255,255,255,0.18);
+                                        border-radius:8px;padding:14px 16px;">
+                                <div style="color:#fce8f8;font-size:0.80em;
+                                            font-weight:700;margin-bottom:8px;
+                                            letter-spacing:0.02em;">
+                                    &#x1F3AF; Use Cases Analitis
+                                </div>
+                                <div style="color:rgba(255,255,255,0.80);font-size:0.78em;
+                                            line-height:1.7;">
+                                    &#x2022; Segmentasi hotel untuk negosiasi kontrak<br>
+                                    &#x2022; Benchmarking perusahaan pola serupa<br>
+                                    &#x2022; Deteksi outlier spend anomali<br>
+                                    &#x2022; Pengelompokan kota untuk travel policy
+                                </div>
+                            </div>
+                        </div>
+                        <div style="color:rgba(255,255,255,0.45);font-size:0.73em;
+                                    margin-top:14px;padding-top:12px;
+                                    border-top:1px solid rgba(255,255,255,0.15);">
+                            Menggunakan <b style='color:rgba(255,255,255,0.75);'>
+                            {insight_method} linkage</b> pada
+                            <b style='color:rgba(255,255,255,0.75);'>
+                            {insight_count} {insight_entity}</b>
+                            dengan normalisasi L2 &#x2014;
+                            clustering berdasarkan <i>pola relatif</i>,
+                            bukan besaran absolut spend.
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
 
     # ======================================
