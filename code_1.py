@@ -1108,21 +1108,454 @@ def main_app():
         # ======================================
 
         # Tabs
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-            "Dashboard", 
-            "Explorer", 
-            "CRM", 
-            "Network", 
-            "Price Intelligence", 
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+            "Value Creation",
+            "Dashboard",
+            "Explorer",
+            "CRM",
+            "Network",
+            "Price Intelligence",
+            "Sankey Flow",
             "Top Hotel/City",
-            "Export", 
-            "Value Creation"
+            "Export"
         ])
 
-        # ======================================
-        # TAB 1: DASHBOARD
+                # TAB 8: STRATEGIC VALUE CREATION
         # ======================================
         with tab1:
+
+            import streamlit.components.v1 as components
+
+            components.html("""
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    background: #fafafa;
+    color: #1a1a1a;
+    padding: 8px 4px 40px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :root {
+    --purple : #9c5789;
+    --purp-l : rgba(156,87,137,0.08);
+    --purp-b : rgba(156,87,137,0.22);
+    --black  : #1a1a1a;
+    --grey   : #888888;
+    --grey-l : #e0e0e0;
+    --white  : #fafafa;
+    --surf   : #ffffff;
+    --bdr    : #e0e0e0;
+  }
+
+  /* ── Page Header ── */
+  .hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 18px; border-bottom: 1px solid var(--bdr);
+    margin-bottom: 28px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .mark {
+    width: 34px; height: 34px; background: var(--purple);
+    border-radius: 6px; display: inline-flex;
+    align-items: center; justify-content: center;
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px; font-weight: 600; color: #fff; letter-spacing: .04em;
+    flex-shrink: 0;
+  }
+  .brand-title {
+    font-size: 17px; font-weight: 600; color: var(--black);
+    letter-spacing: -.02em; line-height: 1.2; margin: 0;
+  }
+  .brand-sub { font-size: 12px; color: var(--grey); margin: 2px 0 0; }
+  .hdr-right { display: flex; align-items: center; gap: 8px; }
+  .mod-tag {
+    font-family: 'Geist Mono', monospace; font-size: 10px;
+    color: var(--grey); background: var(--grey-l);
+    padding: 4px 10px; border-radius: 4px; letter-spacing: .08em;
+  }
+  .live-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--bdr); border-radius: 100px;
+    padding: 4px 12px; font-size: 11px; color: var(--grey);
+    background: var(--surf);
+  }
+  .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--purple); display: inline-block;
+    animation: blink 2.4s ease infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* ── Eyebrow ── */
+  .eyebrow {
+    display: flex; align-items: center; gap: 10px;
+    font-family: 'Geist Mono', monospace; font-size: 10px; font-weight: 500;
+    color: var(--grey); letter-spacing: .18em;
+    text-transform: uppercase; margin-bottom: 14px;
+  }
+  .eyebrow-ln { flex: 1; height: 1px; background: var(--bdr); }
+
+  /* ── 2×2 Pillar Grid ── */
+  .pgrid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--bdr); border-radius: 10px;
+    overflow: hidden; background: var(--bdr); gap: 1px;
+    margin-bottom: 1px;
+  }
+  .pcard {
+    background: var(--surf); padding: 26px 24px;
+    position: relative; transition: background .18s ease;
+  }
+  .pcard:hover { background: #fdfdfd; }
+  .pcard::before {
+    content: ''; position: absolute;
+    top: 26px; bottom: 26px; left: 0; width: 2px;
+    background: var(--purple); opacity: 0; transition: opacity .2s ease;
+  }
+  .pcard:hover::before { opacity: 1; }
+  .card-top {
+    display: flex; align-items: flex-start;
+    justify-content: space-between; margin-bottom: 14px;
+  }
+  .card-icon { font-size: 18px; line-height: 1; }
+  .badge {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px; font-weight: 500; letter-spacing: .12em;
+    color: var(--purple); background: var(--purp-l);
+    border: 1px solid var(--purp-b);
+    padding: 3px 8px; border-radius: 3px;
+  }
+  .pcard h3 {
+    font-size: 14px; font-weight: 600; color: var(--black);
+    letter-spacing: -.015em; margin-bottom: 4px; line-height: 1.3;
+  }
+  .obj { font-size: 12px; color: var(--grey); margin-bottom: 18px; line-height: 1.55; }
+  .fl {
+    font-family: 'Geist Mono', monospace; font-size: 9px; font-weight: 500;
+    letter-spacing: .15em; text-transform: uppercase;
+    color: var(--purple); margin-bottom: 8px;
+  }
+  .dlist { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+  .drow  { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--black); }
+  .ddot  {
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--purple); flex-shrink: 0; display: inline-block;
+  }
+  .sep  { height: 1px; background: var(--grey-l); margin: 12px 0; }
+  .ilist { display: flex; flex-direction: column; gap: 5px; }
+  .irow {
+    display: flex; align-items: flex-start; gap: 8px;
+    font-size: 11.5px; color: var(--grey); line-height: 1.5;
+  }
+  .iarr { font-size: 8px; margin-top: 5px; flex-shrink: 0; color: var(--purple); opacity: .7; }
+
+  /* ── Card 5 ── */
+  .c5wrap {
+    border: 1px solid var(--bdr); border-top: none;
+    border-radius: 0 0 10px 10px; overflow: hidden; margin-bottom: 32px;
+  }
+  .c5hd {
+    background: #f5f5f5; border-bottom: 1px solid var(--bdr);
+    padding: 16px 24px; display: flex;
+    align-items: center; justify-content: space-between;
+  }
+  .c5hd-l { display: flex; align-items: center; gap: 10px; }
+  .c5hd h3 { font-size: 13px; font-weight: 600; color: var(--black); margin: 0; }
+  .c5hd .c5sub { font-size: 11px; color: var(--grey); }
+  .c5body {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    background: var(--bdr); gap: 1px;
+  }
+  .c5col { background: var(--surf); padding: 20px 24px; }
+
+  /* ── Executive Summary ── */
+  .exec { border: 1px solid var(--bdr); border-radius: 10px; overflow: hidden; }
+  .exec-hd {
+    background: var(--black); padding: 22px 26px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .exec-hd h2 {
+    font-size: 16px; font-weight: 600; color: var(--white);
+    letter-spacing: -.02em; margin: 0;
+  }
+  .exec-hd .exec-sub { font-size: 11.5px; color: #888; margin: 3px 0 0; }
+  .exec-tag {
+    font-family: 'Geist Mono', monospace; font-size: 9.5px;
+    letter-spacing: .12em; color: var(--purple);
+    background: rgba(156,87,137,.15); border: 1px solid rgba(156,87,137,.3);
+    padding: 4px 11px; border-radius: 100px; text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .pillars {
+    display: grid; grid-template-columns: repeat(4,1fr);
+    background: var(--bdr); gap: 1px;
+    border-bottom: 1px solid var(--bdr);
+  }
+  .pillar {
+    background: var(--surf); padding: 18px 18px 16px; position: relative;
+  }
+  .pillar::after {
+    content: ''; position: absolute;
+    bottom: 0; left: 18px; right: 18px; height: 1px;
+    background: var(--purple); opacity: 0; transition: opacity .2s;
+  }
+  .pillar:hover::after { opacity: .4; }
+  .p-icon { font-size: 16px; margin-bottom: 8px; display: block; }
+  .pillar p { font-size: 12px; color: var(--black); font-weight: 500; line-height: 1.45; margin: 0; }
+  .flow-bar {
+    background: var(--surf); padding: 18px 24px;
+    display: flex; align-items: center; justify-content: center;
+    border-top: 1px solid var(--bdr);
+  }
+  .fn { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .fn-lbl { font-size: 12px; font-weight: 600; color: var(--black); letter-spacing: -.01em; }
+  .fn-lbl.hi { color: var(--purple); }
+  .fn-sub {
+    font-family: 'Geist Mono', monospace; font-size: 9px;
+    color: var(--grey); letter-spacing: .06em;
+  }
+  .fsep { display: flex; align-items: center; margin: 0 18px; }
+  .fsep-ln { width: 28px; height: 1px; background: var(--grey-l); }
+  .fsep-arr { font-size: 9px; color: var(--purple); opacity: .6; }
+</style>
+</head>
+<body>
+
+  <!-- ── Page Header ── -->
+  <div class="hdr">
+    <div class="brand">
+      <div class="mark">MTX</div>
+      <div>
+        <p class="brand-title">Strategic Value Creation Framework</p>
+        <p class="brand-sub">Travel Analytics &amp; Procurement Intelligence</p>
+      </div>
+    </div>
+    <div class="hdr-right">
+      <span class="mod-tag">MODULE 08</span>
+      <span class="live-badge"><span class="live-dot"></span>5 Value Pillars</span>
+    </div>
+  </div>
+
+  <!-- ── Eyebrow ── -->
+  <div class="eyebrow"><span>Value Pillars</span><div class="eyebrow-ln"></div></div>
+
+  <!-- ── 2×2 Grid ── -->
+  <div class="pgrid">
+
+    <!-- 01 Financial -->
+    <div class="pcard">
+      <div class="card-top">
+        <span class="card-icon">💰</span>
+        <span class="badge">01 · FINANCIAL</span>
+      </div>
+      <h3>Financial Optimization</h3>
+      <p class="obj">Mengurangi total travel spend dan meningkatkan efisiensi biaya operasional secara terukur.</p>
+      <div class="fl">Value Drivers</div>
+      <div class="dlist">
+        <div class="drow"><span class="ddot"></span>Rate benchmarking antar hotel</div>
+        <div class="drow"><span class="ddot"></span>Price per night analysis</div>
+        <div class="drow"><span class="ddot"></span>Negotiation leverage berbasis volume room nights</div>
+        <div class="drow"><span class="ddot"></span>Last-minute booking cost impact</div>
+      </div>
+      <div class="sep"></div>
+      <div class="fl">Business Impact</div>
+      <div class="ilist">
+        <div class="irow"><span class="iarr">▶</span>Estimasi saving 5–15% dari negotiated rate</div>
+        <div class="irow"><span class="iarr">▶</span>Pengurangan overpricing hotel tidak terstandarisasi</div>
+        <div class="irow"><span class="iarr">▶</span>Kontrol budget lintas perusahaan</div>
+      </div>
+    </div>
+
+    <!-- 02 Operational -->
+    <div class="pcard">
+      <div class="card-top">
+        <span class="card-icon">⚙️</span>
+        <span class="badge">02 · OPERATIONAL</span>
+      </div>
+      <h3>Operational Efficiency</h3>
+      <p class="obj">Meningkatkan kecepatan dan kualitas proses booking secara end-to-end.</p>
+      <div class="fl">Value Drivers</div>
+      <div class="dlist">
+        <div class="drow"><span class="ddot"></span>Lead time monitoring</div>
+        <div class="drow"><span class="ddot"></span>Multi-booking behavior analysis</div>
+        <div class="drow"><span class="ddot"></span>Travel request pattern heatmap</div>
+        <div class="drow"><span class="ddot"></span>Automation &amp; canonical hotel mapping</div>
+      </div>
+      <div class="sep"></div>
+      <div class="fl">Business Impact</div>
+      <div class="ilist">
+        <div class="irow"><span class="iarr">▶</span>Mengurangi booking mendadak (≤2 hari)</div>
+        <div class="irow"><span class="iarr">▶</span>Mengurangi duplikasi nama hotel</div>
+        <div class="irow"><span class="iarr">▶</span>Meningkatkan data reliability untuk reporting</div>
+      </div>
+    </div>
+
+    <!-- 03 Procurement -->
+    <div class="pcard">
+      <div class="card-top">
+        <span class="card-icon">🎯</span>
+        <span class="badge">03 · PROCUREMENT</span>
+      </div>
+      <h3>Strategic Procurement Intelligence</h3>
+      <p class="obj">Meningkatkan posisi tawar terhadap hotel dan vendor strategis.</p>
+      <div class="fl">Value Drivers</div>
+      <div class="dlist">
+        <div class="drow"><span class="ddot"></span>Top 10 hotel concentration</div>
+        <div class="drow"><span class="ddot"></span>Volume aggregation per city</div>
+        <div class="drow"><span class="ddot"></span>Corporate usage clustering</div>
+        <div class="drow"><span class="ddot"></span>Canonical hotel normalization</div>
+      </div>
+      <div class="sep"></div>
+      <div class="fl">Business Impact</div>
+      <div class="ilist">
+        <div class="irow"><span class="iarr">▶</span>Centralized negotiation strategy</div>
+        <div class="irow"><span class="iarr">▶</span>Volume-based discount leverage</div>
+        <div class="irow"><span class="iarr">▶</span>Preferred hotel program optimization</div>
+      </div>
+    </div>
+
+    <!-- 04 Governance -->
+    <div class="pcard">
+      <div class="card-top">
+        <span class="card-icon">🛡️</span>
+        <span class="badge">04 · GOVERNANCE</span>
+      </div>
+      <h3>Risk &amp; Governance Control</h3>
+      <p class="obj">Menjamin kontrol dan keamanan data travel perusahaan secara sistemik.</p>
+      <div class="fl">Value Drivers</div>
+      <div class="dlist">
+        <div class="drow"><span class="ddot"></span>Role-based download restriction</div>
+        <div class="drow"><span class="ddot"></span>Admin-only data export</div>
+        <div class="drow"><span class="ddot"></span>Real-time monitoring dashboard</div>
+        <div class="drow"><span class="ddot"></span>Company code mapping standardization</div>
+      </div>
+      <div class="sep"></div>
+      <div class="fl">Business Impact</div>
+      <div class="ilist">
+        <div class="irow"><span class="iarr">▶</span>Mencegah data leakage</div>
+        <div class="irow"><span class="iarr">▶</span>Meningkatkan compliance standar</div>
+        <div class="irow"><span class="iarr">▶</span>Governance berbasis sistem</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Card 5 — Predictive ── -->
+  <div class="c5wrap">
+    <div class="c5hd">
+      <div class="c5hd-l">
+        <span style="font-size:17px;">🔮</span>
+        <div>
+          <h3>Predictive &amp; Future Intelligence</h3>
+          <span class="c5sub">Next Phase Development</span>
+        </div>
+      </div>
+      <span class="badge">05 · PREDICTIVE</span>
+    </div>
+    <div class="c5body">
+      <div class="c5col">
+        <div class="fl">Potential Development</div>
+        <div class="dlist" style="margin-top:10px;">
+          <div class="drow"><span class="ddot"></span>LSTM-based demand forecasting</div>
+          <div class="drow"><span class="ddot"></span>Hotel price anomaly detection</div>
+          <div class="drow"><span class="ddot"></span>Traveler segmentation (KMeans)</div>
+          <div class="drow"><span class="ddot"></span>Automated negotiation simulator</div>
+        </div>
+      </div>
+      <div class="c5col" style="border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;">
+        <div class="fl">Future Business Value</div>
+        <div class="ilist" style="margin-top:10px;">
+          <div class="irow"><span class="iarr">▶</span>Predictive budget planning yang akurat</div>
+          <div class="irow"><span class="iarr">▶</span>Early warning overpricing otomatis</div>
+          <div class="irow"><span class="iarr">▶</span>Smart hotel contract recommendation</div>
+        </div>
+      </div>
+      <div class="c5col">
+        <div class="fl">Technology Stack</div>
+        <div class="dlist" style="margin-top:10px;">
+          <div class="drow"><span class="ddot"></span>Deep Learning / LSTM</div>
+          <div class="drow"><span class="ddot"></span>Unsupervised Clustering</div>
+          <div class="drow"><span class="ddot"></span>Anomaly Detection Models</div>
+          <div class="drow"><span class="ddot"></span>Simulation Engine</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Executive Summary eyebrow ── -->
+  <div class="eyebrow" style="margin-top:4px;">
+    <span>Executive Summary</span><div class="eyebrow-ln"></div>
+  </div>
+
+  <!-- ── Executive Summary ── -->
+  <div class="exec">
+    <div class="exec-hd">
+      <div>
+        <h2>MTRAX Platform Overview</h2>
+        <p class="exec-sub">Lebih dari sekadar dashboard — sistem intelijen strategis untuk travel spend.</p>
+      </div>
+      <span class="exec-tag">Strategic Intelligence</span>
+    </div>
+
+    <div class="pillars">
+      <div class="pillar">
+        <span class="p-icon">🧠</span>
+        <p>Strategic Decision<br>Support System</p>
+      </div>
+      <div class="pillar" style="border-left:1px solid #e0e0e0;">
+        <span class="p-icon">⚡</span>
+        <p>Negotiation<br>Intelligence Engine</p>
+      </div>
+      <div class="pillar" style="border-left:1px solid #e0e0e0;">
+        <span class="p-icon">💡</span>
+        <p>Corporate Cost<br>Optimization Platform</p>
+      </div>
+      <div class="pillar" style="border-left:1px solid #e0e0e0;">
+        <span class="p-icon">🔐</span>
+        <p>Governance-Controlled<br>Analytics Ecosystem</p>
+      </div>
+    </div>
+
+    <div class="flow-bar">
+      <div class="fn">
+        <span class="fn-lbl">Insight</span>
+        <span class="fn-sub">Data → Analytics</span>
+      </div>
+      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
+      <div class="fn">
+        <span class="fn-lbl">Strategy</span>
+        <span class="fn-sub">Pattern → Direction</span>
+      </div>
+      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
+      <div class="fn">
+        <span class="fn-lbl">Negotiation Leverage</span>
+        <span class="fn-sub">Volume → Power</span>
+      </div>
+      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
+      <div class="fn">
+        <span class="fn-lbl hi">Financial Impact</span>
+        <span class="fn-sub">Cost → Savings</span>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
+""", height=1600, scrolling=True)
+        # TAB 1: DASHBOARD
+        # ======================================
+        with tab2:
 
         # ======================================
         # FILTER OVERVIEW — NAMA PERUSAHAAN
@@ -1806,7 +2239,7 @@ def main_app():
         # ======================================
         # TAB 2: EXPLORER
         # ======================================
-        with tab2:
+        with tab3:
             st.markdown("<div class='section-title'>Data Explorer</div>", unsafe_allow_html=True)
 
             # Search and filter
@@ -1967,7 +2400,7 @@ def main_app():
         # ======================================
         # TAB 3: ANALYTICS — CRM
         # ======================================
-        with tab3:
+        with tab4:
 
             st.markdown("<div class='section-title'>CRM Analytics</div>", unsafe_allow_html=True)
 
@@ -2013,7 +2446,7 @@ def main_app():
         # TAB 3: ANALYTICS
         # ======================================
 
-        with tab3:
+        with tab4:
             st.markdown("<div class='section-title'>Employee Booking Cohort Analysis</div>", unsafe_allow_html=True)
 
             cohort_df = build_employee_cohort(df_all)
@@ -2150,7 +2583,7 @@ def main_app():
                 # RADAR ANALYSIS
                 # ==============================                
 
-                with tab3:
+                with tab4:
 
                     st.markdown("### Behavioral Persona Clustering") 
 
@@ -2752,7 +3185,7 @@ def main_app():
 # ======================================
         # TAB 4: INTERACTIVE SOCIAL NETWORK ANALYSIS
         # ======================================
-        with tab4:
+        with tab5:
 
             # ── Hero Header ──────────────────────────────────────────
             st.markdown("""
@@ -3336,7 +3769,7 @@ def main_app():
         # ======================================
         # TAB 5: SPEND CONCENTRATION (PARETO 80/20) - MINIMALIST
         # ======================================
-        with tab5:
+        with tab6:
 
             # ======================================
             # CLEAN HEADER
@@ -3391,7 +3824,7 @@ def main_app():
                     )
 
                     # ======================================
-                    # FILTER DOMESTIK / INTERNASIONAL
+                    # FILTER INDONESIA / NON-INDONESIA
                     # ======================================
                     if "Country" in df_sc.columns:
 
@@ -3442,7 +3875,7 @@ def main_app():
 
                         country_filter = st.radio(
                             label="filter_wilayah",
-                            options=["Domestik", "Internasional"],
+                            options=["Indonesia", "Non-Indonesia"],
                             index=0,
                             horizontal=True,
                             label_visibility="collapsed",
@@ -3458,12 +3891,12 @@ def main_app():
                             .str.upper()
                         )
 
-                        if country_filter == "Domestik":
+                        if country_filter == "Indonesia":
                             df_sc_filtered = df_sc_country[df_sc_country["_country_upper"] == "INDONESIA"]
-                            filter_label = "Indonesia"
+                            filter_label = "🇮🇩 Indonesia"
                         else:
                             df_sc_filtered = df_sc_country[df_sc_country["_country_upper"] != "INDONESIA"]
-                            filter_label = "Internasional"
+                            filter_label = "🌐 Non-Indonesia"
 
                         df_sc_filtered = df_sc_filtered.drop(columns=["_country_upper"])
 
@@ -4145,28 +4578,497 @@ def main_app():
                     else:
                         st.info("No data for selected hotel.")
         # ======================================
+        # ======================================
+        # TAB 9: SANKEY FLOW DIAGRAM
+        # ======================================
+        with tab7:
+
+            # ── Dark Header ────────────────────────────────────────
+            st.markdown("""
+            <div style="
+                background: #1a0f1e;
+                padding: 28px 32px;
+                border-radius: 10px;
+                margin-bottom: 20px;
+                position: relative;
+                overflow: hidden;
+            ">
+                <div style="
+                    position:absolute; top:-40px; right:-40px;
+                    width:200px; height:200px;
+                    border-radius:50%;
+                    background: radial-gradient(circle, rgba(156,87,137,0.35) 0%, transparent 70%);
+                "></div>
+                <div style="
+                    position:absolute; bottom:-30px; left:30%;
+                    width:150px; height:150px;
+                    border-radius:50%;
+                    background: radial-gradient(circle, rgba(79,121,131,0.25) 0%, transparent 70%);
+                "></div>
+                <div style="position:relative; z-index:1;">
+                    <div style="
+                        display:inline-block;
+                        background: rgba(156,87,137,0.25);
+                        border: 1px solid rgba(156,87,137,0.50);
+                        border-radius: 20px;
+                        padding: 3px 12px;
+                        font-size: 0.72em;
+                        color: #d4a0c5;
+                        letter-spacing: 0.08em;
+                        text-transform: uppercase;
+                        margin-bottom: 10px;
+                    ">Spending Flow Analysis</div>
+                    <h2 style="color: white; margin: 0 0 6px 0; font-weight: 600; font-size: 1.6em; letter-spacing:-0.01em;">
+                        Perusahaan &rarr; Kota &rarr; Hotel
+                    </h2>
+                    <p style="color: rgba(255,255,255,0.50); margin: 0; font-size: 0.88em;">
+                        Visualisasi alur pengeluaran travel berdasarkan volume Invoice Amount
+                    </p>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            required_sankey = ["Nama Perusahaan", "Hotel Name", "Invoice Amount"]
+            city_sankey_col = next(
+                (c for c in ["City", "City Destination"] if c in df_overview.columns), None
+            )
+
+            if not all(c in df_overview.columns for c in required_sankey) or city_sankey_col is None:
+                st.warning("Kolom yang dibutuhkan tidak lengkap.")
+            else:
+
+                # ── Controls row ──────────────────────────────────────
+                row_ctrl = st.columns([1.2, 1, 1, 1, 1])
+
+                with row_ctrl[0]:
+                    st.markdown("""
+                    <style>
+                    div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] {
+                        display: inline-flex !important;
+                        background: #9c5789;
+                        border-radius: 50px;
+                        padding: 3px;
+                        gap: 0;
+                        box-shadow: 0 1px 6px rgba(156,87,137,0.22);
+                    }
+                    div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] > label {
+                        cursor: pointer;
+                        padding: 4px 16px !important;
+                        border-radius: 50px !important;
+                        font-size: 0.78em !important;
+                        font-weight: 500 !important;
+                        color: rgba(255,255,255,0.80) !important;
+                        transition: all 0.2s ease;
+                        margin: 0 !important;
+                        line-height: 1.6 !important;
+                    }
+                    div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] > label > div:first-child { display: none !important; }
+                    div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] > label > div:last-child p {
+                        color: inherit !important; font-weight: 500 !important; font-size: 1em !important; margin: 0 !important;
+                    }
+                    div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) {
+                        background: white !important; color: #9c5789 !important; box-shadow: 0 1px 4px rgba(0,0,0,0.10) !important;
+                    }
+                    div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color: #9c5789 !important; }
+                    div[data-testid="stRadio"][data-key="sankey_country_radio"] > label { display: none !important; }
+                    </style>
+                    """, unsafe_allow_html=True)
+                    sankey_country_filter = st.radio(
+                        label="sankey_filter",
+                        options=["Domestik", "Internasional"],
+                        index=0, horizontal=True,
+                        label_visibility="collapsed",
+                        key="sankey_country_radio"
+                    )
+
+                with row_ctrl[1]:
+                    top_n_company = st.selectbox("Perusahaan", [5,8,10,15,20], index=2, key="sankey_top_company")
+                with row_ctrl[2]:
+                    top_n_city    = st.selectbox("Kota",        [5,8,10,15,20,30], index=2, key="sankey_top_city")
+                with row_ctrl[3]:
+                    top_n_hotel   = st.selectbox("Hotel",       [10,15,20,30,50], index=2, key="sankey_top_hotel")
+                with row_ctrl[4]:
+                    chart_height  = st.selectbox("Tinggi Chart", [600,750,900,1100], index=1, key="sankey_height")
+
+                # ── Apply filter ───────────────────────────────────────
+                if "Country" in df_overview.columns:
+                    _df_sk = df_overview.copy()
+                    _df_sk["_cu"] = _df_sk["Country"].astype(str).str.strip().str.upper()
+                    if sankey_country_filter == "Domestik":
+                        df_sankey = _df_sk[_df_sk["_cu"] == "INDONESIA"].drop(columns=["_cu"])
+                        sankey_label = "Domestik"
+                    else:
+                        df_sankey = _df_sk[_df_sk["_cu"] != "INDONESIA"].drop(columns=["_cu"])
+                        sankey_label = "Internasional"
+                else:
+                    df_sankey = df_overview.copy()
+                    sankey_label = "Semua"
+
+                if df_sankey.empty:
+                    st.warning(f"Tidak ada data untuk filter: {sankey_label}")
+                else:
+
+                    # ── Build data ─────────────────────────────────────
+                    df_sk = df_sankey.dropna(
+                        subset=["Nama Perusahaan", city_sankey_col, "Hotel Name", "Invoice Amount"]
+                    ).copy()
+
+                    top_companies = df_sk.groupby("Nama Perusahaan")["Invoice Amount"].sum().nlargest(top_n_company).index
+                    top_cities    = df_sk.groupby(city_sankey_col)["Invoice Amount"].sum().nlargest(top_n_city).index
+                    top_hotels    = df_sk.groupby("Hotel Name")["Invoice Amount"].sum().nlargest(top_n_hotel).index
+
+                    df_sk = df_sk[
+                        df_sk["Nama Perusahaan"].isin(top_companies) &
+                        df_sk[city_sankey_col].isin(top_cities) &
+                        df_sk["Hotel Name"].isin(top_hotels)
+                    ]
+
+                    if df_sk.empty:
+                        st.warning("Tidak ada data setelah filter.")
+                    else:
+                        co_ci = df_sk.groupby(["Nama Perusahaan", city_sankey_col])["Invoice Amount"].sum().reset_index()
+                        ci_ho = df_sk.groupby([city_sankey_col, "Hotel Name"])["Invoice Amount"].sum().reset_index()
+
+                        companies = list(co_ci["Nama Perusahaan"].unique())
+                        cities    = list(co_ci[city_sankey_col].unique())
+                        hotels    = list(ci_ho["Hotel Name"].unique())
+                        node_labels = companies + cities + hotels
+
+                        co_idx = {c: i                               for i, c in enumerate(companies)}
+                        ci_idx = {c: len(companies) + i             for i, c in enumerate(cities)}
+                        ho_idx = {h: len(companies)+len(cities) + i for i, h in enumerate(hotels)}
+
+                        sources, targets, values = [], [], []
+                        for _, row in co_ci.iterrows():
+                            if row["Nama Perusahaan"] in co_idx and row[city_sankey_col] in ci_idx:
+                                sources.append(co_idx[row["Nama Perusahaan"]])
+                                targets.append(ci_idx[row[city_sankey_col]])
+                                values.append(row["Invoice Amount"])
+                        n_co_links = len(sources)
+                        for _, row in ci_ho.iterrows():
+                            if row[city_sankey_col] in ci_idx and row["Hotel Name"] in ho_idx:
+                                sources.append(ci_idx[row[city_sankey_col]])
+                                targets.append(ho_idx[row["Hotel Name"]])
+                                values.append(row["Invoice Amount"])
+
+                        # ── Color palette: Steel Blue → Copper → Mint ──────
+                        # Perusahaan : steel blue      #3d7abf
+                        # Kota       : warm copper     #c47a3d
+                        # Hotel      : soft mint       #3dab7a
+                        # Links Co→City   : electric blue ribbon
+                        # Links City→Hotel: amber ribbon
+                        import colorsys
+
+                        def node_palette(hex_color, n, alpha=0.90, l_lo=0.32, l_hi=0.55):
+                            h, l, s = colorsys.rgb_to_hls(
+                                int(hex_color[1:3],16)/255,
+                                int(hex_color[3:5],16)/255,
+                                int(hex_color[5:7],16)/255,
+                            )
+                            out = []
+                            for i in range(max(n,1)):
+                                li = l_lo + (l_hi - l_lo) * i / max(n-1, 1)
+                                r, g, b = colorsys.hls_to_rgb(h, min(li, 0.78), s)
+                                out.append(f"rgba({int(r*255)},{int(g*255)},{int(b*255)},{alpha})")
+                            return out
+
+                        # Triadic palette — maximum contrast, clean on dark bg
+                        co_colors = node_palette("#4a8fd4", len(companies), alpha=0.94, l_lo=0.30, l_hi=0.50)  # steel blue
+                        ci_colors = node_palette("#d4834a", len(cities),    alpha=0.92, l_lo=0.32, l_hi=0.52)  # warm copper
+                        ho_colors = node_palette("#4ad49a", len(hotels),    alpha=0.88, l_lo=0.28, l_hi=0.48)  # soft mint
+
+                        node_colors = co_colors + ci_colors + ho_colors
+
+                        # Flow ribbons: translucent, per-segment color
+                        # Co→City   : soft blue  — follows Perusahaan layer
+                        # City→Hotel: amber glow — follows Kota layer, warm contrast
+                        link_co_city    = "rgba( 74,143,212, 0.18)"   # blue ribbon
+                        link_city_hotel = "rgba(212,131, 74, 0.18)"   # amber ribbon
+                        link_colors = (
+                            [link_co_city]    * n_co_links +
+                            [link_city_hotel] * (len(sources) - n_co_links)
+                        )
+
+                        # ── Dark background Sankey figure ──────────────
+                        BG = "#0f0a14"
+
+                        fig_sankey = go.Figure(go.Sankey(
+                            arrangement="snap",
+                            node=dict(
+                                pad=22,
+                                thickness=18,
+                                line=dict(color="rgba(0,0,0,0)", width=0),
+                                label=node_labels,
+                                color=node_colors,
+                                hovertemplate=(
+                                    "<b>%{label}</b><br>"
+                                    "Total: Rp%{value:,.0f}"
+                                    "<extra></extra>"
+                                )
+                            ),
+                            link=dict(
+                                source=sources,
+                                target=targets,
+                                value=values,
+                                color=link_colors,
+                                hovertemplate=(
+                                    "<b>%{source.label}</b> → <b>%{target.label}</b><br>"
+                                    "Rp%{value:,.0f}"
+                                    "<extra></extra>"
+                                )
+                            )
+                        ))
+
+                        fig_sankey.update_layout(
+                            paper_bgcolor=BG,
+                            plot_bgcolor=BG,
+                            height=chart_height,
+                            margin=dict(l=8, r=8, t=30, b=8),
+                            font=dict(
+                                family="Arial, sans-serif",
+                                size=11,
+                                color="#e8d5e4"
+                            ),
+                            title=dict(
+                                text=(
+                                    f"<span style='color:#9c8fa0;font-size:11px;'>"
+                                    f"Top {top_n_company} Perusahaan  ·  "
+                                    f"Top {top_n_city} Kota  ·  "
+                                    f"Top {top_n_hotel} Hotel  ·  {sankey_label}"
+                                    f"</span>"
+                                ),
+                                x=0.01, xanchor="left",
+                                font=dict(size=11, color="#9c8fa0")
+                            )
+                        )
+
+                        # ── Dark card wrapper for the chart ────────────
+                        st.markdown(f"""
+                        <div style="
+                            background:{BG};
+                            border-radius:12px;
+                            padding:4px;
+                            box-shadow: 0 8px 40px rgba(0,0,0,0.45),
+                                        0 0 0 1px rgba(156,87,137,0.20);
+                            margin-bottom:20px;
+                        ">
+                        """, unsafe_allow_html=True)
+                        st.plotly_chart(fig_sankey, use_container_width=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                        # ── KPI strip ─────────────────────────────────
+                        total_flow = df_sk["Invoice Amount"].sum()
+                        k1, k2, k3, k4 = st.columns(4)
+                        kpi_data = [
+                            (k1, "Total Spend", f"Rp{total_flow:,.0f}", "#9c5789"),
+                            (k2, "Perusahaan",  str(len(companies)),    "#7a6b8a"),
+                            (k3, "Kota",        str(len(cities)),       "#7a6b8a"),
+                            (k4, "Hotel",       str(len(hotels)),       "#7a6b8a"),
+                        ]
+                        for col_k, lbl, val, accent in kpi_data:
+                            with col_k:
+                                st.markdown(f"""
+                                <div style="
+                                    background: linear-gradient(135deg, #1a0f1e 0%, #231328 100%);
+                                    border: 1px solid rgba(156,87,137,0.20);
+                                    border-left: 3px solid {accent};
+                                    border-radius: 8px;
+                                    padding: 14px 18px;
+                                ">
+                                    <div style="color:rgba(255,255,255,0.40);font-size:0.72em;
+                                                text-transform:uppercase;letter-spacing:0.06em;
+                                                margin-bottom:6px;">{lbl} · {sankey_label}</div>
+                                    <div style="color:#e8d5e4;font-size:1.4em;font-weight:600;
+                                                letter-spacing:-0.01em;">{val}</div>
+                                </div>""", unsafe_allow_html=True)
+
+                        st.markdown("<div style='margin-top:20px'></div>", unsafe_allow_html=True)
+
+                        # ── Legend strip ──────────────────────────────
+                        st.markdown(f"""
+                        <div style="
+                            display:flex; gap:28px; align-items:center;
+                            padding:12px 20px;
+                            background:rgba(255,255,255,0.03);
+                            border:1px solid rgba(255,255,255,0.07);
+                            border-radius:8px;
+                            margin-bottom:16px;
+                        ">
+                            <span style="font-size:0.74em;color:#555;text-transform:uppercase;
+                                         letter-spacing:0.06em;white-space:nowrap;">Node Layer</span>
+                            <span style="display:flex;align-items:center;gap:8px;">
+                                <span style="width:12px;height:12px;border-radius:2px;
+                                             background:rgba(74,143,212,0.90);display:inline-block;"></span>
+                                <span style="font-size:0.80em;color:#aaa;">Perusahaan</span>
+                            </span>
+                            <span style="display:flex;align-items:center;gap:8px;">
+                                <span style="width:12px;height:12px;border-radius:2px;
+                                             background:rgba(212,131,74,0.90);display:inline-block;"></span>
+                                <span style="font-size:0.80em;color:#aaa;">Kota</span>
+                            </span>
+                            <span style="display:flex;align-items:center;gap:8px;">
+                                <span style="width:12px;height:12px;border-radius:2px;
+                                             background:rgba(74,212,154,0.88);display:inline-block;"></span>
+                                <span style="font-size:0.80em;color:#aaa;">Hotel</span>
+                            </span>
+                            <span style="width:1px;height:18px;background:rgba(255,255,255,0.08);margin:0 4px;"></span>
+                            <span style="font-size:0.74em;color:#555;text-transform:uppercase;
+                                         letter-spacing:0.06em;white-space:nowrap;">Alur</span>
+                            <span style="display:flex;align-items:center;gap:8px;">
+                                <span style="width:28px;height:6px;border-radius:3px;
+                                             background:rgba(74,143,212,0.50);display:inline-block;"></span>
+                                <span style="font-size:0.80em;color:#aaa;">Perusahaan → Kota</span>
+                            </span>
+                            <span style="display:flex;align-items:center;gap:8px;">
+                                <span style="width:28px;height:6px;border-radius:3px;
+                                             background:rgba(212,131,74,0.50);display:inline-block;"></span>
+                                <span style="font-size:0.80em;color:#aaa;">Kota → Hotel</span>
+                            </span>
+                            <span style="margin-left:auto;font-size:0.75em;color:#444;font-style:italic;">
+                                lebar proporsional terhadap Invoice Amount
+                            </span>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # ── Detail table ──────────────────────────────
+                        with st.expander("Detail Data Flow"):
+                            detail_df = (
+                                df_sk.groupby(["Nama Perusahaan", city_sankey_col, "Hotel Name"])["Invoice Amount"]
+                                .sum().reset_index()
+                                .sort_values("Invoice Amount", ascending=False)
+                                .rename(columns={city_sankey_col: "Kota"})
+                            )
+                            st.dataframe(
+                                detail_df.style
+                                .format({"Invoice Amount": "Rp{:,.0f}"})
+                                .set_properties(**{"font-size": "0.85em"})
+                                .background_gradient(subset=["Invoice Amount"], cmap="RdPu"),
+                                use_container_width=True, hide_index=True
+                            )
+
+                        # ── Download ─────────────────────────────────
+                        output_sankey = BytesIO()
+                        export_df = (
+                            df_sk.groupby(["Nama Perusahaan", city_sankey_col, "Hotel Name"])["Invoice Amount"]
+                            .sum().reset_index().sort_values("Invoice Amount", ascending=False)
+                        )
+                        export_df.to_excel(output_sankey, index=False, sheet_name="Sankey Flow")
+                        output_sankey.seek(0)
+
+                        if st.session_state.get("role") == "Admin":
+                            st.download_button(
+                                label="Download Data",
+                                data=output_sankey,
+                                file_name=f"sankey_flow_{sankey_label}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        else:
+                            st.markdown("""
+                            <div style='background:#f9f9f9;border:1px solid #e8d5e4;
+                                        border-left:3px solid #9c5789;border-radius:6px;
+                                        padding:10px 16px;font-size:0.82em;color:#9c5789;
+                                        display:flex;align-items:center;gap:8px;'>
+                                <span>Download hanya tersedia untuk Admin</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+
+
         # TAB 6: HOTEL
         # ======================================
-        with tab6:
+        with tab8:
             st.markdown("<div class='section-title'>Data Hotel</div>", unsafe_allow_html=True)
 
-#            st.markdown("Export your data in various formats for further analysis.")
+            # ======================================
+            # FILTER DOMESTIK / INTERNASIONAL
+            # ======================================
+            if "Country" in df_overview.columns:
+
+                st.markdown("""
+                <style>
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] {
+                    display: inline-flex !important;
+                    background: #9c5789;
+                    border-radius: 50px;
+                    padding: 3px;
+                    gap: 0;
+                    box-shadow: 0 1px 6px rgba(156,87,137,0.22);
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label {
+                    cursor: pointer;
+                    padding: 4px 16px !important;
+                    border-radius: 50px !important;
+                    font-size: 0.78em !important;
+                    font-weight: 500 !important;
+                    color: rgba(255,255,255,0.80) !important;
+                    transition: all 0.2s ease;
+                    margin: 0 !important;
+                    line-height: 1.6 !important;
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label > div:first-child {
+                    display: none !important;
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label > div:last-child p {
+                    color: inherit !important;
+                    font-weight: 500 !important;
+                    font-size: 1em !important;
+                    margin: 0 !important;
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) {
+                    background: white !important;
+                    color: #9c5789 !important;
+                    box-shadow: 0 1px 4px rgba(0,0,0,0.10) !important;
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label:has(input:checked) > div:last-child p {
+                    color: #9c5789 !important;
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > label {
+                    display: none !important;
+                }
+                </style>
+                """, unsafe_allow_html=True)
+
+                tab6_country_filter = st.radio(
+                    label="filter_tab6",
+                    options=["Domestik", "Internasional"],
+                    index=0,
+                    horizontal=True,
+                    label_visibility="collapsed",
+                    key="tab8_country_radio"
+                )
+
+                # Apply filter
+                _df_tab6 = df_overview.copy()
+                _df_tab6["_country_up"] = (
+                    _df_tab6["Country"]
+                    .astype(str).str.strip().str.upper()
+                )
+                if tab6_country_filter == "🇮🇩 Domestik":
+                    df_tab6 = _df_tab6[_df_tab6["_country_up"] == "INDONESIA"].drop(columns=["_country_up"])
+                    tab6_label = "🇮🇩 Domestik"
+                else:
+                    df_tab6 = _df_tab6[_df_tab6["_country_up"] != "INDONESIA"].drop(columns=["_country_up"])
+                    tab6_label = "Internasional"
+
+                if df_tab6.empty:
+                    st.warning(f"⚠️ Tidak ada data untuk filter: {tab6_label}")
+                    st.stop()
+            else:
+                df_tab6 = df_overview.copy()
+                tab6_label = "Semua"
 
             # ======================================
             # TOP 100 ANALYSIS BY ROOM NIGHTS
             # ======================================
-#            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-#            st.markdown("<div class='section-title'>Top 100 Analysis by Room Nights</div>", unsafe_allow_html=True)
-            
             cols1, cols2 = st.columns(2)
             
             # -------------------------------
             # COL 1 — Top 100 Hotel Name
             # -------------------------------
             with cols1:
-                if "Hotel Name" in df_overview.columns and "Number of Rooms Night" in df_overview.columns:
+                if "Hotel Name" in df_tab6.columns and "Number of Rooms Night" in df_tab6.columns:
                     top_hotels = (
-                        df_overview.groupby("Hotel Name")["Number of Rooms Night"]
+                        df_tab6.groupby("Hotel Name")["Number of Rooms Night"]
                         .sum()
                         .sort_values(ascending=False)
                         .head(100)
@@ -4189,7 +5091,7 @@ def main_app():
                             "Top 20": "#9c5789",
                             "Others": "#e0e0e0"
                         },
-                        title="Top 100 Hotels by Total Room Nights"
+                        title=f"Top 100 Hotels by Total Room Nights · {tab6_label}"
                     )
 
                     fig_hotels.update_traces(
@@ -4257,13 +5159,13 @@ def main_app():
             with cols2:
                 city_col = None
                 for c in ["City", "City Destination"]:
-                    if c in df_overview.columns:
+                    if c in df_tab6.columns:
                         city_col = c
                         break
 
-                if city_col and "Number of Rooms Night" in df_overview.columns:
+                if city_col and "Number of Rooms Night" in df_tab6.columns:
                     top_cities = (
-                        df_overview.groupby(city_col)["Number of Rooms Night"]
+                        df_tab6.groupby(city_col)["Number of Rooms Night"]
                         .sum()
                         .sort_values(ascending=False)
                         .head(100)
@@ -4286,7 +5188,7 @@ def main_app():
                             "Top 20": "#9c5789",
                             "Others": "#e0e0e0"
                         },
-                        title="Top 100 Cities by Total Room Nights"
+                        title=f"Top 100 Cities by Total Room Nights · {tab6_label}"
                     )
 
                     fig_cities.update_traces(
@@ -4351,7 +5253,7 @@ def main_app():
         # ======================================
         # TAB 7: EXPORT
         # ======================================
-        with tab7:
+        with tab9:
             st.markdown("<div class='section-title'>Export Data</div>", unsafe_allow_html=True)
 
             st.markdown("Export your data in various formats for further analysis.")
@@ -4479,439 +5381,7 @@ def main_app():
                 st.metric("Est. File Size", f"{memory_usage * 0.8:.2f} MB")
 
         # ======================================
-        # TAB 8: STRATEGIC VALUE CREATION
-        # ======================================
-        with tab8:
 
-            import streamlit.components.v1 as components
-
-            components.html("""
-<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 14px;
-    line-height: 1.6;
-    background: #fafafa;
-    color: #1a1a1a;
-    padding: 8px 4px 40px;
-    -webkit-font-smoothing: antialiased;
-  }
-
-  :root {
-    --purple : #9c5789;
-    --purp-l : rgba(156,87,137,0.08);
-    --purp-b : rgba(156,87,137,0.22);
-    --black  : #1a1a1a;
-    --grey   : #888888;
-    --grey-l : #e0e0e0;
-    --white  : #fafafa;
-    --surf   : #ffffff;
-    --bdr    : #e0e0e0;
-  }
-
-  /* ── Page Header ── */
-  .hdr {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-bottom: 18px; border-bottom: 1px solid var(--bdr);
-    margin-bottom: 28px;
-  }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .mark {
-    width: 34px; height: 34px; background: var(--purple);
-    border-radius: 6px; display: inline-flex;
-    align-items: center; justify-content: center;
-    font-family: 'Geist Mono', monospace;
-    font-size: 11px; font-weight: 600; color: #fff; letter-spacing: .04em;
-    flex-shrink: 0;
-  }
-  .brand-title {
-    font-size: 17px; font-weight: 600; color: var(--black);
-    letter-spacing: -.02em; line-height: 1.2; margin: 0;
-  }
-  .brand-sub { font-size: 12px; color: var(--grey); margin: 2px 0 0; }
-  .hdr-right { display: flex; align-items: center; gap: 8px; }
-  .mod-tag {
-    font-family: 'Geist Mono', monospace; font-size: 10px;
-    color: var(--grey); background: var(--grey-l);
-    padding: 4px 10px; border-radius: 4px; letter-spacing: .08em;
-  }
-  .live-badge {
-    display: inline-flex; align-items: center; gap: 6px;
-    border: 1px solid var(--bdr); border-radius: 100px;
-    padding: 4px 12px; font-size: 11px; color: var(--grey);
-    background: var(--surf);
-  }
-  .live-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--purple); display: inline-block;
-    animation: blink 2.4s ease infinite;
-  }
-  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-  /* ── Eyebrow ── */
-  .eyebrow {
-    display: flex; align-items: center; gap: 10px;
-    font-family: 'Geist Mono', monospace; font-size: 10px; font-weight: 500;
-    color: var(--grey); letter-spacing: .18em;
-    text-transform: uppercase; margin-bottom: 14px;
-  }
-  .eyebrow-ln { flex: 1; height: 1px; background: var(--bdr); }
-
-  /* ── 2×2 Pillar Grid ── */
-  .pgrid {
-    display: grid; grid-template-columns: 1fr 1fr;
-    border: 1px solid var(--bdr); border-radius: 10px;
-    overflow: hidden; background: var(--bdr); gap: 1px;
-    margin-bottom: 1px;
-  }
-  .pcard {
-    background: var(--surf); padding: 26px 24px;
-    position: relative; transition: background .18s ease;
-  }
-  .pcard:hover { background: #fdfdfd; }
-  .pcard::before {
-    content: ''; position: absolute;
-    top: 26px; bottom: 26px; left: 0; width: 2px;
-    background: var(--purple); opacity: 0; transition: opacity .2s ease;
-  }
-  .pcard:hover::before { opacity: 1; }
-  .card-top {
-    display: flex; align-items: flex-start;
-    justify-content: space-between; margin-bottom: 14px;
-  }
-  .card-icon { font-size: 18px; line-height: 1; }
-  .badge {
-    font-family: 'Geist Mono', monospace;
-    font-size: 9px; font-weight: 500; letter-spacing: .12em;
-    color: var(--purple); background: var(--purp-l);
-    border: 1px solid var(--purp-b);
-    padding: 3px 8px; border-radius: 3px;
-  }
-  .pcard h3 {
-    font-size: 14px; font-weight: 600; color: var(--black);
-    letter-spacing: -.015em; margin-bottom: 4px; line-height: 1.3;
-  }
-  .obj { font-size: 12px; color: var(--grey); margin-bottom: 18px; line-height: 1.55; }
-  .fl {
-    font-family: 'Geist Mono', monospace; font-size: 9px; font-weight: 500;
-    letter-spacing: .15em; text-transform: uppercase;
-    color: var(--purple); margin-bottom: 8px;
-  }
-  .dlist { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
-  .drow  { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--black); }
-  .ddot  {
-    width: 4px; height: 4px; border-radius: 50%;
-    background: var(--purple); flex-shrink: 0; display: inline-block;
-  }
-  .sep  { height: 1px; background: var(--grey-l); margin: 12px 0; }
-  .ilist { display: flex; flex-direction: column; gap: 5px; }
-  .irow {
-    display: flex; align-items: flex-start; gap: 8px;
-    font-size: 11.5px; color: var(--grey); line-height: 1.5;
-  }
-  .iarr { font-size: 8px; margin-top: 5px; flex-shrink: 0; color: var(--purple); opacity: .7; }
-
-  /* ── Card 5 ── */
-  .c5wrap {
-    border: 1px solid var(--bdr); border-top: none;
-    border-radius: 0 0 10px 10px; overflow: hidden; margin-bottom: 32px;
-  }
-  .c5hd {
-    background: #f5f5f5; border-bottom: 1px solid var(--bdr);
-    padding: 16px 24px; display: flex;
-    align-items: center; justify-content: space-between;
-  }
-  .c5hd-l { display: flex; align-items: center; gap: 10px; }
-  .c5hd h3 { font-size: 13px; font-weight: 600; color: var(--black); margin: 0; }
-  .c5hd .c5sub { font-size: 11px; color: var(--grey); }
-  .c5body {
-    display: grid; grid-template-columns: 1fr 1fr 1fr;
-    background: var(--bdr); gap: 1px;
-  }
-  .c5col { background: var(--surf); padding: 20px 24px; }
-
-  /* ── Executive Summary ── */
-  .exec { border: 1px solid var(--bdr); border-radius: 10px; overflow: hidden; }
-  .exec-hd {
-    background: var(--black); padding: 22px 26px;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .exec-hd h2 {
-    font-size: 16px; font-weight: 600; color: var(--white);
-    letter-spacing: -.02em; margin: 0;
-  }
-  .exec-hd .exec-sub { font-size: 11.5px; color: #888; margin: 3px 0 0; }
-  .exec-tag {
-    font-family: 'Geist Mono', monospace; font-size: 9.5px;
-    letter-spacing: .12em; color: var(--purple);
-    background: rgba(156,87,137,.15); border: 1px solid rgba(156,87,137,.3);
-    padding: 4px 11px; border-radius: 100px; text-transform: uppercase;
-    white-space: nowrap;
-  }
-  .pillars {
-    display: grid; grid-template-columns: repeat(4,1fr);
-    background: var(--bdr); gap: 1px;
-    border-bottom: 1px solid var(--bdr);
-  }
-  .pillar {
-    background: var(--surf); padding: 18px 18px 16px; position: relative;
-  }
-  .pillar::after {
-    content: ''; position: absolute;
-    bottom: 0; left: 18px; right: 18px; height: 1px;
-    background: var(--purple); opacity: 0; transition: opacity .2s;
-  }
-  .pillar:hover::after { opacity: .4; }
-  .p-icon { font-size: 16px; margin-bottom: 8px; display: block; }
-  .pillar p { font-size: 12px; color: var(--black); font-weight: 500; line-height: 1.45; margin: 0; }
-  .flow-bar {
-    background: var(--surf); padding: 18px 24px;
-    display: flex; align-items: center; justify-content: center;
-    border-top: 1px solid var(--bdr);
-  }
-  .fn { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .fn-lbl { font-size: 12px; font-weight: 600; color: var(--black); letter-spacing: -.01em; }
-  .fn-lbl.hi { color: var(--purple); }
-  .fn-sub {
-    font-family: 'Geist Mono', monospace; font-size: 9px;
-    color: var(--grey); letter-spacing: .06em;
-  }
-  .fsep { display: flex; align-items: center; margin: 0 18px; }
-  .fsep-ln { width: 28px; height: 1px; background: var(--grey-l); }
-  .fsep-arr { font-size: 9px; color: var(--purple); opacity: .6; }
-</style>
-</head>
-<body>
-
-  <!-- ── Page Header ── -->
-  <div class="hdr">
-    <div class="brand">
-      <div class="mark">MTX</div>
-      <div>
-        <p class="brand-title">Strategic Value Creation Framework</p>
-        <p class="brand-sub">Travel Analytics &amp; Procurement Intelligence</p>
-      </div>
-    </div>
-    <div class="hdr-right">
-      <span class="mod-tag">MODULE 08</span>
-      <span class="live-badge"><span class="live-dot"></span>5 Value Pillars</span>
-    </div>
-  </div>
-
-  <!-- ── Eyebrow ── -->
-  <div class="eyebrow"><span>Value Pillars</span><div class="eyebrow-ln"></div></div>
-
-  <!-- ── 2×2 Grid ── -->
-  <div class="pgrid">
-
-    <!-- 01 Financial -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">💰</span>
-        <span class="badge">01 · FINANCIAL</span>
-      </div>
-      <h3>Financial Optimization</h3>
-      <p class="obj">Mengurangi total travel spend dan meningkatkan efisiensi biaya operasional secara terukur.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Rate benchmarking antar hotel</div>
-        <div class="drow"><span class="ddot"></span>Price per night analysis</div>
-        <div class="drow"><span class="ddot"></span>Negotiation leverage berbasis volume room nights</div>
-        <div class="drow"><span class="ddot"></span>Last-minute booking cost impact</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Estimasi saving 5–15% dari negotiated rate</div>
-        <div class="irow"><span class="iarr">▶</span>Pengurangan overpricing hotel tidak terstandarisasi</div>
-        <div class="irow"><span class="iarr">▶</span>Kontrol budget lintas perusahaan</div>
-      </div>
-    </div>
-
-    <!-- 02 Operational -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">⚙️</span>
-        <span class="badge">02 · OPERATIONAL</span>
-      </div>
-      <h3>Operational Efficiency</h3>
-      <p class="obj">Meningkatkan kecepatan dan kualitas proses booking secara end-to-end.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Lead time monitoring</div>
-        <div class="drow"><span class="ddot"></span>Multi-booking behavior analysis</div>
-        <div class="drow"><span class="ddot"></span>Travel request pattern heatmap</div>
-        <div class="drow"><span class="ddot"></span>Automation &amp; canonical hotel mapping</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Mengurangi booking mendadak (≤2 hari)</div>
-        <div class="irow"><span class="iarr">▶</span>Mengurangi duplikasi nama hotel</div>
-        <div class="irow"><span class="iarr">▶</span>Meningkatkan data reliability untuk reporting</div>
-      </div>
-    </div>
-
-    <!-- 03 Procurement -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">🎯</span>
-        <span class="badge">03 · PROCUREMENT</span>
-      </div>
-      <h3>Strategic Procurement Intelligence</h3>
-      <p class="obj">Meningkatkan posisi tawar terhadap hotel dan vendor strategis.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Top 10 hotel concentration</div>
-        <div class="drow"><span class="ddot"></span>Volume aggregation per city</div>
-        <div class="drow"><span class="ddot"></span>Corporate usage clustering</div>
-        <div class="drow"><span class="ddot"></span>Canonical hotel normalization</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Centralized negotiation strategy</div>
-        <div class="irow"><span class="iarr">▶</span>Volume-based discount leverage</div>
-        <div class="irow"><span class="iarr">▶</span>Preferred hotel program optimization</div>
-      </div>
-    </div>
-
-    <!-- 04 Governance -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">🛡️</span>
-        <span class="badge">04 · GOVERNANCE</span>
-      </div>
-      <h3>Risk &amp; Governance Control</h3>
-      <p class="obj">Menjamin kontrol dan keamanan data travel perusahaan secara sistemik.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Role-based download restriction</div>
-        <div class="drow"><span class="ddot"></span>Admin-only data export</div>
-        <div class="drow"><span class="ddot"></span>Real-time monitoring dashboard</div>
-        <div class="drow"><span class="ddot"></span>Company code mapping standardization</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Mencegah data leakage</div>
-        <div class="irow"><span class="iarr">▶</span>Meningkatkan compliance standar</div>
-        <div class="irow"><span class="iarr">▶</span>Governance berbasis sistem</div>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- ── Card 5 — Predictive ── -->
-  <div class="c5wrap">
-    <div class="c5hd">
-      <div class="c5hd-l">
-        <span style="font-size:17px;">🔮</span>
-        <div>
-          <h3>Predictive &amp; Future Intelligence</h3>
-          <span class="c5sub">Next Phase Development</span>
-        </div>
-      </div>
-      <span class="badge">05 · PREDICTIVE</span>
-    </div>
-    <div class="c5body">
-      <div class="c5col">
-        <div class="fl">Potential Development</div>
-        <div class="dlist" style="margin-top:10px;">
-          <div class="drow"><span class="ddot"></span>LSTM-based demand forecasting</div>
-          <div class="drow"><span class="ddot"></span>Hotel price anomaly detection</div>
-          <div class="drow"><span class="ddot"></span>Traveler segmentation (KMeans)</div>
-          <div class="drow"><span class="ddot"></span>Automated negotiation simulator</div>
-        </div>
-      </div>
-      <div class="c5col" style="border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;">
-        <div class="fl">Future Business Value</div>
-        <div class="ilist" style="margin-top:10px;">
-          <div class="irow"><span class="iarr">▶</span>Predictive budget planning yang akurat</div>
-          <div class="irow"><span class="iarr">▶</span>Early warning overpricing otomatis</div>
-          <div class="irow"><span class="iarr">▶</span>Smart hotel contract recommendation</div>
-        </div>
-      </div>
-      <div class="c5col">
-        <div class="fl">Technology Stack</div>
-        <div class="dlist" style="margin-top:10px;">
-          <div class="drow"><span class="ddot"></span>Deep Learning / LSTM</div>
-          <div class="drow"><span class="ddot"></span>Unsupervised Clustering</div>
-          <div class="drow"><span class="ddot"></span>Anomaly Detection Models</div>
-          <div class="drow"><span class="ddot"></span>Simulation Engine</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Executive Summary eyebrow ── -->
-  <div class="eyebrow" style="margin-top:4px;">
-    <span>Executive Summary</span><div class="eyebrow-ln"></div>
-  </div>
-
-  <!-- ── Executive Summary ── -->
-  <div class="exec">
-    <div class="exec-hd">
-      <div>
-        <h2>MTRAX Platform Overview</h2>
-        <p class="exec-sub">Lebih dari sekadar dashboard — sistem intelijen strategis untuk travel spend.</p>
-      </div>
-      <span class="exec-tag">Strategic Intelligence</span>
-    </div>
-
-    <div class="pillars">
-      <div class="pillar">
-        <span class="p-icon">🧠</span>
-        <p>Strategic Decision<br>Support System</p>
-      </div>
-      <div class="pillar" style="border-left:1px solid #e0e0e0;">
-        <span class="p-icon">⚡</span>
-        <p>Negotiation<br>Intelligence Engine</p>
-      </div>
-      <div class="pillar" style="border-left:1px solid #e0e0e0;">
-        <span class="p-icon">💡</span>
-        <p>Corporate Cost<br>Optimization Platform</p>
-      </div>
-      <div class="pillar" style="border-left:1px solid #e0e0e0;">
-        <span class="p-icon">🔐</span>
-        <p>Governance-Controlled<br>Analytics Ecosystem</p>
-      </div>
-    </div>
-
-    <div class="flow-bar">
-      <div class="fn">
-        <span class="fn-lbl">Insight</span>
-        <span class="fn-sub">Data → Analytics</span>
-      </div>
-      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-      <div class="fn">
-        <span class="fn-lbl">Strategy</span>
-        <span class="fn-sub">Pattern → Direction</span>
-      </div>
-      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-      <div class="fn">
-        <span class="fn-lbl">Negotiation Leverage</span>
-        <span class="fn-sub">Volume → Power</span>
-      </div>
-      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-      <div class="fn">
-        <span class="fn-lbl hi">Financial Impact</span>
-        <span class="fn-sub">Cost → Savings</span>
-      </div>
-    </div>
-  </div>
-
-</body>
-</html>
-""", height=1600, scrolling=True)
 
     # ======================================
     # DISCLAIMER
@@ -4946,14 +5416,10 @@ def main_app():
     """, unsafe_allow_html=True)
 
 # ===============================
-# 6. ROUTING (WAJIB PALING BAWAH)
+# ROUTING (WAJIB PALING BAWAH)
 # ===============================
 if not st.session_state.get("authenticated"):
     login_page()
 else:
     check_session_timeout()
     main_app()
-
-
-
-
