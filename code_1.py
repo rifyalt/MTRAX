@@ -2500,12 +2500,10 @@ def main_app():
                     xaxis_title="Bulan ke-n sejak booking pertama",
                     yaxis_title="Cohort (Bulan Pertama Booking)",
                     coloraxis_colorbar=dict(
-                        title=dict(
-                            text="%",
-                            font=dict(size=10, color="#9c8fa0")
-                        ),
+                        title="%",
                         ticksuffix="%",
                         tickfont=dict(size=9, color="#9c8fa0"),
+                        titlefont=dict(size=10, color="#9c8fa0"),
                         len=0.8
                     ),
                     height=max(400, len(cohort_pct) * 36 + 120),
@@ -4671,48 +4669,53 @@ def main_app():
         # ======================================
         with tab7:
 
-            # ── Dark Header ────────────────────────────────────────
+            # ── Section Header ──────────────────────────────────────
             st.markdown("""
             <div style="
-                background: #1a0f1e;
-                padding: 28px 32px;
+                background: #ffffff;
+                border: 1px solid #EBEBEB;
+                border-left: 4px solid #9c5789;
                 border-radius: 10px;
+                padding: 20px 28px;
                 margin-bottom: 20px;
-                position: relative;
-                overflow: hidden;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.05);
             ">
-                <div style="
-                    position:absolute; top:-40px; right:-40px;
-                    width:200px; height:200px;
-                    border-radius:50%;
-                    background: radial-gradient(circle, rgba(156,87,137,0.35) 0%, transparent 70%);
-                "></div>
-                <div style="
-                    position:absolute; bottom:-30px; left:30%;
-                    width:150px; height:150px;
-                    border-radius:50%;
-                    background: radial-gradient(circle, rgba(79,121,131,0.25) 0%, transparent 70%);
-                "></div>
-                <div style="position:relative; z-index:1;">
+                <div>
                     <div style="
-                        display:inline-block;
-                        background: rgba(156,87,137,0.25);
-                        border: 1px solid rgba(156,87,137,0.50);
-                        border-radius: 20px;
-                        padding: 3px 12px;
-                        font-size: 0.72em;
-                        color: #d4a0c5;
-                        letter-spacing: 0.08em;
+                        display: inline-block;
+                        background: #F5EEF8;
+                        border-radius: 4px;
+                        padding: 2px 10px;
+                        font-size: 0.65em;
+                        font-weight: 700;
+                        color: #9c5789;
+                        letter-spacing: 0.10em;
                         text-transform: uppercase;
-                        margin-bottom: 10px;
+                        margin-bottom: 8px;
                     ">Spending Flow Analysis</div>
-                    <h2 style="color: white; margin: 0 0 6px 0; font-weight: 600; font-size: 1.6em; letter-spacing:-0.01em;">
-                        Perusahaan &rarr; Kota &rarr; Hotel
-                    </h2>
-                    <p style="color: rgba(255,255,255,0.50); margin: 0; font-size: 0.88em;">
+                    <div style="
+                        color: #111111;
+                        font-size: 1.30em;
+                        font-weight: 700;
+                        letter-spacing: -0.02em;
+                        margin-bottom: 4px;
+                        line-height: 1.2;
+                    ">Perusahaan &rarr; Kota &rarr; Hotel</div>
+                    <div style="color: #999999; font-size: 0.82em; font-weight: 400;">
                         Visualisasi alur pengeluaran travel berdasarkan volume Invoice Amount
-                    </p>
+                    </div>
                 </div>
+                <div style="
+                    color: #9c5789;
+                    font-size: 2.0em;
+                    opacity: 0.18;
+                    font-weight: 900;
+                    letter-spacing: -0.05em;
+                    user-select: none;
+                ">⇢</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -4872,14 +4875,19 @@ def main_app():
                         ho_colors   = assign_pastel(len(hotels),    offset=20)
                         node_colors = co_colors + ci_colors + ho_colors
 
-                        # Links: very soft pastel of the source node (alpha 0.28 → airy ribbons)
-                        link_colors = [pastel_to_rgba(node_colors[s], alpha=0.28) for s in sources]
+                        # Links: grey ribbons (seperti referensi abu-abu)
+                        link_colors = ["rgba(180,180,180,0.40)" for _ in sources]
 
                         # ── Light background Sankey figure ──────────────
                         BG = "#FFFFFF"
 
                         fig_sankey = go.Figure(go.Sankey(
                             arrangement="snap",
+                            textfont=dict(
+                                family="'Segoe UI', Arial, sans-serif",
+                                size=12,
+                                color="#222222",
+                            ),
                             node=dict(
                                 pad=28,
                                 thickness=20,
@@ -4910,11 +4918,6 @@ def main_app():
                             plot_bgcolor=BG,
                             height=chart_height,
                             margin=dict(l=16, r=16, t=52, b=16),
-                            font=dict(
-                                family="'Segoe UI', Arial, sans-serif",
-                                size=11,
-                                color="#333333"
-                            ),
                             title=dict(
                                 text=(
                                     f"<b>Sankey Flow: Perusahaan → Kota → Hotel</b>  "
@@ -4947,74 +4950,92 @@ def main_app():
                         total_flow = df_sk["Invoice Amount"].sum()
                         k1, k2, k3, k4 = st.columns(4)
                         kpi_data = [
-                            (k1, "Total Spend",  f"Rp{total_flow:,.0f}", "#1B6CA8"),
-                            (k2, "Perusahaan",   str(len(companies)),    "#C0570A"),
-                            (k3, "Kota",         str(len(cities)),       "#1A9E5C"),
-                            (k4, "Hotel",        str(len(hotels)),       "#9c5789"),
+                            (k1, "Total Spend",  f"Rp{total_flow:,.0f}", "#1B6CA8", "💰"),
+                            (k2, "Perusahaan",   str(len(companies)),    "#C0570A", "🏢"),
+                            (k3, "Kota",         str(len(cities)),       "#1A9E5C", "📍"),
+                            (k4, "Hotel",        str(len(hotels)),       "#9c5789", "🏨"),
                         ]
-                        for col_k, lbl, val, accent in kpi_data:
+                        for col_k, lbl, val, accent, icon in kpi_data:
                             with col_k:
                                 st.markdown(f"""
                                 <div style="
-                                    background: #FAFAFA;
-                                    border: 1px solid #E8E8E8;
-                                    border-left: 4px solid {accent};
-                                    border-radius: 8px;
-                                    padding: 14px 18px;
-                                    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+                                    background:#ffffff;
+                                    border:1px solid #EBEBEB;
+                                    border-top:3px solid {accent};
+                                    border-radius:10px;
+                                    padding:16px 20px 14px 20px;
+                                    box-shadow:0 1px 4px rgba(0,0,0,0.06);
                                 ">
-                                    <div style="color:#888;font-size:0.72em;
-                                                text-transform:uppercase;letter-spacing:0.06em;
-                                                margin-bottom:6px;">{lbl} · {sankey_label}</div>
-                                    <div style="color:#1a1a1a;font-size:1.35em;font-weight:700;
-                                                letter-spacing:-0.01em;">{val}</div>
+                                    <div style="display:flex;align-items:center;gap:6px;
+                                                margin-bottom:10px;">
+                                        <span style="font-size:0.80em;color:{accent};">{icon}</span>
+                                        <span style="font-size:0.68em;font-weight:600;color:#999;
+                                                     text-transform:uppercase;letter-spacing:0.08em;
+                                                     ">{lbl}</span>
+                                        <span style="font-size:0.62em;color:#bbb;margin-left:2px;">· {sankey_label}</span>
+                                    </div>
+                                    <div style="color:#111;font-size:1.30em;font-weight:700;
+                                                letter-spacing:-0.02em;line-height:1;">{val}</div>
                                 </div>""", unsafe_allow_html=True)
-
-                        st.markdown("<div style='margin-top:20px'></div>", unsafe_allow_html=True)
 
                         # ── Legend strip ──────────────────────────────
                         st.markdown(f"""
                         <div style="
-                            display:flex; gap:28px; align-items:center;
-                            padding:12px 20px;
-                            background:rgba(255,255,255,0.03);
-                            border:1px solid rgba(255,255,255,0.07);
-                            border-radius:8px;
-                            margin-bottom:16px;
+                            display:flex;flex-wrap:wrap;gap:0;align-items:stretch;
+                            background:#ffffff;
+                            border:1px solid #EBEBEB;
+                            border-radius:10px;
+                            margin-top:16px;
+                            margin-bottom:4px;
+                            overflow:hidden;
+                            box-shadow:0 1px 4px rgba(0,0,0,0.05);
                         ">
-                            <span style="font-size:0.74em;color:#555;text-transform:uppercase;
-                                         letter-spacing:0.06em;white-space:nowrap;">Node Layer</span>
-                            <span style="display:flex;align-items:center;gap:8px;">
-                                <span style="width:12px;height:12px;border-radius:2px;
-                                             background:rgba(74,143,212,0.90);display:inline-block;"></span>
-                                <span style="font-size:0.80em;color:#aaa;">Perusahaan</span>
-                            </span>
-                            <span style="display:flex;align-items:center;gap:8px;">
-                                <span style="width:12px;height:12px;border-radius:2px;
-                                             background:rgba(212,131,74,0.90);display:inline-block;"></span>
-                                <span style="font-size:0.80em;color:#aaa;">Kota</span>
-                            </span>
-                            <span style="display:flex;align-items:center;gap:8px;">
-                                <span style="width:12px;height:12px;border-radius:2px;
-                                             background:rgba(74,212,154,0.88);display:inline-block;"></span>
-                                <span style="font-size:0.80em;color:#aaa;">Hotel</span>
-                            </span>
-                            <span style="width:1px;height:18px;background:rgba(255,255,255,0.08);margin:0 4px;"></span>
-                            <span style="font-size:0.74em;color:#555;text-transform:uppercase;
-                                         letter-spacing:0.06em;white-space:nowrap;">Alur</span>
-                            <span style="display:flex;align-items:center;gap:8px;">
-                                <span style="width:28px;height:6px;border-radius:3px;
-                                             background:rgba(74,143,212,0.50);display:inline-block;"></span>
-                                <span style="font-size:0.80em;color:#aaa;">Perusahaan → Kota</span>
-                            </span>
-                            <span style="display:flex;align-items:center;gap:8px;">
-                                <span style="width:28px;height:6px;border-radius:3px;
-                                             background:rgba(212,131,74,0.50);display:inline-block;"></span>
-                                <span style="font-size:0.80em;color:#aaa;">Kota → Hotel</span>
-                            </span>
-                            <span style="margin-left:auto;font-size:0.75em;color:#444;font-style:italic;">
-                                lebar proporsional terhadap Invoice Amount
-                            </span>
+                            <!-- Node Layer group -->
+                            <div style="display:flex;align-items:center;gap:16px;
+                                        padding:12px 20px;border-right:1px solid #F0F0F0;">
+                                <span style="font-size:0.66em;font-weight:700;color:#AAAAAA;
+                                             text-transform:uppercase;letter-spacing:0.10em;
+                                             white-space:nowrap;">Node Layer</span>
+                                <span style="display:flex;align-items:center;gap:6px;">
+                                    <span style="width:10px;height:10px;border-radius:2px;
+                                                 background:#4A8FD4;display:inline-block;"></span>
+                                    <span style="font-size:0.78em;color:#555;font-weight:500;">Perusahaan</span>
+                                </span>
+                                <span style="display:flex;align-items:center;gap:6px;">
+                                    <span style="width:10px;height:10px;border-radius:2px;
+                                                 background:#D4834A;display:inline-block;"></span>
+                                    <span style="font-size:0.78em;color:#555;font-weight:500;">Kota</span>
+                                </span>
+                                <span style="display:flex;align-items:center;gap:6px;">
+                                    <span style="width:10px;height:10px;border-radius:2px;
+                                                 background:#4AD49A;display:inline-block;"></span>
+                                    <span style="font-size:0.78em;color:#555;font-weight:500;">Hotel</span>
+                                </span>
+                            </div>
+                            <!-- Alur group -->
+                            <div style="display:flex;align-items:center;gap:16px;
+                                        padding:12px 20px;border-right:1px solid #F0F0F0;">
+                                <span style="font-size:0.66em;font-weight:700;color:#AAAAAA;
+                                             text-transform:uppercase;letter-spacing:0.10em;
+                                             white-space:nowrap;">Alur</span>
+                                <span style="display:flex;align-items:center;gap:6px;">
+                                    <span style="width:26px;height:5px;border-radius:3px;
+                                                 background:rgba(180,180,180,0.70);display:inline-block;"></span>
+                                    <span style="font-size:0.78em;color:#555;font-weight:500;">Perusahaan → Kota</span>
+                                </span>
+                                <span style="display:flex;align-items:center;gap:6px;">
+                                    <span style="width:26px;height:5px;border-radius:3px;
+                                                 background:rgba(180,180,180,0.70);display:inline-block;"></span>
+                                    <span style="font-size:0.78em;color:#555;font-weight:500;">Kota → Hotel</span>
+                                </span>
+                            </div>
+                            <!-- Note -->
+                            <div style="display:flex;align-items:center;margin-left:auto;
+                                        padding:12px 20px;">
+                                <span style="font-size:0.72em;color:#BBBBBB;font-style:italic;">
+                                    Lebar alur proporsional terhadap Invoice Amount
+                                </span>
+                            </div>
                         </div>
                         """, unsafe_allow_html=True)
 
