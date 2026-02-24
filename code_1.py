@@ -2500,10 +2500,12 @@ def main_app():
                     xaxis_title="Bulan ke-n sejak booking pertama",
                     yaxis_title="Cohort (Bulan Pertama Booking)",
                     coloraxis_colorbar=dict(
-                        title="%",
+                        title=dict(
+                            text="%",
+                            font=dict(size=10, color="#9c8fa0")
+                        ),
                         ticksuffix="%",
                         tickfont=dict(size=9, color="#9c8fa0"),
-                        titlefont=dict(size=10, color="#9c8fa0"),
                         len=0.8
                     ),
                     height=max(400, len(cohort_pct) * 36 + 120),
