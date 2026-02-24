@@ -2455,32 +2455,67 @@ def main_app():
             if cohort_df.empty:
                 st.warning("Data tidak cukup untuk Cohort Analysis (butuh Employee Id & Issue Time).")
             else:
-                st.caption(
-                    "Cohort berdasarkan bulan booking pertama (Issue Time) per Employee ID. "
-                    "Nilai menunjukkan jumlah Travel Request unik."
+                # ── Konversi ke Persentase (relatif terhadap bulan ke-0) ──
+                cohort_pct = cohort_df.copy()
+                if 0 in cohort_pct.columns:
+                    base = cohort_pct[0].replace(0, np.nan)
+                    cohort_pct = cohort_pct.div(base, axis=0) * 100
+                else:
+                    # fallback: bagi dengan nilai pertama tiap baris
+                    base = cohort_pct.iloc[:, 0].replace(0, np.nan)
+                    cohort_pct = cohort_pct.div(base, axis=0) * 100
+
+                cohort_pct = cohort_pct.round(1)
+
+                # ── Heatmap dengan nilai % ─────────────────────────────────
+                # Buat text label "xx.x%" untuk setiap sel
+                text_matrix = cohort_pct.applymap(
+                    lambda v: f"{v:.1f}%" if not np.isnan(v) and v > 0 else ""
                 )
 
                 fig = px.imshow(
-                    cohort_df,
-                    text_auto=True,
+                    cohort_pct,
+                    text_auto=False,
                     aspect="auto",
-                    color_continuous_scale=["#ffffff", "#e0c7d8", "#9c5789"]
+                    color_continuous_scale=["#ffffff", "#e0c7d8", "#9c5789"],
+                    zmin=0, zmax=100
+                )
+
+                # Overlay text persentase
+                fig.update_traces(
+                    text=text_matrix.values,
+                    texttemplate="%{text}",
+                    textfont=dict(size=10)
                 )
 
                 fig.update_layout(
-                    title="Employee Booking Cohort Heatmap",
+                    title=dict(
+                        text="Employee Booking Cohort Heatmap  "
+                             "<span style='color:#9c8fa0;font-size:11px;'>"
+                             "Retensi relatif terhadap bulan pertama booking (Bulan ke-0 = 100%)"
+                             "</span>",
+                        font=dict(size=13, color="#2a1a2a"),
+                        x=0, xanchor="left"
+                    ),
                     xaxis_title="Bulan ke-n sejak booking pertama",
                     yaxis_title="Cohort (Bulan Pertama Booking)",
-                    height=500,
+                    coloraxis_colorbar=dict(
+                        title="%",
+                        ticksuffix="%",
+                        tickfont=dict(size=9, color="#9c8fa0"),
+                        titlefont=dict(size=10, color="#9c8fa0"),
+                        len=0.8
+                    ),
+                    height=max(400, len(cohort_pct) * 36 + 120),
                     plot_bgcolor="white",
                     paper_bgcolor="white",
-                    margin=dict(l=60, r=40, t=60, b=60),
-                    font=dict(size=11)
+                    margin=dict(l=60, r=40, t=70, b=60),
+                    font=dict(size=11, color="#2a1a2a")
                 )
 
                 st.plotly_chart(fig, use_container_width=True)
 
-                # =========================
+                                # =========================
                 # DOWNLOAD COHORT DATA
                 # =========================
                 output = BytesIO()
@@ -2516,6 +2551,56 @@ def main_app():
                         <span>Download hanya tersedia untuk <strong>Admin</strong></span>
                     </div>
                     """, unsafe_allow_html=True)
+
+                # ── Panduan sebagai dropdown expander ─────────────────────
+                with st.expander("📖 Panduan Membaca Cohort Heatmap", expanded=False):
+                    _cohort_narasi = (
+                        "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:4px;'>"
+
+                        # Kotak 1
+                        "<div style='background:#fdf7fc;border-radius:9px;padding:14px 16px;"
+                        "border:1px solid #e8d5e4;box-shadow:0 2px 8px rgba(156,87,137,0.07);'>"
+                        "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>"
+                        "&#128269; Apa itu Cohort Heatmap?</div>"
+                        "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.7;'>"
+                        "Cohort Heatmap mengelompokkan karyawan berdasarkan "
+                        "<b>bulan pertama kali mereka melakukan booking</b> (cohort). "
+                        "Setiap baris mewakili satu kelompok cohort, dan setiap kolom "
+                        "menunjukkan aktivitas booking pada bulan ke-<i>n</i> setelah bergabung. "
+                        "Nilai pada setiap sel adalah <b>persentase retensi</b> "
+                        "&#8212; seberapa banyak karyawan dari cohort tersebut masih "
+                        "aktif melakukan perjalanan dibanding bulan pertama mereka."
+                        "</div></div>"
+
+                        # Kotak 2
+                        "<div style='background:#fdf7fc;border-radius:9px;padding:14px 16px;"
+                        "border:1px solid #e8d5e4;box-shadow:0 2px 8px rgba(156,87,137,0.07);'>"
+                        "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>"
+                        "&#127919; Kegunaan Analisis Ini</div>"
+                        "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.8;'>"
+                        "&#8226; <b>Pantau loyalitas traveler</b> &#8212; seberapa konsisten karyawan melakukan perjalanan dari waktu ke waktu.<br>"
+                        "&#8226; <b>Deteksi penurunan aktivitas</b> &#8212; cohort dengan drop tajam di bulan awal memerlukan perhatian khusus.<br>"
+                        "&#8226; <b>Evaluasi kebijakan travel</b> &#8212; apakah perubahan policy berpengaruh pada frekuensi booking.<br>"
+                        "&#8226; <b>Benchmark antar periode</b> &#8212; bandingkan retensi cohort lama vs cohort baru."
+                        "</div></div>"
+
+                        # Kotak 3
+                        "<div style='background:#fdf7fc;border-radius:9px;padding:14px 16px;"
+                        "border:1px solid #e8d5e4;box-shadow:0 2px 8px rgba(156,87,137,0.07);'>"
+                        "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>"
+                        "&#128202; Cara Membaca Heatmap</div>"
+                        "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.8;'>"
+                        "&#8226; <b>Baris (sumbu Y)</b> = cohort bulan pertama booking.<br>"
+                        "&#8226; <b>Kolom 0</b> = bulan pertama &#8594; selalu <b>100%</b>.<br>"
+                        "&#8226; <b>Kolom 1, 2, 3&#8230;</b> = bulan ke-n berikutnya.<br>"
+                        "&#8226; <b>Warna gelap</b> (ungu tua) = retensi tinggi &#9989;<br>"
+                        "&#8226; <b>Warna terang</b> (putih) = retensi rendah &#9888;&#65039;<br>"
+                        "&#8226; Kolom kosong = data belum tersedia untuk cohort tersebut."
+                        "</div></div>"
+
+                        "</div>"
+                    )
+                    st.markdown(_cohort_narasi, unsafe_allow_html=True)
 
                 # ======================================
                 # RFM-LIKE SEGMENTATION
@@ -5477,15 +5562,12 @@ def main_app():
                 dend_top_n = st.selectbox("🔢 Top N",
                     [10, 15, 20, 25, 30, 40, 50], index=2, key="dend_top_n")
 
-            dend_r2 = st.columns([3, 2, 2])
+            dend_orientation = "left"   # horizontal: label di kiri, cabang ke kanan
+            dend_r2 = st.columns([3, 2])
             with dend_r2[0]:
                 n_clusters_dend = st.slider("🎨 Jumlah Klaster", 2, 8, 4,
                     key="dend_clusters")
             with dend_r2[1]:
-                dend_orientation = st.selectbox("📐 Orientasi",
-                    ["top", "left"], key="dend_orient",
-                    help="top = vertikal · left = horizontal")
-            with dend_r2[2]:
                 dend_show_bar = st.checkbox("Bar spend chart",
                     value=True, key="dend_bar")
 
@@ -5640,24 +5722,17 @@ def main_app():
                         .sum().reindex(labels_ordered_ply).fillna(0)
                     )
 
-                    # Figure layout
+                    # ── Figure: HORIZONTAL (label kiri, cabang ke kanan) ──────
+                    # Gunakan subplots 1x2 jika bar aktif:
+                    #   col-1 = dendrogram, col-2 = bar spend
                     if dend_show_bar:
-                        if dend_orientation == "top":
-                            fig_ply = _make_subplots(
-                                rows=2, cols=1,
-                                row_heights=[0.70, 0.30],
-                                vertical_spacing=0.03,
-                                shared_xaxes=True
-                            )
-                            dr, dc, br, bc = 1, 1, 2, 1
-                        else:
-                            fig_ply = _make_subplots(
-                                rows=1, cols=2,
-                                column_widths=[0.70, 0.30],
-                                horizontal_spacing=0.03,
-                                shared_yaxes=True
-                            )
-                            dr, dc, br, bc = 1, 1, 1, 2
+                        fig_ply = _make_subplots(
+                            rows=1, cols=2,
+                            column_widths=[0.68, 0.32],
+                            horizontal_spacing=0.04,
+                            shared_yaxes=True
+                        )
+                        dr, dc, br, bc = 1, 1, 1, 2
                     else:
                         fig_ply = go.Figure()
                         dr = dc = br = bc = None
@@ -5668,38 +5743,35 @@ def main_app():
                         else:
                             fig_ply.add_trace(trace)
 
-                    # Draw dendrogram branches
+                    # ── Cabang dendrogram: x=dissimilarity, y=posisi leaf ─────
                     for xi, yi in zip(dend_no_plot["icoord"], dend_no_plot["dcoord"]):
                         _add(go.Scatter(
-                            x=xi if dend_orientation == "top" else yi,
-                            y=yi if dend_orientation == "top" else xi,
+                            x=yi,   # dissimilarity di sumbu X
+                            y=xi,   # posisi leaf di sumbu Y
                             mode="lines",
                             line=dict(color="rgba(156,87,137,0.35)", width=1.8),
                             hoverinfo="skip",
                             showlegend=False
                         ))
 
-                    # Leaf nodes with hover
+                    # ── Titik leaf: x=0 (kiri), label "middle left" ───────────
                     for lbl in labels_ordered_ply:
                         xp  = leaf_xs[lbl]
                         nc  = leaf_colors_map_dend.get(lbl, "#9c5789")
                         cid = cluster_ids_dend[labels_list.index(lbl)]
                         sv  = spend_series_ply.get(lbl, 0)
                         _add(go.Scatter(
-                            x=[xp] if dend_orientation == "top" else [0],
-                            y=[0]  if dend_orientation == "top" else [xp],
+                            x=[0],
+                            y=[xp],
                             mode="markers+text",
                             marker=dict(
-                                size=11, color=nc,
+                                size=10, color=nc,
                                 line=dict(color="white", width=1.8),
                                 symbol="circle"
                             ),
                             text=[lbl],
-                            textposition=(
-                                "bottom center" if dend_orientation == "top"
-                                else "middle right"
-                            ),
-                            textfont=dict(size=8.5, color=nc, family="'Segoe UI', Arial"),
+                            textposition="middle left",
+                            textfont=dict(size=9, color=nc, family="'Segoe UI', Arial"),
                             hovertemplate=(
                                 f"<b>{lbl}</b><br>"
                                 f"Klaster: <b>{cid}</b><br>"
@@ -5709,17 +5781,15 @@ def main_app():
                             showlegend=False
                         ))
 
-                    # Cut threshold line
+                    # ── Garis cut: vertikal putus-putus oranye ────────────────
                     if n_clusters_dend > 1:
-                        x_r = [
+                        y_r = [
                             min(leaf_xs.values()) - 5,
                             max(leaf_xs.values()) + 5
                         ]
                         _add(go.Scatter(
-                            x=x_r if dend_orientation == "top"
-                              else [color_thresh_dend, color_thresh_dend],
-                            y=[color_thresh_dend, color_thresh_dend]
-                              if dend_orientation == "top" else x_r,
+                            x=[color_thresh_dend, color_thresh_dend],
+                            y=y_r,
                             mode="lines",
                             line=dict(color="#E05A2B", width=1.4, dash="dash"),
                             name=f"Cut @ {color_thresh_dend:.3f}",
@@ -5730,7 +5800,7 @@ def main_app():
                             showlegend=True
                         ))
 
-                    # Bar chart
+                    # ── Bar spend: horizontal di subplot kanan ────────────────
                     if dend_show_bar:
                         bar_colors_ply = [
                             leaf_colors_map_dend.get(l, "#9c5789")
@@ -5743,33 +5813,20 @@ def main_app():
                                 labels_ordered_ply, spend_series_ply.values
                             )
                         ]
-                        if dend_orientation == "top":
-                            fig_ply.add_trace(go.Bar(
-                                x=[leaf_xs[l] for l in labels_ordered_ply],
-                                y=spend_series_ply.values,
-                                marker=dict(
-                                    color=bar_colors_ply,
-                                    opacity=0.82,
-                                    line=dict(color="white", width=0.5)
-                                ),
-                                hovertemplate=bar_hov,
-                                showlegend=False, name="Spend"
-                            ), row=br, col=bc)
-                        else:
-                            fig_ply.add_trace(go.Bar(
-                                y=[leaf_xs[l] for l in labels_ordered_ply],
-                                x=spend_series_ply.values,
-                                orientation="h",
-                                marker=dict(
-                                    color=bar_colors_ply,
-                                    opacity=0.82,
-                                    line=dict(color="white", width=0.5)
-                                ),
-                                hovertemplate=bar_hov,
-                                showlegend=False, name="Spend"
-                            ), row=br, col=bc)
+                        fig_ply.add_trace(go.Bar(
+                            y=[leaf_xs[l] for l in labels_ordered_ply],
+                            x=spend_series_ply.values,
+                            orientation="h",
+                            marker=dict(
+                                color=bar_colors_ply,
+                                opacity=0.82,
+                                line=dict(color="white", width=0.5)
+                            ),
+                            hovertemplate=bar_hov,
+                            showlegend=False, name="Spend"
+                        ), row=br, col=bc)
 
-                    # Cluster legend entries
+                    # ── Legend klaster ────────────────────────────────────────
                     for i in range(n_clusters_dend):
                         fig_ply.add_trace(go.Scatter(
                             x=[None], y=[None], mode="markers",
@@ -5781,11 +5838,12 @@ def main_app():
                             showlegend=True
                         ))
 
-                    # Layout polish
-                    chart_h_ply = (
-                        max(540, dend_top_n * 19)
-                        if dend_orientation == "left" else 590
-                    )
+                    # ── Tinggi chart dinamis berdasarkan jumlah entitas ───────
+                    chart_h_ply = max(520, len(pivot_dend) * 26 + 80)
+
+                    # ── Margin kiri: muat nama terpanjang ─────────────────────
+                    # Margin kiri kecil — label nama muat di dalam plot
+                    # karena textposition="middle left" melebar ke kiri dari x=0
                     fig_ply.update_layout(
                         height=chart_h_ply,
                         paper_bgcolor="#fdf7fc",
@@ -5814,11 +5872,12 @@ def main_app():
                             borderwidth=1,
                             font=dict(size=9, color="#4a2a4a")
                         ),
-                        margin=dict(l=20, r=20, t=60, b=20),
+                        margin=dict(l=10, r=20, t=60, b=40),
                         hovermode="closest",
-                        bargap=0.12
+                        bargap=0.10
                     )
 
+                    # ── Axis styling ──────────────────────────────────────────
                     _ax_style = dict(
                         showgrid=True,
                         gridcolor="rgba(156,87,137,0.08)",
@@ -5832,35 +5891,36 @@ def main_app():
                     fig_ply.update_xaxes(**_ax_style)
                     fig_ply.update_yaxes(**_ax_style)
 
+                    # X = dissimilarity, Y = posisi (tanpa tick label)
+                    # Range X dimulai negatif agar label nama muat di kiri dalam plot
+                    max_diss = max(
+                        (max(d) for d in dend_no_plot["dcoord"]), default=1.0
+                    )
+                    # Estimasi ruang kiri untuk label: ~0.55x dari max dissimilarity
+                    x_left = -max(0.55 * max_diss, 0.35)
+                    fig_ply.update_xaxes(
+                        title_text="Dissimilarity",
+                        title_font=dict(size=9, color="#9c8fa0"),
+                        range=[x_left, max_diss * 1.08],
+                        row=dr, col=dc
+                    )
+                    fig_ply.update_yaxes(
+                        showticklabels=False,
+                        showgrid=False,
+                        row=dr, col=dc
+                    )
+
                     if dend_show_bar:
-                        if dend_orientation == "top":
-                            fig_ply.update_xaxes(
-                                showticklabels=False, row=dr, col=dc
-                            )
-                            fig_ply.update_yaxes(
-                                title_text="Dissimilarity",
-                                title_font=dict(size=9, color="#9c8fa0"),
-                                row=dr, col=dc
-                            )
-                            fig_ply.update_yaxes(
-                                title_text=dend_metric_col[:18],
-                                title_font=dict(size=9, color="#9c8fa0"),
-                                row=br, col=bc
-                            )
-                        else:
-                            fig_ply.update_yaxes(
-                                showticklabels=False, row=dr, col=dc
-                            )
-                            fig_ply.update_xaxes(
-                                title_text="Dissimilarity",
-                                title_font=dict(size=9, color="#9c8fa0"),
-                                row=dr, col=dc
-                            )
-                            fig_ply.update_xaxes(
-                                title_text=dend_metric_col[:18],
-                                title_font=dict(size=9, color="#9c8fa0"),
-                                row=br, col=bc
-                            )
+                        fig_ply.update_xaxes(
+                            title_text=dend_metric_col[:18],
+                            title_font=dict(size=9, color="#9c8fa0"),
+                            row=br, col=bc
+                        )
+                        fig_ply.update_yaxes(
+                            showticklabels=False,
+                            showgrid=False,
+                            row=br, col=bc
+                        )
 
                     # Chart card wrapper
                     st.markdown("""
