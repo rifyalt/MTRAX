@@ -138,11 +138,9 @@ def _load_totp_secrets() -> dict:
     """
     Load TOTP secrets — semua user berbagi secret milik 'admin'.
     Hanya satu QR / kode Authenticator yang perlu di-setup oleh admin.
-    Priority:
-      1. secrets.toml [totp][admin]   <- permanen, disarankan
-      2. Derived dari admin_password  <- deterministik, tidak berubah saat restart
+    Priority: secrets.toml [totp][admin] -> session_state (runtime-generated).
     """
-    # 1) Coba ambil dari secrets.toml
+    # Ambil / generate satu shared secret dari admin
     shared_secret = None
     try:
         val = st.secrets["totp"]["admin"]
@@ -151,23 +149,11 @@ def _load_totp_secrets() -> dict:
     except Exception:
         pass
 
-    # 2) Fallback: derive deterministik dari admin password hash
-    #    Hasilnya selalu sama selama password tidak berubah → OTP konsisten
     if shared_secret is None:
-        try:
-            admin_pw = st.secrets["auth"]["admin_password"]
-            seed = _hmac_mod.new(
-                admin_pw.encode(),
-                b"mtrax-totp-seed-v1",
-                "sha256"
-            ).digest()[:20]
-            shared_secret = _b64_mod.b32encode(seed).decode()
-        except Exception:
-            # Last resort: random (akan berubah saat restart — tandai warning)
-            key = "_totp_secret_admin"
-            if key not in st.session_state:
-                st.session_state[key] = _generate_totp_secret()
-            shared_secret = st.session_state[key]
+        key = "_totp_secret_admin"
+        if key not in st.session_state:
+            st.session_state[key] = _generate_totp_secret()
+        shared_secret = st.session_state[key]
 
     # Semua user memakai secret yang sama (shared admin TOTP)
     return {uname: shared_secret for uname in USERS.keys()}
@@ -969,10 +955,6 @@ function copyKey(el) {{
         if st.button("✅  Verifikasi & Masuk", use_container_width=True, type="primary"):
             if _totp_valid(secret, otp_input):
                 st.session_state.totp_enrolled[username] = True
-                st.success("✅ Kode OTP benar! Simpan secret berikut ke secrets.toml agar tidak perlu scan ulang:")
-                st.code(f'[totp]\nadmin = "{secret}"', language="toml")
-                st.info("Setelah disimpan ke secrets.toml, restart app. Lalu login kembali.")
-                time.sleep(2)
                 _finish_login(username)
             else:
                 st.error("❌ Kode salah atau sudah kedaluwarsa. Coba lagi.")
@@ -1696,11 +1678,12 @@ def main_app():
         # ── 2FA Status Badge di Sidebar ──────────────────────────────
         totp_secrets  = _load_totp_secrets()
         _uname_side   = st.session_state.get("username", "")
+        _enrolled     = st.session_state.totp_enrolled.get(_uname_side, False)
         try:
-            _from_toml = bool(st.secrets["totp"]["admin"])
+            _from_toml = bool(st.secrets["totp"][_uname_side])
         except Exception:
             _from_toml = False
-        _2fa_active = _from_toml
+        _2fa_active = _enrolled or _from_toml
         _badge_color = "#3dab7a" if _2fa_active else "#e05a2b"
         _badge_text  = "Active ✅" if _2fa_active else "Setup Required"
         st.markdown(f"""
@@ -1949,7 +1932,7 @@ def main_app():
             "Export"
         ])
 
-                # TAB 8: STRATEGIC VALUE CREATION
+                # TAB 1: STRATEGIC VALUE CREATION
         # ======================================
         with tab1:
 
@@ -2382,7 +2365,10 @@ def main_app():
 </body>
 </html>
 """, height=1600, scrolling=True)
-        # TAB 1: DASHBOARD
+
+
+        # ======================================
+        # TAB 2: DASHBOARD
         # ======================================
         with tab2:
 
@@ -2987,7 +2973,7 @@ def main_app():
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
         # ======================================
-        # TAB 2: EXPLORER
+        # TAB 3: EXPLORER
         # ======================================
         with tab3:
             st.markdown("<div class='section-title'>Data Explorer</div>", unsafe_allow_html=True)
@@ -3462,7 +3448,7 @@ def main_app():
                             </div>""", unsafe_allow_html=True)
 
         # ======================================
-        # TAB 4: SOCIAL NETWORK ANALYSIS
+        # TAB 5: SOCIAL NETWORK ANALYSIS
         # ======================================
         with tab5:
             st.markdown("""
@@ -3635,7 +3621,7 @@ def main_app():
                 st.warning("⚠️ Kolom Employee Id atau Hotel Name tidak tersedia.")
 
         # ======================================
-        # TAB 5: SPEND CONCENTRATION (PARETO 80/20)
+        # TAB 6: SPEND CONCENTRATION (PARETO 80/20)
         # ======================================
         with tab6:
             st.markdown("""
@@ -3863,7 +3849,7 @@ def main_app():
                                 = **Rp {estimated_saving:,.0f}**""")
 
         # ======================================
-        # TAB 6: SANKEY FLOW
+        # TAB 7: SANKEY FLOW
         # ======================================
         with tab7:
             st.markdown("""<div style="background:#ffffff;border:1px solid #EBEBEB;border-left:4px solid #9c5789;
@@ -3984,97 +3970,254 @@ def main_app():
                             padding:10px 16px;font-size:0.82em;color:#9c5789;'>Download hanya tersedia untuk Admin</div>""", unsafe_allow_html=True)
 
         # ======================================
-        # TAB 7: TOP HOTEL/CITY
+        # TAB 8: DATA HOTEL
         # ======================================
         with tab8:
             st.markdown("<div class='section-title'>Data Hotel</div>", unsafe_allow_html=True)
 
+            # =========================
+            # FILTER DOMESTIK / INTERNATIONAL
+            # =========================
             if "Country" in df_overview.columns:
+
                 st.markdown("""
                 <style>
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"]{display:inline-flex!important;background:#9c5789;border-radius:50px;padding:3px;}
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label{cursor:pointer;padding:4px 16px!important;border-radius:50px!important;font-size:0.78em!important;font-weight:500!important;color:rgba(255,255,255,0.80)!important;margin:0!important;}
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label > div:first-child{display:none!important;}
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked){background:white!important;color:#9c5789!important;}
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label:has(input:checked) > div:last-child p{color:#9c5789!important;}
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] > label{display:none!important;}
-                </style>""", unsafe_allow_html=True)
-                tab6_country_filter = st.radio(label="filter_tab6",options=["Domestik","Internasional"],
-                                               index=0,horizontal=True,label_visibility="collapsed",key="tab8_country_radio")
-                _df_tab6 = df_overview.copy()
-                _df_tab6["_country_up"] = _df_tab6["Country"].astype(str).str.strip().str.upper()
-                if tab6_country_filter == "🇮🇩 Domestik":
-                    df_tab6 = _df_tab6[_df_tab6["_country_up"]=="INDONESIA"].drop(columns=["_country_up"])
-                    tab6_label = "🇮🇩 Domestik"
-                else:
-                    df_tab6 = _df_tab6[_df_tab6["_country_up"]!="INDONESIA"].drop(columns=["_country_up"])
-                    tab6_label = "Internasional"
-                if df_tab6.empty:
-                    st.warning(f"⚠️ Tidak ada data untuk filter: {tab6_label}")
-                    st.stop()
-            else:
-                df_tab6 = df_overview.copy()
-                tab6_label = "Semua"
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"]{
+                    display:inline-flex!important;
+                    background:#9c5789;
+                    border-radius:50px;
+                    padding:3px;
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label{
+                    cursor:pointer;
+                    padding:4px 16px!important;
+                    border-radius:50px!important;
+                    font-size:0.78em!important;
+                    font-weight:500!important;
+                    color:rgba(255,255,255,0.80)!important;
+                    margin:0!important;
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label > div:first-child{
+                    display:none!important;
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] 
+                > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked){
+                    background:white!important;
+                    color:#9c5789!important;
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] 
+                > div[role="radiogroup"] > label:has(input:checked) > div:last-child p{
+                    color:#9c5789!important;
+                }
+                div[data-testid="stRadio"][data-key="tab8_country_radio"] > label{
+                    display:none!important;
+                }
+                </style>
+                """, unsafe_allow_html=True)
 
+                tab8_country_filter = st.radio(
+                    label="filter_tab8",
+                    options=["Domestik", "Internasional"],
+                    index=0,
+                    horizontal=True,
+                    label_visibility="collapsed",
+                    key="tab8_country_radio"
+                )
+
+                # Copy dataframe
+                _df_tab8 = df_overview.copy()
+
+                # Normalisasi country
+                _df_tab8["_country_up"] = (
+                    _df_tab8["Country"]
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                )
+
+                # Alias domestik (jika data tidak konsisten)
+                domestic_alias = ["INDONESIA", "ID", "IDN"]
+
+                if tab8_country_filter == "Domestik":
+                    df_tab8 = _df_tab8[_df_tab8["_country_up"].isin(domestic_alias)].copy()
+                    tab8_label = "🇮🇩 Domestik"
+                else:
+                    df_tab8 = _df_tab8[~_df_tab8["_country_up"].isin(domestic_alias)].copy()
+                    tab8_label = "🌍 Internasional"
+
+                df_tab8.drop(columns=["_country_up"], inplace=True)
+
+                if df_tab8.empty:
+                    st.warning(f"⚠️ Tidak ada data untuk filter: {tab8_label}")
+                    st.stop()
+
+            else:
+                df_tab8 = df_overview.copy()
+                tab8_label = "Semua Data"
+
+            # =========================
+            # VISUALISASI
+            # =========================
             cols1, cols2 = st.columns(2)
 
+            # ==================================================
+            # COL 1 — TOP 100 HOTEL
+            # ==================================================
             with cols1:
-                if "Hotel Name" in df_tab6.columns and "Number of Rooms Night" in df_tab6.columns:
-                    top_hotels_tab = (df_tab6.groupby("Hotel Name")["Number of Rooms Night"].sum()
-                                 .sort_values(ascending=False).head(100).reset_index())
-                    top_hotels_tab["Rank"] = top_hotels_tab.index+1
-                    top_hotels_tab["Highlight"] = top_hotels_tab["Rank"].apply(lambda x: "Top 20" if x<=20 else "Others")
+                if "Hotel Name" in df_tab8.columns and "Number of Rooms Night" in df_tab8.columns:
 
-                    fig_hotels = px.bar(top_hotels_tab,x="Number of Rooms Night",y="Hotel Name",orientation="h",
-                                        color="Highlight",color_discrete_map={"Top 20":"#9c5789","Others":"#e0e0e0"},
-                                        title=f"Top 100 Hotels by Total Room Nights · {tab6_label}")
-                    fig_hotels.update_traces(texttemplate="%{x:,.0f}",textposition="outside",textfont_size=10)
-                    fig_hotels.update_layout(height=1700,yaxis=dict(autorange="reversed",tickfont=dict(size=10)),
-                                             plot_bgcolor="white",paper_bgcolor="white",margin=dict(l=10,r=80,t=50,b=10))
+                    top_hotels_tab = (
+                        df_tab8.groupby("Hotel Name")["Number of Rooms Night"]
+                        .sum()
+                        .sort_values(ascending=False)
+                        .head(100)
+                        .reset_index()
+                    )
+
+                    top_hotels_tab["Rank"] = top_hotels_tab.index + 1
+                    top_hotels_tab["Highlight"] = top_hotels_tab["Rank"].apply(
+                        lambda x: "Top 20" if x <= 20 else "Others"
+                    )
+
+                    fig_hotels = px.bar(
+                        top_hotels_tab,
+                        x="Number of Rooms Night",
+                        y="Hotel Name",
+                        orientation="h",
+                        color="Highlight",
+                        color_discrete_map={
+                            "Top 20": "#9c5789",
+                            "Others": "#e0e0e0"
+                        },
+                        title=f"Top 100 Hotels by Total Room Nights · {tab8_label}"
+                    )
+
+                    fig_hotels.update_traces(
+                        texttemplate="%{x:,.0f}",
+                        textposition="outside",
+                        textfont_size=10
+                    )
+
+                    fig_hotels.update_layout(
+                        height=1700,
+                        yaxis=dict(
+                            autorange="reversed",
+                            tickfont=dict(size=10)
+                        ),
+                        plot_bgcolor="white",
+                        paper_bgcolor="white",
+                        margin=dict(l=10, r=80, t=50, b=10)
+                    )
+
                     st.plotly_chart(fig_hotels, use_container_width=True)
 
+                    # Download
                     output_hotels = BytesIO()
-                    top_hotels_tab.drop(columns=["Rank","Highlight"]).to_excel(output_hotels,index=False,sheet_name="Top 100 Hotels")
+                    top_hotels_tab.drop(columns=["Rank", "Highlight"]).to_excel(
+                        output_hotels,
+                        index=False,
+                        sheet_name="Top 100 Hotels"
+                    )
                     output_hotels.seek(0)
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(label="⬇️ Download Data",data=output_hotels,
+
+                    if st.session_state.get("role") == "Admin":
+                        st.download_button(
+                            label="⬇️ Download Data",
+                            data=output_hotels,
                             file_name="top_100_hotels_by_room_nights.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
                     else:
-                        st.markdown("""<div style='background:#f9f9f9;border-left:3px solid #9c5789;border-radius:6px;
-                        padding:10px 16px;font-size:0.82em;color:#9c5789;'>🔒 Download hanya tersedia untuk <strong>Admin</strong></div>""",
-                        unsafe_allow_html=True)
+                        st.markdown("""
+                        <div style='background:#f9f9f9;border-left:3px solid #9c5789;
+                        border-radius:6px;padding:10px 16px;font-size:0.82em;color:#9c5789;'>
+                        🔒 Download hanya tersedia untuk <strong>Admin</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
 
+            # ==================================================
+            # COL 2 — TOP 100 CITY
+            # ==================================================
             with cols2:
-                city_col = next((c for c in ["City","City Destination"] if c in df_tab6.columns), None)
-                if city_col and "Number of Rooms Night" in df_tab6.columns:
-                    top_cities_tab = (df_tab6.groupby(city_col)["Number of Rooms Night"].sum()
-                                 .sort_values(ascending=False).head(100).reset_index())
-                    top_cities_tab["Rank"] = top_cities_tab.index+1
-                    top_cities_tab["Highlight"] = top_cities_tab["Rank"].apply(lambda x: "Top 20" if x<=20 else "Others")
 
-                    fig_cities_tab = px.bar(top_cities_tab,x="Number of Rooms Night",y=city_col,orientation="h",
-                                        color="Highlight",color_discrete_map={"Top 20":"#9c5789","Others":"#e0e0e0"},
-                                        title=f"Top 100 Cities by Total Room Nights · {tab6_label}")
-                    fig_cities_tab.update_traces(texttemplate="%{x:,.0f}",textposition="outside",textfont_size=10)
-                    fig_cities_tab.update_layout(height=1700,yaxis=dict(autorange="reversed",tickfont=dict(size=10)),
-                                                 plot_bgcolor="white",paper_bgcolor="white",margin=dict(l=10,r=80,t=50,b=10))
+                city_col = next(
+                    (c for c in ["City", "City Destination"] if c in df_tab8.columns),
+                    None
+                )
+
+                if city_col and "Number of Rooms Night" in df_tab8.columns:
+
+                    top_cities_tab = (
+                        df_tab8.groupby(city_col)["Number of Rooms Night"]
+                        .sum()
+                        .sort_values(ascending=False)
+                        .head(100)
+                        .reset_index()
+                    )
+
+                    top_cities_tab["Rank"] = top_cities_tab.index + 1
+                    top_cities_tab["Highlight"] = top_cities_tab["Rank"].apply(
+                        lambda x: "Top 20" if x <= 20 else "Others"
+                    )
+
+                    fig_cities_tab = px.bar(
+                        top_cities_tab,
+                        x="Number of Rooms Night",
+                        y=city_col,
+                        orientation="h",
+                        color="Highlight",
+                        color_discrete_map={
+                            "Top 20": "#9c5789",
+                            "Others": "#e0e0e0"
+                        },
+                        title=f"Top 100 Cities by Total Room Nights · {tab8_label}"
+                    )
+
+                    fig_cities_tab.update_traces(
+                        texttemplate="%{x:,.0f}",
+                        textposition="outside",
+                        textfont_size=10
+                    )
+
+                    fig_cities_tab.update_layout(
+                        height=1700,
+                        yaxis=dict(
+                            autorange="reversed",
+                            tickfont=dict(size=10)
+                        ),
+                        plot_bgcolor="white",
+                        paper_bgcolor="white",
+                        margin=dict(l=10, r=80, t=50, b=10)
+                    )
+
                     st.plotly_chart(fig_cities_tab, use_container_width=True)
 
+                    # Download
                     output_cities = BytesIO()
-                    top_cities_tab.drop(columns=["Rank","Highlight"]).to_excel(output_cities,index=False,sheet_name="Top 100 Cities")
+                    top_cities_tab.drop(columns=["Rank", "Highlight"]).to_excel(
+                        output_cities,
+                        index=False,
+                        sheet_name="Top 100 Cities"
+                    )
                     output_cities.seek(0)
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(label="⬇️ Download Data",data=output_cities,
+
+                    if st.session_state.get("role") == "Admin":
+                        st.download_button(
+                            label="⬇️ Download Data",
+                            data=output_cities,
                             file_name="top_100_cities_by_room_nights.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
                     else:
-                        st.markdown("""<div style='background:#f9f9f9;border-left:3px solid #9c5789;border-radius:6px;
-                        padding:10px 16px;font-size:0.82em;color:#9c5789;'>🔒 Download hanya tersedia untuk <strong>Admin</strong></div>""",
-                        unsafe_allow_html=True)
+                        st.markdown("""
+                        <div style='background:#f9f9f9;border-left:3px solid #9c5789;
+                        border-radius:6px;padding:10px 16px;font-size:0.82em;color:#9c5789;'>
+                        🔒 Download hanya tersedia untuk <strong>Admin</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
 
         # ======================================
-        # TAB 8: DENDROGRAM CLUSTERING
+        # TAB 9: DENDROGRAM CLUSTERING
         # ======================================
         with tab9:
             from plotly.subplots import make_subplots as _make_subplots
