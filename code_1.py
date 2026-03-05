@@ -3913,7 +3913,7 @@ def main_app():
         # ======================================
         # TAB 5: SOCIAL NETWORK ANALYSIS
         # ======================================
-# ======================================
+        # ======================================
         # TAB 5: SOCIAL NETWORK ANALYSIS — MTRAX Blue Theme
         # ======================================
         with tab5:
@@ -4325,7 +4325,7 @@ def main_app():
                     <strong>Hotel Name</strong> tidak tersedia dalam dataset.
                 </div>""", unsafe_allow_html=True)
 
-# ======================================
+        # ======================================
         # TAB 6: PRICE INTELLIGENCE — Global Filters
         # ======================================
         with tab6:
