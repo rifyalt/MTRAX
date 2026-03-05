@@ -2307,42 +2307,82 @@ def main_app():
 
         # Tentukan kolom tanggal untuk filter (From / To)
         _date_col_for_filter = None
-        if "Issue Time" in df_all.columns:
-            _date_col_for_filter = "Issue Time"
-        elif "Issue Time" in df_all.columns:
-            _date_col_for_filter = "Issue Time"
+        for _candidate_col in ["Issue Time", "Check in Date", "Check out Date"]:
+            if _candidate_col in df_all.columns:
+                _date_col_for_filter = _candidate_col
+                break
 
         if _date_col_for_filter:
-            _valid_dates = df_all[_date_col_for_filter].dropna()
+            _valid_dates = pd.to_datetime(df_all[_date_col_for_filter], errors="coerce").dropna()
             _min_date = _valid_dates.min().date() if not _valid_dates.empty else None
             _max_date = _valid_dates.max().date() if not _valid_dates.empty else None
         else:
             _min_date = _max_date = None
 
+        # Inisialisasi nilai default di session_state agar tidak reset tiap rerun
+        if _min_date and "gf_date_from_init" not in st.session_state:
+            st.session_state["gf_date_from_init"] = _min_date
+        if _max_date and "gf_date_to_init" not in st.session_state:
+            st.session_state["gf_date_to_init"] = _max_date
+
+        # Reset init jika data baru dimuat (periode berubah)
+        _current_period = st.session_state.get("data_period", "")
+        if st.session_state.get("_last_data_period") != _current_period:
+            st.session_state["_last_data_period"] = _current_period
+            if _min_date:
+                st.session_state["gf_date_from_init"] = _min_date
+            if _max_date:
+                st.session_state["gf_date_to_init"] = _max_date
+
         with gcol2:
             if _min_date:
+                # Gunakan nilai dari session_state sebagai default, bukan langsung _min_date
+                _default_from = st.session_state.get("gf_date_from_init", _min_date)
+                # Pastikan default_from masih dalam range yang valid
+                if _default_from < _min_date:
+                    _default_from = _min_date
+                if _default_from > _max_date:
+                    _default_from = _min_date
                 filter_date_from = st.date_input(
                     "📅 From",
-                    value=_min_date,
+                    value=_default_from,
                     min_value=_min_date,
                     max_value=_max_date,
-                    key="gf_date_from"
+                    key="gf_date_from",
+                    format="YYYY/MM/DD"
                 )
+                # Simpan pilihan user ke session_state agar persisten
+                st.session_state["gf_date_from_init"] = filter_date_from
             else:
                 filter_date_from = None
                 st.info("Kolom tanggal tidak ditemukan.")
 
         with gcol3:
             if _max_date:
+                _default_to = st.session_state.get("gf_date_to_init", _max_date)
+                # Pastikan default_to masih dalam range yang valid
+                if _default_to > _max_date:
+                    _default_to = _max_date
+                if _default_to < _min_date:
+                    _default_to = _max_date
                 filter_date_to = st.date_input(
                     "📅 To",
-                    value=_max_date,
+                    value=_default_to,
                     min_value=_min_date,
                     max_value=_max_date,
-                    key="gf_date_to"
+                    key="gf_date_to",
+                    format="YYYY/MM/DD"
                 )
+                # Simpan pilihan user ke session_state agar persisten
+                st.session_state["gf_date_to_init"] = filter_date_to
             else:
                 filter_date_to = None
+
+        # Validasi: pastikan from <= to
+        if filter_date_from and filter_date_to and filter_date_from > filter_date_to:
+            st.warning("⚠️ Tanggal 'From' tidak boleh lebih besar dari 'To'. Filter tanggal diabaikan.")
+            filter_date_from = _min_date
+            filter_date_to = _max_date
 
         # Terapkan filter ke df_all
         df_filtered = df_all.copy()
@@ -2351,9 +2391,10 @@ def main_app():
             df_filtered = df_filtered[df_filtered["Nama Perusahaan"].isin(selected_companies)]
 
         if _date_col_for_filter and filter_date_from and filter_date_to:
+            _date_series = pd.to_datetime(df_filtered[_date_col_for_filter], errors="coerce")
             df_filtered = df_filtered[
-                (df_filtered[_date_col_for_filter].dt.date >= filter_date_from) &
-                (df_filtered[_date_col_for_filter].dt.date <= filter_date_to)
+                (_date_series.dt.date >= filter_date_from) &
+                (_date_series.dt.date <= filter_date_to)
             ]
 
         # Tampilkan info jumlah data setelah filter
