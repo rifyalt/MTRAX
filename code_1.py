@@ -3659,7 +3659,7 @@ def main_app():
 
                 cohort_pct = cohort_pct.round(1)
 
-                text_matrix = cohort_pct.applymap(
+                text_matrix = cohort_pct.map(
                     lambda v: f"{v:.1f}%" if not np.isnan(v) and v > 0 else ""
                 )
 
