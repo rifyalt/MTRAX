@@ -7032,29 +7032,151 @@ def main_app():
 
                     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
-                    # ── Kamus Referensi ──
-                    with st.expander("📋 Lihat Kamus Hotel Patra Jasa Group"):
-                        st.markdown("""
-                        <table style='width:100%;border-collapse:collapse;font-size:0.85em;'>
-                          <thead>
-                            <tr style='background:#e6f4fb;'>
-                              <th style='padding:7px 12px;border:1px solid #b8d9f0;color:#0D7FCC;text-align:left;'>No</th>
-                              <th style='padding:7px 12px;border:1px solid #b8d9f0;color:#0D7FCC;text-align:left;'>Nama Hotel</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr><td style='padding:6px 12px;border:1px solid #e0e0e0;'>1</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>The Patra Bali Resort &amp; Villas</td></tr>
-                            <tr style='background:#f9f9f9;'><td style='padding:6px 12px;border:1px solid #e0e0e0;'>2</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Semarang Hotel &amp; Convention</td></tr>
-                            <tr><td style='padding:6px 12px;border:1px solid #e0e0e0;'>3</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Cirebon Hotel &amp; Convention</td></tr>
-                            <tr style='background:#f9f9f9;'><td style='padding:6px 12px;border:1px solid #e0e0e0;'>4</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Malioboro Hotel</td></tr>
-                            <tr><td style='padding:6px 12px;border:1px solid #e0e0e0;'>5</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Dumai Hotel</td></tr>
-                            <tr style='background:#f9f9f9;'><td style='padding:6px 12px;border:1px solid #e0e0e0;'>6</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Bandung Hotel</td></tr>
-                            <tr><td style='padding:6px 12px;border:1px solid #e0e0e0;'>7</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Jakarta Hotel</td></tr>
-                            <tr style='background:#f9f9f9;'><td style='padding:6px 12px;border:1px solid #e0e0e0;'>8</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Anyer Hotel</td></tr>
-                            <tr><td style='padding:6px 12px;border:1px solid #e0e0e0;'>9</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Parapat Hotel</td></tr>
-                          </tbody>
-                        </table>
-                        """, unsafe_allow_html=True)
+                    # ── Kamus Referensi + Data Per Hotel ──
+                    with st.expander("📋 Detail Per Hotel Patra Jasa Group — Invoice & Room Nights Bulanan"):
+
+                        MONTH_NAMES_KM = {
+                            1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",
+                            7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"
+                        }
+
+                        # Data hanya hotel Patra Jasa
+                        df_kamus = df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"].copy()
+
+                        # Normalisasi nama hotel ke nama kanonik dari kamus
+                        _norm_to_canonical = {h.lower().strip(): h for h in PATRA_JASA_HOTELS}
+                        df_kamus["Nama Hotel Canonical"] = df_kamus["_hotel_norm"].map(_norm_to_canonical).fillna(df_kamus["Hotel Name"])
+
+                        _km_th_h  = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:center;white-space:nowrap;"
+                        _km_th_l  = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:left;white-space:nowrap;min-width:30px;"
+                        _km_th_nm = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:left;white-space:nowrap;min-width:200px;"
+                        _km_td    = "padding:5px 9px;border:1px solid #e0e0e0;text-align:right;font-size:0.8em;"
+                        _km_td_l  = "padding:5px 9px;border:1px solid #e0e0e0;text-align:left;font-size:0.8em;"
+                        _km_td_tot= "padding:5px 9px;border:1px solid #b8d9f0;text-align:right;font-size:0.8em;font-weight:600;background:#daeaf8;color:#0D7FCC;"
+
+                        # ── TABEL 1: INVOICE UNIQUE PER HOTEL ──
+                        st.markdown("<div style='font-size:0.85em;font-weight:600;color:#1BA0E2;margin:8px 0 6px 0;'>Invoice Unique per Hotel per Bulan</div>", unsafe_allow_html=True)
+
+                        if _date_col_pj and "_month" in df_kamus.columns and not df_kamus.empty:
+                            if "Travel Request Number" in df_kamus.columns:
+                                _km_inv_agg = (
+                                    df_kamus.groupby(["Nama Hotel Canonical", "_month"])["Travel Request Number"]
+                                    .nunique()
+                                    .reset_index(name="Nilai")
+                                )
+                            else:
+                                _km_inv_agg = (
+                                    df_kamus.groupby(["Nama Hotel Canonical", "_month"])
+                                    .size().reset_index(name="Nilai")
+                                )
+
+                            _km_inv_pivot = _km_inv_agg.pivot_table(
+                                index="Nama Hotel Canonical", columns="_month",
+                                values="Nilai", fill_value=0
+                            )
+                            for _m in range(1, 13):
+                                if _m not in _km_inv_pivot.columns:
+                                    _km_inv_pivot[_m] = 0
+                            _km_inv_pivot = _km_inv_pivot[[m for m in range(1, 13)]]
+                            _km_inv_pivot["Total"] = _km_inv_pivot.sum(axis=1)
+                            _km_inv_pivot = _km_inv_pivot.sort_values("Total", ascending=False).reset_index()
+
+                            _html_km_inv = f"""
+                            <div style='overflow-x:auto;margin-bottom:18px;'>
+                            <table style='border-collapse:collapse;font-size:0.82em;min-width:100%;'>
+                              <thead><tr>
+                                <th style='{_km_th_l}'>No</th>
+                                <th style='{_km_th_nm}'>Nama Hotel</th>
+                                {"".join(f"<th style='{_km_th_h}'>{MONTH_NAMES_KM[m]}</th>" for m in range(1,13))}
+                                <th style='{_km_th_h}background:#daeaf8;'>Total</th>
+                              </tr></thead>
+                              <tbody>
+                            """
+                            for _i, _row in _km_inv_pivot.iterrows():
+                                _bg = "background:#fafeff;" if _i % 2 == 0 else "background:#f4faff;"
+                                _html_km_inv += f"<tr style='{_bg}'>"
+                                _html_km_inv += f"<td style='{_km_td_l}color:#999;'>{_i+1}</td>"
+                                _html_km_inv += f"<td style='{_km_td_l}font-weight:500;'>{_row['Nama Hotel Canonical']}</td>"
+                                for _m in range(1, 13):
+                                    _v = int(_row[_m])
+                                    _col_style = _km_td if _v > 0 else _km_td + "color:#ccc;"
+                                    _html_km_inv += f"<td style='{_col_style}'>{_v if _v > 0 else '—'}</td>"
+                                _html_km_inv += f"<td style='{_km_td_tot}'>{int(_row['Total']):,}</td>"
+                                _html_km_inv += "</tr>"
+
+                            # Baris total kolom
+                            _html_km_inv += f"<tr style='background:#e6f4fb;font-weight:700;'>"
+                            _html_km_inv += f"<td style='{_km_td_l}'></td>"
+                            _html_km_inv += f"<td style='{_km_td_l}font-weight:700;color:#0D7FCC;'>Total</td>"
+                            for _m in range(1, 13):
+                                _col_sum = int(_km_inv_pivot[_m].sum())
+                                _html_km_inv += f"<td style='{_km_th_h}'>{_col_sum:,}</td>"
+                            _html_km_inv += f"<td style='{_km_th_h}background:#c8e0f5;'>{int(_km_inv_pivot['Total'].sum()):,}</td>"
+                            _html_km_inv += "</tr>"
+
+                            _html_km_inv += "</tbody></table></div>"
+                            st.markdown(_html_km_inv, unsafe_allow_html=True)
+                        else:
+                            st.info("Data invoice per hotel tidak tersedia.")
+
+                        # ── TABEL 2: ROOM NIGHTS PER HOTEL ──
+                        st.markdown("<div style='font-size:0.85em;font-weight:600;color:#1BA0E2;margin:14px 0 6px 0;'>Room Nights per Hotel per Bulan</div>", unsafe_allow_html=True)
+
+                        if _date_col_pj and "_month" in df_kamus.columns and "Number of Rooms Night" in df_kamus.columns and not df_kamus.empty:
+                            _km_rn_agg = (
+                                df_kamus.groupby(["Nama Hotel Canonical", "_month"])["Number of Rooms Night"]
+                                .sum().reset_index(name="Nilai")
+                            )
+
+                            _km_rn_pivot = _km_rn_agg.pivot_table(
+                                index="Nama Hotel Canonical", columns="_month",
+                                values="Nilai", fill_value=0
+                            )
+                            for _m in range(1, 13):
+                                if _m not in _km_rn_pivot.columns:
+                                    _km_rn_pivot[_m] = 0
+                            _km_rn_pivot = _km_rn_pivot[[m for m in range(1, 13)]]
+                            _km_rn_pivot["Total"] = _km_rn_pivot.sum(axis=1)
+                            _km_rn_pivot = _km_rn_pivot.sort_values("Total", ascending=False).reset_index()
+
+                            _html_km_rn = f"""
+                            <div style='overflow-x:auto;margin-bottom:12px;'>
+                            <table style='border-collapse:collapse;font-size:0.82em;min-width:100%;'>
+                              <thead><tr>
+                                <th style='{_km_th_l}'>No</th>
+                                <th style='{_km_th_nm}'>Nama Hotel</th>
+                                {"".join(f"<th style='{_km_th_h}'>{MONTH_NAMES_KM[m]}</th>" for m in range(1,13))}
+                                <th style='{_km_th_h}background:#daeaf8;'>Total</th>
+                              </tr></thead>
+                              <tbody>
+                            """
+                            for _i, _row in _km_rn_pivot.iterrows():
+                                _bg = "background:#fafeff;" if _i % 2 == 0 else "background:#f4faff;"
+                                _html_km_rn += f"<tr style='{_bg}'>"
+                                _html_km_rn += f"<td style='{_km_td_l}color:#999;'>{_i+1}</td>"
+                                _html_km_rn += f"<td style='{_km_td_l}font-weight:500;'>{_row['Nama Hotel Canonical']}</td>"
+                                for _m in range(1, 13):
+                                    _v = _row[_m]
+                                    _v_fmt = f"{_v:,.0f}" if _v > 0 else "—"
+                                    _col_style = _km_td if _v > 0 else _km_td + "color:#ccc;"
+                                    _html_km_rn += f"<td style='{_col_style}'>{_v_fmt}</td>"
+                                _html_km_rn += f"<td style='{_km_td_tot}'>{_row['Total']:,.0f}</td>"
+                                _html_km_rn += "</tr>"
+
+                            # Baris total kolom
+                            _html_km_rn += f"<tr style='background:#e6f4fb;font-weight:700;'>"
+                            _html_km_rn += f"<td style='{_km_td_l}'></td>"
+                            _html_km_rn += f"<td style='{_km_td_l}font-weight:700;color:#0D7FCC;'>Total</td>"
+                            for _m in range(1, 13):
+                                _col_sum = _km_rn_pivot[_m].sum()
+                                _html_km_rn += f"<td style='{_km_th_h}'>{_col_sum:,.0f}</td>"
+                            _html_km_rn += f"<td style='{_km_th_h}background:#c8e0f5;'>{_km_rn_pivot['Total'].sum():,.0f}</td>"
+                            _html_km_rn += "</tr>"
+
+                            _html_km_rn += "</tbody></table></div>"
+                            st.markdown(_html_km_rn, unsafe_allow_html=True)
+                        else:
+                            st.info("Data room nights per hotel tidak tersedia (kolom 'Number of Rooms Night' tidak ditemukan).")
 
     # ======================================
     # DISCLAIMER + FOOTER
