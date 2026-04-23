@@ -2949,6 +2949,69 @@ def main_app():
                 st.warning("Kolom 'Nama Perusahaan' tidak ditemukan.")
                 df_overview = df_all.copy()
 
+            # ======================================
+            # FILTER DOMESTIK & INTERNASIONAL
+            # ======================================
+            if "Country" in df_overview.columns:
+                _country_upper = df_overview["Country"].astype(str).str.strip().str.upper()
+                _has_domestic   = (_country_upper == "INDONESIA").any()
+                _has_intl       = (_country_upper != "INDONESIA").any()
+
+                st.markdown("""
+                <style>
+                div[data-testid="stRadio"] > label {
+                    font-size: 0.85em !important;
+                    color: #555 !important;
+                    font-weight: 500 !important;
+                }
+                div[data-testid="stRadio"] [data-baseweb="radio"] label {
+                    font-size: 0.875em !important;
+                }
+                </style>
+                """, unsafe_allow_html=True)
+
+                _market_options = ["Semua", "Domestik 🇮🇩", "Internasional 🌍"]
+                _market_filter = st.radio(
+                    "🌐 Market",
+                    options=_market_options,
+                    index=0,
+                    horizontal=True,
+                    key="db_market_filter"
+                )
+
+                if _market_filter == "Domestik 🇮🇩":
+                    df_overview = df_overview[
+                        df_overview["Country"].astype(str).str.strip().str.upper() == "INDONESIA"
+                    ]
+                    _market_badge = (
+                        "<span style='background:#e6f4fb;color:#0D7FCC;border:1px solid #b8d9f0;"
+                        "border-radius:20px;padding:2px 12px;font-size:0.8em;font-weight:600;"
+                        "margin-left:8px;'>🇮🇩 Domestik</span>"
+                    )
+                elif _market_filter == "Internasional 🌍":
+                    df_overview = df_overview[
+                        df_overview["Country"].astype(str).str.strip().str.upper() != "INDONESIA"
+                    ]
+                    _market_badge = (
+                        "<span style='background:#fff4e6;color:#b05a00;border:1px solid #f5c891;"
+                        "border-radius:20px;padding:2px 12px;font-size:0.8em;font-weight:600;"
+                        "margin-left:8px;'>🌍 Internasional</span>"
+                    )
+                else:
+                    _market_badge = (
+                        "<span style='background:#f0f5e9;color:#3a6b00;border:1px solid #bdd99a;"
+                        "border-radius:20px;padding:2px 12px;font-size:0.8em;font-weight:600;"
+                        "margin-left:8px;'>🌐 Semua Market</span>"
+                    )
+
+                # Info badge jumlah data setelah filter market
+                _n_market = len(df_overview)
+                st.markdown(
+                    f"<div style='margin:4px 0 14px 0;font-size:0.82em;color:#666;'>"
+                    f"Menampilkan <b>{_n_market:,}</b> records{_market_badge}</div>",
+                    unsafe_allow_html=True
+                )
+
 
             st.markdown("<div class='section-title'>Overview</div>", unsafe_allow_html=True)
             
