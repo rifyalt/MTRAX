@@ -6597,6 +6597,463 @@ def main_app():
                 memory_usage = df_all.memory_usage(deep=True).sum()/1024/1024
                 st.metric("Memory Usage", f"{memory_usage:.2f} MB")
             with col4: st.metric("Est. File Size", f"{memory_usage*0.8:.2f} MB")
+            
+        # ======================================
+        # TAB 11: PATRA JASA GROUP vs NON-PATRA JASA
+        # ======================================
+        with tab11:
+            st.markdown("<div class='section-title'>Patra Jasa Group vs Non-Patra Jasa — Perbandingan Hotel Domestik</div>", unsafe_allow_html=True)
+
+            # ── Kamus Hotel Patra Jasa Group ──
+            PATRA_JASA_HOTELS = [
+                "The Patra Bali Resort & Villas",
+                "Patra Semarang Hotel & Convention",
+                "Patra Cirebon Hotel & Convention",
+                "Patra Malioboro Hotel",
+                "Patra Dumai Hotel",
+                "Patra Bandung Hotel",
+                "Patra Jakarta Hotel",
+                "Patra Anyer Hotel",
+                "Patra Parapat Hotel",
+            ]
+            PATRA_JASA_NORMALIZED = [h.lower().strip() for h in PATRA_JASA_HOTELS]
+
+            # ── Validasi kolom minimum ──
+            _req_cols = {"Hotel Name", "Country"}
+            _missing = _req_cols - set(df_all.columns)
+            if _missing:
+                st.warning(f"⚠️ Kolom berikut tidak ditemukan di data: {', '.join(_missing)}. Tab ini membutuhkan kolom tersebut.")
+            else:
+                # ── Filter INDONESIA saja ──
+                df_pj = df_all.copy()
+                df_pj["_country_up"] = df_pj["Country"].astype(str).str.strip().str.upper()
+                df_pj = df_pj[df_pj["_country_up"] == "INDONESIA"].copy()
+
+                if df_pj.empty:
+                    st.info("ℹ️ Tidak ada data domestik (Country = INDONESIA) setelah filter global diterapkan.")
+                else:
+                    # ── Klasifikasi Patra / Non-Patra ──
+                    df_pj["_hotel_norm"] = df_pj["Hotel Name"].astype(str).str.lower().str.strip()
+                    df_pj["Grup Hotel"] = df_pj["_hotel_norm"].apply(
+                        lambda x: "Patra Jasa Group" if x in PATRA_JASA_NORMALIZED else "Non-Patra Jasa"
+                    )
+
+                    # ── Tambahkan kolom bulan ──
+                    _date_col_pj = None
+                    for _c in ["Issue Time", "Check in Date"]:
+                        if _c in df_pj.columns:
+                            _date_col_pj = _c
+                            break
+                    if _date_col_pj:
+                        df_pj["_dt"] = pd.to_datetime(df_pj[_date_col_pj], errors="coerce")
+                        df_pj["_month"] = df_pj["_dt"].dt.month
+
+                    # ── Filter Nama Perusahaan (opsional) ──
+                    st.markdown("""
+                    <div style='background:var(--clr-surface,#fff);border:1px solid #e8eaf0;
+                                border-left:4px solid #1BA0E2;border-radius:6px;
+                                padding:10px 16px 8px 16px;margin-bottom:16px;'>
+                        <div style='font-size:0.72em;font-weight:700;color:#1BA0E2;
+                                    text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;'>
+                            🔍 Filter Tab Ini
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+
+                    _pj_col1, _pj_col2 = st.columns([2, 1])
+
+                    with _pj_col1:
+                        if "Nama Perusahaan" in df_pj.columns:
+                            _pj_company_opts = sorted(df_pj["Nama Perusahaan"].dropna().unique().tolist())
+                            _pj_selected_companies = st.multiselect(
+                                "🏢 Filter Perusahaan",
+                                options=_pj_company_opts,
+                                default=[],
+                                placeholder="Semua perusahaan",
+                                key="pj_company_filter"
+                            )
+                            if _pj_selected_companies:
+                                df_pj = df_pj[df_pj["Nama Perusahaan"].isin(_pj_selected_companies)]
+                        else:
+                            _pj_selected_companies = []
+
+                    with _pj_col2:
+                        _pj_metric_opt = st.selectbox(
+                            "📊 Metrik Tabel",
+                            options=["Invoice (unique)", "Room Nights"],
+                            key="pj_metric_select"
+                        )
+
+                    # ── Hitung aggregasi ──
+                    # Invoice unique = jumlah baris unik per Travel Request Number (atau row count jika tidak ada)
+                    if "Travel Request Number" in df_pj.columns:
+                        _inv_col = "Travel Request Number"
+                        pj_inv  = df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"][_inv_col].nunique()
+                        npj_inv = df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"][_inv_col].nunique()
+                    else:
+                        pj_inv  = len(df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"])
+                        npj_inv = len(df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"])
+
+                    total_inv = pj_inv + npj_inv
+                    pj_inv_pct  = (pj_inv  / total_inv * 100) if total_inv > 0 else 0
+                    npj_inv_pct = (npj_inv / total_inv * 100) if total_inv > 0 else 0
+
+                    # Room Nights
+                    if "Number of Rooms Night" in df_pj.columns:
+                        df_pj["Number of Rooms Night"] = pd.to_numeric(df_pj["Number of Rooms Night"], errors="coerce")
+                        pj_rn  = df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"]["Number of Rooms Night"].sum()
+                        npj_rn = df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"]["Number of Rooms Night"].sum()
+                    else:
+                        pj_rn, npj_rn = 0, 0
+
+                    total_rn = pj_rn + npj_rn
+                    pj_rn_pct  = (pj_rn  / total_rn * 100) if total_rn > 0 else 0
+                    npj_rn_pct = (npj_rn / total_rn * 100) if total_rn > 0 else 0
+
+                    # ── Metric Cards ──
+                    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                    _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+                    with _mc1:
+                        st.markdown(f"""
+                        <div class='metric-box'>
+                            <div class='metric-label'>Total Invoice (Domestik)</div>
+                            <div class='metric-value'>{total_inv:,}</div>
+                        </div>""", unsafe_allow_html=True)
+                    with _mc2:
+                        st.markdown(f"""
+                        <div class='metric-box' style='border-left-color:#1BA0E2;'>
+                            <div class='metric-label'>Patra Jasa Group</div>
+                            <div class='metric-value' style='color:#1BA0E2;'>{pj_inv:,}</div>
+                            <div style='font-size:0.78em;color:#888;margin-top:4px;'>{pj_inv_pct:.1f}% dari total</div>
+                        </div>""", unsafe_allow_html=True)
+                    with _mc3:
+                        st.markdown(f"""
+                        <div class='metric-box' style='border-left-color:#ff8c00;'>
+                            <div class='metric-label'>Non-Patra Jasa</div>
+                            <div class='metric-value' style='color:#ff8c00;'>{npj_inv:,}</div>
+                            <div style='font-size:0.78em;color:#888;margin-top:4px;'>{npj_inv_pct:.1f}% dari total</div>
+                        </div>""", unsafe_allow_html=True)
+                    with _mc4:
+                        st.markdown(f"""
+                        <div class='metric-box'>
+                            <div class='metric-label'>Total Room Nights</div>
+                            <div class='metric-value'>{total_rn:,.0f}</div>
+                        </div>""", unsafe_allow_html=True)
+
+                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                    # ── Pie Charts ──
+                    st.markdown("<div class='section-title'>Proporsi Perbandingan</div>", unsafe_allow_html=True)
+                    _pie1, _pie2 = st.columns(2)
+
+                    with _pie1:
+                        if total_inv > 0:
+                            fig_pj_inv = go.Figure(data=[go.Pie(
+                                labels=["Patra Jasa Group", "Non-Patra Jasa"],
+                                values=[pj_inv, npj_inv],
+                                hole=0.55,
+                                marker=dict(colors=["#1BA0E2", "#ff8c00"],
+                                            line=dict(color="white", width=2)),
+                                textinfo="percent",
+                                textfont=dict(size=13),
+                                hovertemplate="<b>%{label}</b><br>Invoice: %{value:,}<br>Proporsi: %{percent}<extra></extra>"
+                            )])
+                            fig_pj_inv.update_layout(
+                                title=dict(text="Invoice Unique — Patra vs Non-Patra", font=dict(size=14)),
+                                height=340,
+                                plot_bgcolor="white",
+                                paper_bgcolor="white",
+                                showlegend=True,
+                                legend=dict(orientation="h", yanchor="bottom", y=-0.18,
+                                            xanchor="center", x=0.5, font=dict(size=11)),
+                                margin=dict(l=10, r=10, t=60, b=20),
+                                annotations=[dict(
+                                    text=f"<b>{total_inv:,}</b><br><span style='font-size:10px'>total</span>",
+                                    x=0.5, y=0.5, font=dict(size=15), showarrow=False
+                                )]
+                            )
+                            st.plotly_chart(fig_pj_inv, use_container_width=True)
+
+                            # Tabel ringkasan invoice
+                            st.markdown(f"""
+                            <table style='width:100%;border-collapse:collapse;font-size:0.83em;'>
+                              <thead>
+                                <tr style='background:#f0f8ff;'>
+                                  <th style='padding:6px 10px;text-align:left;border:1px solid #e0e0e0;color:#555;'>Grup</th>
+                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>Invoice</th>
+                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>%</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
+                                    <span style='display:inline-block;width:10px;height:10px;background:#1BA0E2;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Patra Jasa Group
+                                  </td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#1BA0E2;'>{pj_inv:,}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{pj_inv_pct:.1f}%</td>
+                                </tr>
+                                <tr>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
+                                    <span style='display:inline-block;width:10px;height:10px;background:#ff8c00;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Non-Patra Jasa
+                                  </td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#ff8c00;'>{npj_inv:,}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{npj_inv_pct:.1f}%</td>
+                                </tr>
+                                <tr style='background:#f9f9f9;'>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;font-weight:600;'>Total</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>{total_inv:,}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>100%</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.info("Tidak ada data invoice untuk ditampilkan.")
+
+                    with _pie2:
+                        if total_rn > 0:
+                            fig_pj_rn = go.Figure(data=[go.Pie(
+                                labels=["Patra Jasa Group", "Non-Patra Jasa"],
+                                values=[pj_rn, npj_rn],
+                                hole=0.55,
+                                marker=dict(colors=["#1BA0E2", "#ff8c00"],
+                                            line=dict(color="white", width=2)),
+                                textinfo="percent",
+                                textfont=dict(size=13),
+                                hovertemplate="<b>%{label}</b><br>Room Nights: %{value:,.0f}<br>Proporsi: %{percent}<extra></extra>"
+                            )])
+                            fig_pj_rn.update_layout(
+                                title=dict(text="Room Nights — Patra vs Non-Patra", font=dict(size=14)),
+                                height=340,
+                                plot_bgcolor="white",
+                                paper_bgcolor="white",
+                                showlegend=True,
+                                legend=dict(orientation="h", yanchor="bottom", y=-0.18,
+                                            xanchor="center", x=0.5, font=dict(size=11)),
+                                margin=dict(l=10, r=10, t=60, b=20),
+                                annotations=[dict(
+                                    text=f"<b>{total_rn:,.0f}</b><br><span style='font-size:10px'>total</span>",
+                                    x=0.5, y=0.5, font=dict(size=15), showarrow=False
+                                )]
+                            )
+                            st.plotly_chart(fig_pj_rn, use_container_width=True)
+
+                            # Tabel ringkasan room nights
+                            st.markdown(f"""
+                            <table style='width:100%;border-collapse:collapse;font-size:0.83em;'>
+                              <thead>
+                                <tr style='background:#f0f8ff;'>
+                                  <th style='padding:6px 10px;text-align:left;border:1px solid #e0e0e0;color:#555;'>Grup</th>
+                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>Room Nights</th>
+                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>%</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
+                                    <span style='display:inline-block;width:10px;height:10px;background:#1BA0E2;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Patra Jasa Group
+                                  </td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#1BA0E2;'>{pj_rn:,.0f}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{pj_rn_pct:.1f}%</td>
+                                </tr>
+                                <tr>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
+                                    <span style='display:inline-block;width:10px;height:10px;background:#ff8c00;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Non-Patra Jasa
+                                  </td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#ff8c00;'>{npj_rn:,.0f}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{npj_rn_pct:.1f}%</td>
+                                </tr>
+                                <tr style='background:#f9f9f9;'>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;font-weight:600;'>Total</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>{total_rn:,.0f}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>100%</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.info("Kolom 'Number of Rooms Night' tidak ditemukan atau tidak ada data.")
+
+                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                    # ── Tabel Bulanan ──
+                    st.markdown(
+                        f"<div class='section-title'>Tabel Perbandingan Bulanan — "
+                        f"{'Invoice (unique)' if _pj_metric_opt == 'Invoice (unique)' else 'Room Nights'}</div>",
+                        unsafe_allow_html=True
+                    )
+
+                    if _date_col_pj and "_month" in df_pj.columns:
+                        MONTH_NAMES = {
+                            1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",
+                            7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"
+                        }
+
+                        if _pj_metric_opt == "Invoice (unique)":
+                            if "Travel Request Number" in df_pj.columns:
+                                _monthly_agg = (
+                                    df_pj.groupby(["Grup Hotel","_month"])["Travel Request Number"]
+                                    .nunique()
+                                    .reset_index(name="Nilai")
+                                )
+                            else:
+                                _monthly_agg = (
+                                    df_pj.groupby(["Grup Hotel","_month"])
+                                    .size()
+                                    .reset_index(name="Nilai")
+                                )
+                        else:
+                            if "Number of Rooms Night" in df_pj.columns:
+                                _monthly_agg = (
+                                    df_pj.groupby(["Grup Hotel","_month"])["Number of Rooms Night"]
+                                    .sum()
+                                    .reset_index(name="Nilai")
+                                )
+                            else:
+                                st.warning("Kolom 'Number of Rooms Night' tidak tersedia.")
+                                _monthly_agg = pd.DataFrame()
+
+                        if not _monthly_agg.empty:
+                            _pivot = _monthly_agg.pivot_table(
+                                index="Grup Hotel",
+                                columns="_month",
+                                values="Nilai",
+                                fill_value=0
+                            )
+
+                            # Pastikan semua 12 bulan ada
+                            for _m in range(1, 13):
+                                if _m not in _pivot.columns:
+                                    _pivot[_m] = 0
+                            _pivot = _pivot[[m for m in range(1, 13)]]
+                            _pivot["Total"] = _pivot.sum(axis=1)
+                            _pivot = _pivot.reset_index()
+
+                            # Reorder rows: Patra Jasa dulu
+                            _row_order = ["Patra Jasa Group", "Non-Patra Jasa"]
+                            _pivot["_sort"] = _pivot["Grup Hotel"].map(
+                                {r: i for i, r in enumerate(_row_order)}
+                            ).fillna(99)
+                            _pivot = _pivot.sort_values("_sort").drop(columns=["_sort"])
+
+                            # Tambah row % share Patra
+                            _totals_by_month = {m: _pivot[m].sum() for m in range(1, 13)}
+                            _pj_row = _pivot[_pivot["Grup Hotel"] == "Patra Jasa Group"]
+                            _share_row = {"Grup Hotel": "% Patra share"}
+                            for _m in range(1, 13):
+                                _denom = _totals_by_month[_m]
+                                _num = _pj_row[_m].values[0] if not _pj_row.empty else 0
+                                _share_row[_m] = f"{(_num/_denom*100):.0f}%" if _denom > 0 else "-"
+                            _total_denom = _pivot["Total"].sum()
+                            _pj_total = _pj_row["Total"].values[0] if not _pj_row.empty else 0
+                            _share_row["Total"] = f"{(_pj_total/_total_denom*100):.0f}%" if _total_denom > 0 else "-"
+
+                            # Build HTML table
+                            _th_style = "padding:7px 10px;background:#f0f8ff;border:1px solid #d0dde8;font-size:0.8em;color:#444;text-align:center;white-space:nowrap;"
+                            _th_left  = "padding:7px 10px;background:#f0f8ff;border:1px solid #d0dde8;font-size:0.8em;color:#444;text-align:left;white-space:nowrap;min-width:150px;"
+
+                            _html_tbl = f"""
+                            <div style='overflow-x:auto;'>
+                            <table style='width:100%;border-collapse:collapse;font-size:0.82em;'>
+                              <thead>
+                                <tr>
+                                  <th style='{_th_left}'>Grup Hotel</th>
+                                  {"".join(f"<th style='{_th_style}'>{MONTH_NAMES[m]}</th>" for m in range(1,13))}
+                                  <th style='{_th_style}font-weight:700;background:#daeaf8;'>Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                            """
+
+                            for _, row in _pivot.iterrows():
+                                _grup = row["Grup Hotel"]
+                                if _grup == "Patra Jasa Group":
+                                    _row_bg  = "background:rgba(27,160,226,0.07);"
+                                    _val_col = "color:#1BA0E2;font-weight:600;"
+                                    _badge   = "<span style='background:#e6f4fb;color:#0D7FCC;border-radius:20px;padding:1px 7px;font-size:0.78em;font-weight:600;margin-left:4px;'>PJ</span>"
+                                else:
+                                    _row_bg  = "background:rgba(255,140,0,0.05);"
+                                    _val_col = "color:#cc6600;font-weight:600;"
+                                    _badge   = "<span style='background:#fff4e6;color:#b05a00;border-radius:20px;padding:1px 7px;font-size:0.78em;font-weight:600;margin-left:4px;'>NPJ</span>"
+
+                                _html_tbl += f"<tr style='{_row_bg}'>"
+                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;font-weight:500;'>{_grup}{_badge}</td>"
+                                for _m in range(1, 13):
+                                    _v = int(row[_m]) if _pj_metric_opt == "Invoice (unique)" else f"{row[_m]:,.0f}"
+                                    _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;{_val_col}'>{_v}</td>"
+                                _total_v = int(row["Total"]) if _pj_metric_opt == "Invoice (unique)" else f"{row['Total']:,.0f}"
+                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;background:#daeaf8;{_val_col}'>{_total_v}</td>"
+                                _html_tbl += "</tr>"
+
+                            # Row total gabungan
+                            _html_tbl += "<tr style='background:#f5f5f5;font-weight:600;'>"
+                            _html_tbl += "<td style='padding:7px 10px;border:1px solid #e0e0e0;'>Total Domestik</td>"
+                            for _m in range(1, 13):
+                                _col_total = _pivot[_m].sum()
+                                _v = int(_col_total) if _pj_metric_opt == "Invoice (unique)" else f"{_col_total:,.0f}"
+                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;'>{_v}</td>"
+                            _grand = _pivot["Total"].sum()
+                            _grand_v = int(_grand) if _pj_metric_opt == "Invoice (unique)" else f"{_grand:,.0f}"
+                            _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;background:#daeaf8;'>{_grand_v}</td>"
+                            _html_tbl += "</tr>"
+
+                            # Row % share Patra
+                            _html_tbl += "<tr style='background:#fafafa;font-style:italic;'>"
+                            _html_tbl += "<td style='padding:7px 10px;border:1px solid #e0e0e0;font-size:0.78em;color:#888;'>% Patra Jasa share</td>"
+                            for _m in range(1, 13):
+                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;font-size:0.78em;color:#888;'>{_share_row[_m]}</td>"
+                            _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;font-size:0.78em;color:#888;background:#daeaf8;'>{_share_row['Total']}</td>"
+                            _html_tbl += "</tr>"
+
+                            _html_tbl += "</tbody></table></div>"
+                            st.markdown(_html_tbl, unsafe_allow_html=True)
+
+                            # Download tabel
+                            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                            _dl_pivot = _pivot.rename(columns={m: MONTH_NAMES[m] for m in range(1,13)})
+                            _output_pj = BytesIO()
+                            _dl_pivot.to_excel(_output_pj, index=False, sheet_name="Patra vs Non-Patra")
+                            _output_pj.seek(0)
+                            if st.session_state.get("role") == "Admin":
+                                st.download_button(
+                                    label="⬇️ Download Tabel",
+                                    data=_output_pj,
+                                    file_name=f"patra_jasa_comparison_{_pj_metric_opt.replace(' ','_')}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                )
+                            else:
+                                st.markdown("""
+                                <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
+                                padding:10px 16px;font-size:0.82em;color:#1BA0E2;display:flex;align-items:center;gap:8px;'>
+                                    <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
+                                </div>""", unsafe_allow_html=True)
+                    else:
+                        st.info("ℹ️ Kolom tanggal (Issue Time / Check in Date) tidak ditemukan. Tabel bulanan tidak dapat ditampilkan.")
+
+                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                    # ── Kamus Referensi ──
+                    with st.expander("📋 Lihat Kamus Hotel Patra Jasa Group"):
+                        st.markdown("""
+                        <table style='width:100%;border-collapse:collapse;font-size:0.85em;'>
+                          <thead>
+                            <tr style='background:#e6f4fb;'>
+                              <th style='padding:7px 12px;border:1px solid #b8d9f0;color:#0D7FCC;text-align:left;'>No</th>
+                              <th style='padding:7px 12px;border:1px solid #b8d9f0;color:#0D7FCC;text-align:left;'>Nama Hotel</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr><td style='padding:6px 12px;border:1px solid #e0e0e0;'>1</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>The Patra Bali Resort &amp; Villas</td></tr>
+                            <tr style='background:#f9f9f9;'><td style='padding:6px 12px;border:1px solid #e0e0e0;'>2</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Semarang Hotel &amp; Convention</td></tr>
+                            <tr><td style='padding:6px 12px;border:1px solid #e0e0e0;'>3</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Cirebon Hotel &amp; Convention</td></tr>
+                            <tr style='background:#f9f9f9;'><td style='padding:6px 12px;border:1px solid #e0e0e0;'>4</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Malioboro Hotel</td></tr>
+                            <tr><td style='padding:6px 12px;border:1px solid #e0e0e0;'>5</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Dumai Hotel</td></tr>
+                            <tr style='background:#f9f9f9;'><td style='padding:6px 12px;border:1px solid #e0e0e0;'>6</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Bandung Hotel</td></tr>
+                            <tr><td style='padding:6px 12px;border:1px solid #e0e0e0;'>7</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Jakarta Hotel</td></tr>
+                            <tr style='background:#f9f9f9;'><td style='padding:6px 12px;border:1px solid #e0e0e0;'>8</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Anyer Hotel</td></tr>
+                            <tr><td style='padding:6px 12px;border:1px solid #e0e0e0;'>9</td><td style='padding:6px 12px;border:1px solid #e0e0e0;'>Patra Parapat Hotel</td></tr>
+                          </tbody>
+                        </table>
+                        """, unsafe_allow_html=True)
 
     # ======================================
     # DISCLAIMER + FOOTER
