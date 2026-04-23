@@ -2423,7 +2423,7 @@ def main_app():
         # ======================================
 
         # Tabs
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
             "Value Creation",
             "Dashboard",
             "Explorer",
@@ -2433,7 +2433,8 @@ def main_app():
             "Sankey Flow",
             "Top Hotel/City",
             "Dendrogram",
-            "Export"
+            "Export",
+            "Patra Jasa"
         ])
 
                 # TAB 1: STRATEGIC VALUE CREATION
