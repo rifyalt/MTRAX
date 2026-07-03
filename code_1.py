@@ -272,7 +272,7 @@ def build_employee_cohort(df):
         return pd.DataFrame()
 
     df = df.copy()
-    df["Issue Time"] = pd.to_datetime(df["Issue Time"], errors="coerce")
+    df["Issue Time"] = pd.to_datetime(df["Issue Time"], errors="coerce", dayfirst=True)
     df = df.dropna(subset=["Issue Time", "Employee Id"])
 
     df["OrderMonth"] = df["Issue Time"].dt.to_period("M")
@@ -2177,7 +2177,7 @@ def main_app():
                 return pd.DataFrame()
             
             df_copy = df.copy()
-            df_copy[date_col] = pd.to_datetime(df_copy[date_col], errors="coerce")
+            df_copy[date_col] = pd.to_datetime(df_copy[date_col], errors="coerce", dayfirst=True)
             df_copy = df_copy.dropna(subset=[date_col])
             df_copy["YearMonth"] = df_copy[date_col].dt.to_period("M").astype(str)
 
@@ -2209,13 +2209,13 @@ def main_app():
         
         # Convert dates
         if "Check in Date" in df_all.columns:
-            df_all["Check in Date"] = pd.to_datetime(df_all["Check in Date"], errors="coerce")
+            df_all["Check in Date"] = pd.to_datetime(df_all["Check in Date"], errors="coerce", dayfirst=True)
         
         if "Check out Date" in df_all.columns:
-            df_all["Check out Date"] = pd.to_datetime(df_all["Check out Date"], errors="coerce")
+            df_all["Check out Date"] = pd.to_datetime(df_all["Check out Date"], errors="coerce", dayfirst=True)
         
         if "Issue Time" in df_all.columns:
-            df_all["Issue Time"] = pd.to_datetime(df_all["Issue Time"], errors="coerce")
+            df_all["Issue Time"] = pd.to_datetime(df_all["Issue Time"], errors="coerce", dayfirst=True)
 
             # Mapping Company Code -> Nama Perusahaan
         company_map = {
@@ -2313,7 +2313,7 @@ def main_app():
                 break
 
         if _date_col_for_filter:
-            _valid_dates = pd.to_datetime(df_all[_date_col_for_filter], errors="coerce").dropna()
+            _valid_dates = pd.to_datetime(df_all[_date_col_for_filter], errors="coerce", dayfirst=True).dropna()
             _min_date = _valid_dates.min().date() if not _valid_dates.empty else None
             _max_date = _valid_dates.max().date() if not _valid_dates.empty else None
         else:
@@ -2391,7 +2391,7 @@ def main_app():
             df_filtered = df_filtered[df_filtered["Nama Perusahaan"].isin(selected_companies)]
 
         if _date_col_for_filter and filter_date_from and filter_date_to:
-            _date_series = pd.to_datetime(df_filtered[_date_col_for_filter], errors="coerce")
+            _date_series = pd.to_datetime(df_filtered[_date_col_for_filter], errors="coerce", dayfirst=True)
             df_filtered = df_filtered[
                 (_date_series.dt.date >= filter_date_from) &
                 (_date_series.dt.date <= filter_date_to)
@@ -3162,7 +3162,7 @@ def main_app():
                     date_cols = ["Issue Time", "Check in Date"]
                     for col in date_cols:
                         if col in df_overview.columns:
-                            df_overview[col] = pd.to_datetime(df_overview[col], errors="coerce")
+                            df_overview[col] = pd.to_datetime(df_overview[col], errors="coerce", dayfirst=True)
 
                     if "Issue Time" in df_all.columns and "Check in Date" in df_all.columns:
                         df_lead = df_overview[
@@ -3676,7 +3676,7 @@ def main_app():
             if not all(col in df_crm.columns for col in required_cols):
                 st.warning("Data belum cukup untuk analisa CRM")
             else:
-                df_crm["Issue Time"] = pd.to_datetime(df_crm["Issue Time"], errors="coerce")
+                df_crm["Issue Time"] = pd.to_datetime(df_crm["Issue Time"], errors="coerce", dayfirst=True)
                 df_crm = df_crm.dropna(subset=["Employee Id", "Issue Time"])
 
                 traveler_stats = (
@@ -3844,9 +3844,9 @@ def main_app():
 
                     if all(col in df_behavior.columns for col in required_cols):
 
-                        df_behavior["Issue Time"] = pd.to_datetime(df_behavior["Issue Time"], errors="coerce")
-                        df_behavior["Check in Date"] = pd.to_datetime(df_behavior["Check in Date"], errors="coerce")
-                        df_behavior["Check out Date"] = pd.to_datetime(df_behavior["Check out Date"], errors="coerce")
+                        df_behavior["Issue Time"] = pd.to_datetime(df_behavior["Issue Time"], errors="coerce", dayfirst=True)
+                        df_behavior["Check in Date"] = pd.to_datetime(df_behavior["Check in Date"], errors="coerce", dayfirst=True)
+                        df_behavior["Check out Date"] = pd.to_datetime(df_behavior["Check out Date"], errors="coerce", dayfirst=True)
 
                         df_behavior["Lead_Time"] = (df_behavior["Check in Date"] - df_behavior["Issue Time"]).dt.days
                         df_behavior["Last_Minute"] = df_behavior["Lead_Time"].apply(lambda x: 1 if pd.notnull(x) and x <= 2 else 0)
@@ -6646,7 +6646,7 @@ def main_app():
                             _date_col_pj = _c
                             break
                     if _date_col_pj:
-                        df_pj["_dt"] = pd.to_datetime(df_pj[_date_col_pj], errors="coerce")
+                        df_pj["_dt"] = pd.to_datetime(df_pj[_date_col_pj], errors="coerce", dayfirst=True)
                         df_pj["_month"] = df_pj["_dt"].dt.month
 
                     # ── Filter Nama Perusahaan (opsional) ──
