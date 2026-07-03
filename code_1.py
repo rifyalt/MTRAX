@@ -2239,6 +2239,8 @@ def main_app():
             "2062": "PT Pertamina Marine Engineering",
             "2110": "PT Pertamina Drilling Services Indonesia ",
             "2052": "PT Pertamina Maintenance and Construction",
+            "2040": "PT Pertamina Pedeve Indonesia",
+            "2050": "PT Patra Logistik",
         }
 
         if "Company Code" in df_all.columns:
