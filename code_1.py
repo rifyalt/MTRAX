@@ -266,6 +266,7 @@ def load_drive_data(folder_id, drop_cols):
 
     return pd.concat(dfs, ignore_index=True)
 
+@st.cache_data(show_spinner=False)
 def build_employee_cohort(df):
     required_cols = ["Employee Id", "Issue Time", "Travel Request Number"]
     if not all(col in df.columns for col in required_cols):
@@ -309,6 +310,7 @@ def build_employee_cohort(df):
 #==========================#
 # FUNGSI AUTO-CANONICAL MAPPING
 #==========================#
+@st.cache_data(show_spinner=False)
 def auto_canonical_hotel_mapping(
     df,
     hotel_col="Hotel Name",
@@ -397,6 +399,7 @@ def auto_canonical_hotel_mapping(
 #==========================#    
 # TEXT SIMILARITY
 #==========================#
+@st.cache_data(show_spinner=False)
 def hotel_name_similarity(df, text_col="Hotel Name", threshold=0.75):
     df_text = (
         df[[text_col]]
@@ -2250,7 +2253,8 @@ def main_app():
         # ======================================
         # AUTO-NORMALISASI
         # ======================================
-
+        hotel_mapping = pd.DataFrame()  # default agar tidak NameError jika kolom "Hotel Name" tidak ada
+        if "Hotel Name" in df_all.columns:
             df_all, hotel_mapping = auto_canonical_hotel_mapping(
                 df_all,
                 hotel_col="Hotel Name",
@@ -3837,10 +3841,11 @@ def main_app():
 
                 st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
-                with tab4:
+                if True:  # (sebelumnya "with tab4:" redundan — sudah berada di dalam tab4, cukup dihilangkan tanpa mengubah indentasi di bawahnya)
                     st.markdown("### Behavioral Persona Clustering")
 
                     df_behavior = df_all.copy()
+                    selected_data = pd.DataFrame()  # default agar aman jika kolom tidak lengkap
 
                     required_cols = ["Travel Request Number","Employee Id","Issue Time","Check in Date","Check out Date","Number of Rooms Night"]
 
@@ -4436,655 +4441,657 @@ def main_app():
         # TAB 6: PRICE INTELLIGENCE — Global Filters
         # ======================================
         with tab6:
+            def _render_tab6():
 
-            st.markdown("""
-            <style>
-            :root {
-                --pi-blue:      #1BA0E2;
-                --pi-blue-mid:  #1494C6;
-                --pi-blue-dark: #0D7FCC;
-                --pi-navy:      #062440;
-                --pi-lime:      #e2f871;
-                --pi-bg:        #f0f8ff;
-                --pi-border:    #cce4f4;
-                --pi-surface:   #ffffff;
-                --pi-muted:     #6a8fa0;
-            }
+                st.markdown("""
+                <style>
+                :root {
+                    --pi-blue:      #1BA0E2;
+                    --pi-blue-mid:  #1494C6;
+                    --pi-blue-dark: #0D7FCC;
+                    --pi-navy:      #062440;
+                    --pi-lime:      #e2f871;
+                    --pi-bg:        #f0f8ff;
+                    --pi-border:    #cce4f4;
+                    --pi-surface:   #ffffff;
+                    --pi-muted:     #6a8fa0;
+                }
 
-            .pi-header {
-                background: linear-gradient(135deg, #062440 0%, #0D7FCC 50%, #1BA0E2 100%);
-                border-radius: 14px; padding: 28px 36px; margin-bottom: 24px;
-                position: relative; overflow: hidden;
-                box-shadow: 0 8px 32px rgba(13,127,204,0.26);
-            }
-            .pi-header::before {
-                content: ''; position: absolute; top: -70px; right: -50px;
-                width: 240px; height: 240px; border-radius: 50%;
-                background: rgba(255,255,255,0.05); pointer-events: none;
-            }
-            .pi-header::after {
-                content: ''; position: absolute; bottom: -50px; left: 25%;
-                width: 200px; height: 200px; border-radius: 50%;
-                background: rgba(226,248,113,0.07); pointer-events: none;
-            }
-            .pi-header-inner {
-                display: flex; align-items: center; gap: 16px;
-                position: relative; z-index: 1;
-            }
-            .pi-header-icon {
-                width: 52px; height: 52px; border-radius: 12px;
-                background: rgba(255,255,255,0.14);
-                border: 1px solid rgba(255,255,255,0.22);
-                display: flex; align-items: center; justify-content: center;
-                font-size: 1.6em; flex-shrink: 0;
-            }
-            .pi-header-title { color: #fff; font-size: 1.45em; font-weight: 700; margin: 0; }
-            .pi-header-sub   { color: rgba(255,255,255,0.58); font-size: 0.82em; margin-top: 4px; }
-            .pi-header-badge {
-                margin-left: auto;
-                display: inline-flex; align-items: center; gap: 7px;
-                background: rgba(255,255,255,0.12);
-                border: 1px solid rgba(255,255,255,0.22);
-                border-radius: 100px; padding: 6px 16px;
-                font-size: 0.72em; font-weight: 600;
-                color: rgba(255,255,255,0.85); letter-spacing: 0.06em;
-                white-space: nowrap;
-            }
-            .pi-badge-dot {
-                width: 6px; height: 6px; border-radius: 50%;
-                background: var(--pi-lime); box-shadow: 0 0 6px var(--pi-lime);
-                animation: pi-blink 2s ease infinite;
-            }
-            @keyframes pi-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+                .pi-header {
+                    background: linear-gradient(135deg, #062440 0%, #0D7FCC 50%, #1BA0E2 100%);
+                    border-radius: 14px; padding: 28px 36px; margin-bottom: 24px;
+                    position: relative; overflow: hidden;
+                    box-shadow: 0 8px 32px rgba(13,127,204,0.26);
+                }
+                .pi-header::before {
+                    content: ''; position: absolute; top: -70px; right: -50px;
+                    width: 240px; height: 240px; border-radius: 50%;
+                    background: rgba(255,255,255,0.05); pointer-events: none;
+                }
+                .pi-header::after {
+                    content: ''; position: absolute; bottom: -50px; left: 25%;
+                    width: 200px; height: 200px; border-radius: 50%;
+                    background: rgba(226,248,113,0.07); pointer-events: none;
+                }
+                .pi-header-inner {
+                    display: flex; align-items: center; gap: 16px;
+                    position: relative; z-index: 1;
+                }
+                .pi-header-icon {
+                    width: 52px; height: 52px; border-radius: 12px;
+                    background: rgba(255,255,255,0.14);
+                    border: 1px solid rgba(255,255,255,0.22);
+                    display: flex; align-items: center; justify-content: center;
+                    font-size: 1.6em; flex-shrink: 0;
+                }
+                .pi-header-title { color: #fff; font-size: 1.45em; font-weight: 700; margin: 0; }
+                .pi-header-sub   { color: rgba(255,255,255,0.58); font-size: 0.82em; margin-top: 4px; }
+                .pi-header-badge {
+                    margin-left: auto;
+                    display: inline-flex; align-items: center; gap: 7px;
+                    background: rgba(255,255,255,0.12);
+                    border: 1px solid rgba(255,255,255,0.22);
+                    border-radius: 100px; padding: 6px 16px;
+                    font-size: 0.72em; font-weight: 600;
+                    color: rgba(255,255,255,0.85); letter-spacing: 0.06em;
+                    white-space: nowrap;
+                }
+                .pi-badge-dot {
+                    width: 6px; height: 6px; border-radius: 50%;
+                    background: var(--pi-lime); box-shadow: 0 0 6px var(--pi-lime);
+                    animation: pi-blink 2s ease infinite;
+                }
+                @keyframes pi-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-            /* ── Global Filter Bar ── */
-            .pi-global-filter {
-                background: var(--pi-surface);
-                border: 1px solid var(--pi-border);
-                border-left: 4px solid var(--pi-blue);
-                border-radius: 10px; padding: 16px 22px 14px;
-                margin-bottom: 24px;
-                box-shadow: 0 2px 10px rgba(13,127,204,0.07);
-            }
-            .pi-global-filter-title {
-                font-size: 0.70em; font-weight: 700; color: var(--pi-blue);
-                text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 10px;
-                display: flex; align-items: center; gap: 8px;
-            }
-            .pi-filter-active-badge {
-                display: inline-flex; align-items: center; gap: 5px;
-                background: var(--pi-blue); color: white;
-                border-radius: 100px; padding: 2px 10px;
-                font-size: 0.85em; font-weight: 600; letter-spacing: 0.04em;
-            }
-            .pi-filter-dot {
-                width: 5px; height: 5px; border-radius: 50%;
-                background: var(--pi-lime); display: inline-block;
-            }
+                /* ── Global Filter Bar ── */
+                .pi-global-filter {
+                    background: var(--pi-surface);
+                    border: 1px solid var(--pi-border);
+                    border-left: 4px solid var(--pi-blue);
+                    border-radius: 10px; padding: 16px 22px 14px;
+                    margin-bottom: 24px;
+                    box-shadow: 0 2px 10px rgba(13,127,204,0.07);
+                }
+                .pi-global-filter-title {
+                    font-size: 0.70em; font-weight: 700; color: var(--pi-blue);
+                    text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 10px;
+                    display: flex; align-items: center; gap: 8px;
+                }
+                .pi-filter-active-badge {
+                    display: inline-flex; align-items: center; gap: 5px;
+                    background: var(--pi-blue); color: white;
+                    border-radius: 100px; padding: 2px 10px;
+                    font-size: 0.85em; font-weight: 600; letter-spacing: 0.04em;
+                }
+                .pi-filter-dot {
+                    width: 5px; height: 5px; border-radius: 50%;
+                    background: var(--pi-lime); display: inline-block;
+                }
 
-            /* ── Section Divider ── */
-            .pi-section-divider {
-                display: flex; align-items: center; gap: 14px;
-                margin: 28px 0 20px;
-                font-size: 0.70em; font-weight: 700;
-                color: var(--pi-muted); letter-spacing: 0.14em;
-                text-transform: uppercase;
-            }
-            .pi-section-divider::before,
-            .pi-section-divider::after {
-                content: ''; flex: 1; height: 1px; background: var(--pi-border);
-            }
+                /* ── Section Divider ── */
+                .pi-section-divider {
+                    display: flex; align-items: center; gap: 14px;
+                    margin: 28px 0 20px;
+                    font-size: 0.70em; font-weight: 700;
+                    color: var(--pi-muted); letter-spacing: 0.14em;
+                    text-transform: uppercase;
+                }
+                .pi-section-divider::before,
+                .pi-section-divider::after {
+                    content: ''; flex: 1; height: 1px; background: var(--pi-border);
+                }
 
-            /* ── KPI Cards ── */
-            .pi-kpi-grid {
-                display: grid; grid-template-columns: repeat(4,1fr);
-                gap: 14px; margin-bottom: 20px;
-            }
-            .pi-kpi {
-                background: var(--pi-surface); border-radius: 10px;
-                padding: 18px 16px 14px;
-                border-top: 3px solid var(--pi-blue);
-                box-shadow: 0 2px 10px rgba(13,127,204,0.08);
-                transition: transform .18s, box-shadow .18s;
-            }
-            .pi-kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(13,127,204,0.14); }
-            .pi-kpi-label {
-                font-size: 0.68em; font-weight: 600; color: var(--pi-muted);
-                text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 8px;
-            }
-            .pi-kpi-value { font-size: 1.30em; font-weight: 700; color: var(--pi-navy); line-height: 1.2; }
-            .pi-kpi-sub   { font-size: 0.72em; color: var(--pi-muted); margin-top: 4px; }
+                /* ── KPI Cards ── */
+                .pi-kpi-grid {
+                    display: grid; grid-template-columns: repeat(4,1fr);
+                    gap: 14px; margin-bottom: 20px;
+                }
+                .pi-kpi {
+                    background: var(--pi-surface); border-radius: 10px;
+                    padding: 18px 16px 14px;
+                    border-top: 3px solid var(--pi-blue);
+                    box-shadow: 0 2px 10px rgba(13,127,204,0.08);
+                    transition: transform .18s, box-shadow .18s;
+                }
+                .pi-kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(13,127,204,0.14); }
+                .pi-kpi-label {
+                    font-size: 0.68em; font-weight: 600; color: var(--pi-muted);
+                    text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 8px;
+                }
+                .pi-kpi-value { font-size: 1.30em; font-weight: 700; color: var(--pi-navy); line-height: 1.2; }
+                .pi-kpi-sub   { font-size: 0.72em; color: var(--pi-muted); margin-top: 4px; }
 
-            /* ── Hotel KPI Cards ── */
-            .pi-hotel-kpi-grid {
-                display: grid; grid-template-columns: repeat(5,1fr);
-                gap: 12px; margin-bottom: 22px;
-            }
-            .pi-hotel-kpi {
-                background: var(--pi-surface); border-radius: 10px;
-                padding: 16px 14px 12px;
-                border-top: 3px solid var(--pi-color, #1BA0E2);
-                box-shadow: 0 2px 8px rgba(13,127,204,0.07);
-                text-align: center;
-                transition: transform .18s, box-shadow .18s;
-            }
-            .pi-hotel-kpi:hover { transform: translateY(-2px); box-shadow: 0 5px 16px rgba(13,127,204,0.13); }
-            .pi-hotel-kpi-icon  { font-size: 1.35em; margin-bottom: 6px; display: block; }
-            .pi-hotel-kpi-label {
-                font-size: 0.65em; font-weight: 600; color: var(--pi-muted);
-                text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 6px;
-            }
-            .pi-hotel-kpi-value {
-                font-size: 1.05em; font-weight: 700;
-                color: var(--pi-color, #1BA0E2); line-height: 1.25;
-            }
+                /* ── Hotel KPI Cards ── */
+                .pi-hotel-kpi-grid {
+                    display: grid; grid-template-columns: repeat(5,1fr);
+                    gap: 12px; margin-bottom: 22px;
+                }
+                .pi-hotel-kpi {
+                    background: var(--pi-surface); border-radius: 10px;
+                    padding: 16px 14px 12px;
+                    border-top: 3px solid var(--pi-color, #1BA0E2);
+                    box-shadow: 0 2px 8px rgba(13,127,204,0.07);
+                    text-align: center;
+                    transition: transform .18s, box-shadow .18s;
+                }
+                .pi-hotel-kpi:hover { transform: translateY(-2px); box-shadow: 0 5px 16px rgba(13,127,204,0.13); }
+                .pi-hotel-kpi-icon  { font-size: 1.35em; margin-bottom: 6px; display: block; }
+                .pi-hotel-kpi-label {
+                    font-size: 0.65em; font-weight: 600; color: var(--pi-muted);
+                    text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 6px;
+                }
+                .pi-hotel-kpi-value {
+                    font-size: 1.05em; font-weight: 700;
+                    color: var(--pi-color, #1BA0E2); line-height: 1.25;
+                }
 
-            /* ── Saving Sim Cards ── */
-            .pi-sim-grid {
-                display: grid; grid-template-columns: repeat(3,1fr);
-                gap: 14px; margin: 16px 0;
-            }
-            .pi-sim-card {
-                border-radius: 10px; padding: 20px 18px;
-                border: 1px solid var(--pi-border);
-            }
-            .pi-sim-card-label {
-                font-size: 0.68em; font-weight: 700;
-                text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 10px;
-            }
-            .pi-sim-card-value { font-size: 1.30em; font-weight: 700; line-height: 1.2; }
-            .pi-sim-card-sub   { font-size: 0.74em; margin-top: 5px; }
+                /* ── Saving Sim Cards ── */
+                .pi-sim-grid {
+                    display: grid; grid-template-columns: repeat(3,1fr);
+                    gap: 14px; margin: 16px 0;
+                }
+                .pi-sim-card {
+                    border-radius: 10px; padding: 20px 18px;
+                    border: 1px solid var(--pi-border);
+                }
+                .pi-sim-card-label {
+                    font-size: 0.68em; font-weight: 700;
+                    text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 10px;
+                }
+                .pi-sim-card-value { font-size: 1.30em; font-weight: 700; line-height: 1.2; }
+                .pi-sim-card-sub   { font-size: 0.74em; margin-top: 5px; }
 
-            .pi-sim-current { background: var(--pi-bg); border-color: var(--pi-border); }
-            .pi-sim-current .pi-sim-card-label { color: var(--pi-blue); }
-            .pi-sim-current .pi-sim-card-value { color: var(--pi-navy); }
-            .pi-sim-current .pi-sim-card-sub   { color: var(--pi-muted); }
+                .pi-sim-current { background: var(--pi-bg); border-color: var(--pi-border); }
+                .pi-sim-current .pi-sim-card-label { color: var(--pi-blue); }
+                .pi-sim-current .pi-sim-card-value { color: var(--pi-navy); }
+                .pi-sim-current .pi-sim-card-sub   { color: var(--pi-muted); }
 
-            .pi-sim-neg { background: #f0fbf4; border-color: #b8e8cc; }
-            .pi-sim-neg .pi-sim-card-label { color: #2e8a57; }
-            .pi-sim-neg .pi-sim-card-value { color: #1a5c38; }
-            .pi-sim-neg .pi-sim-card-sub   { color: #5aaa7e; }
+                .pi-sim-neg { background: #f0fbf4; border-color: #b8e8cc; }
+                .pi-sim-neg .pi-sim-card-label { color: #2e8a57; }
+                .pi-sim-neg .pi-sim-card-value { color: #1a5c38; }
+                .pi-sim-neg .pi-sim-card-sub   { color: #5aaa7e; }
 
-            .pi-sim-saving {
-                background: linear-gradient(135deg, #062440 0%, #0D7FCC 55%, #1BA0E2 100%);
-                border-color: transparent; position: relative; overflow: hidden;
-            }
-            .pi-sim-saving::after {
-                content: ''; position: absolute; top: -30px; right: -30px;
-                width: 120px; height: 120px; border-radius: 50%;
-                background: rgba(226,248,113,0.12);
-            }
-            .pi-sim-saving .pi-sim-card-label { color: rgba(255,255,255,0.65); position: relative; z-index: 1; }
-            .pi-sim-saving .pi-sim-card-value { color: #fff; font-size: 1.45em; position: relative; z-index: 1; }
-            .pi-sim-saving .pi-sim-card-sub   { color: rgba(255,255,255,0.60); position: relative; z-index: 1; }
-            .pi-sim-saving-icon { display: block; font-size: 1.4em; margin-bottom: 6px; position: relative; z-index: 1; }
+                .pi-sim-saving {
+                    background: linear-gradient(135deg, #062440 0%, #0D7FCC 55%, #1BA0E2 100%);
+                    border-color: transparent; position: relative; overflow: hidden;
+                }
+                .pi-sim-saving::after {
+                    content: ''; position: absolute; top: -30px; right: -30px;
+                    width: 120px; height: 120px; border-radius: 50%;
+                    background: rgba(226,248,113,0.12);
+                }
+                .pi-sim-saving .pi-sim-card-label { color: rgba(255,255,255,0.65); position: relative; z-index: 1; }
+                .pi-sim-saving .pi-sim-card-value { color: #fff; font-size: 1.45em; position: relative; z-index: 1; }
+                .pi-sim-saving .pi-sim-card-sub   { color: rgba(255,255,255,0.60); position: relative; z-index: 1; }
+                .pi-sim-saving-icon { display: block; font-size: 1.4em; margin-bottom: 6px; position: relative; z-index: 1; }
 
-            /* ── Insight Box ── */
-            .pi-insight {
-                background: var(--pi-bg); border: 1px solid var(--pi-border);
-                border-left: 4px solid var(--pi-blue); border-radius: 8px;
-                padding: 16px 20px; font-size: 0.88em;
-                color: #2a3a4a; line-height: 1.7;
-            }
-            .pi-insight strong { color: var(--pi-navy); }
-            .pi-insight em     { color: var(--pi-blue); font-style: normal; font-weight: 600; }
+                /* ── Insight Box ── */
+                .pi-insight {
+                    background: var(--pi-bg); border: 1px solid var(--pi-border);
+                    border-left: 4px solid var(--pi-blue); border-radius: 8px;
+                    padding: 16px 20px; font-size: 0.88em;
+                    color: #2a3a4a; line-height: 1.7;
+                }
+                .pi-insight strong { color: var(--pi-navy); }
+                .pi-insight em     { color: var(--pi-blue); font-style: normal; font-weight: 600; }
 
-            .pi-locked {
-                background: var(--pi-bg); border: 1px solid var(--pi-border);
-                border-left: 3px solid var(--pi-blue); border-radius: 6px;
-                padding: 10px 16px; font-size: 0.82em; color: var(--pi-blue);
-                display: flex; align-items: center; gap: 8px; margin-top: 8px;
-            }
+                .pi-locked {
+                    background: var(--pi-bg); border: 1px solid var(--pi-border);
+                    border-left: 3px solid var(--pi-blue); border-radius: 6px;
+                    padding: 10px 16px; font-size: 0.82em; color: var(--pi-blue);
+                    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+                }
 
-            /* ── Empty state ── */
-            .pi-empty {
-                background: var(--pi-bg); border: 1px solid var(--pi-border);
-                border-left: 4px solid var(--pi-blue); border-radius: 8px;
-                padding: 20px 24px; font-size: 0.88em; color: var(--pi-navy);
-                text-align: center;
-            }
+                /* ── Empty state ── */
+                .pi-empty {
+                    background: var(--pi-bg); border: 1px solid var(--pi-border);
+                    border-left: 4px solid var(--pi-blue); border-radius: 8px;
+                    padding: 20px 24px; font-size: 0.88em; color: var(--pi-navy);
+                    text-align: center;
+                }
 
-            /* ── Radio pill override ── */
-            div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] {
-                display:inline-flex!important; background:#1BA0E2;
-                border-radius:50px; padding:3px; gap:0;
-            }
-            div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label {
-                cursor:pointer; padding:5px 18px!important; border-radius:50px!important;
-                font-size:0.78em!important; font-weight:500!important;
-                color:rgba(255,255,255,0.80)!important; margin:0!important;
-            }
-            div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label > div:first-child { display:none!important; }
-            div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background:white!important; }
-            div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color:#1BA0E2!important; font-weight:700!important; }
-            div[data-testid="stRadio"][data-key="pi_country_radio"] > label { display:none!important; }
-            </style>
+                /* ── Radio pill override ── */
+                div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] {
+                    display:inline-flex!important; background:#1BA0E2;
+                    border-radius:50px; padding:3px; gap:0;
+                }
+                div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label {
+                    cursor:pointer; padding:5px 18px!important; border-radius:50px!important;
+                    font-size:0.78em!important; font-weight:500!important;
+                    color:rgba(255,255,255,0.80)!important; margin:0!important;
+                }
+                div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label > div:first-child { display:none!important; }
+                div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background:white!important; }
+                div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color:#1BA0E2!important; font-weight:700!important; }
+                div[data-testid="stRadio"][data-key="pi_country_radio"] > label { display:none!important; }
+                </style>
 
-            <!-- Header -->
-            <div class="pi-header">
-                <div class="pi-header-inner">
-                    <div class="pi-header-icon">💹</div>
-                    <div>
-                        <div class="pi-header-title">Price Intelligence</div>
-                        <div class="pi-header-sub">Pareto 80/20 Spend Concentration · Hotel Rate Benchmarking · Negotiation Simulator</div>
-                    </div>
-                    <div class="pi-header-badge">
-                        <span class="pi-badge-dot"></span>LIVE ANALYSIS
+                <!-- Header -->
+                <div class="pi-header">
+                    <div class="pi-header-inner">
+                        <div class="pi-header-icon">💹</div>
+                        <div>
+                            <div class="pi-header-title">Price Intelligence</div>
+                            <div class="pi-header-sub">Pareto 80/20 Spend Concentration · Hotel Rate Benchmarking · Negotiation Simulator</div>
+                        </div>
+                        <div class="pi-header-badge">
+                            <span class="pi-badge-dot"></span>LIVE ANALYSIS
+                        </div>
                     </div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
-            # ══════════════════════════════════════════════════════
-            #  GLOBAL FILTERS — berlaku untuk SEMUA section di tab6
-            # ══════════════════════════════════════════════════════
-            st.markdown("""
-            <div class="pi-global-filter">
-                <div class="pi-global-filter-title">
-                    🔍 Global Filters
-                    <span style="color:var(--pi-muted);font-weight:400;letter-spacing:0;text-transform:none;font-size:1.1em;">
-                        — berlaku untuk seluruh analisis di tab ini
+                # ══════════════════════════════════════════════════════
+                #  GLOBAL FILTERS — berlaku untuk SEMUA section di tab6
+                # ══════════════════════════════════════════════════════
+                st.markdown("""
+                <div class="pi-global-filter">
+                    <div class="pi-global-filter-title">
+                        🔍 Global Filters
+                        <span style="color:var(--pi-muted);font-weight:400;letter-spacing:0;text-transform:none;font-size:1.1em;">
+                            — berlaku untuk seluruh analisis di tab ini
+                        </span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                gf_col1, gf_col2, gf_col3 = st.columns([1.2, 2, 2])
+
+                # ── Filter 1: Wilayah ────────────────────────────────────────
+                with gf_col1:
+                    st.markdown("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;'>Wilayah</div>", unsafe_allow_html=True)
+                    if "Country" in df_all.columns:
+                        pi_country_filter = st.radio(
+                            label="pi_wilayah",
+                            options=["Indonesia", "Internasional"],
+                            index=0, horizontal=True,
+                            label_visibility="collapsed",
+                            key="pi_country_radio"
+                        )
+                    else:
+                        pi_country_filter = "Semua"
+                        st.info("Kolom Country tidak tersedia")
+
+                # ── Apply wilayah filter ke base dataframe ───────────────────
+                df_pi_base = df_all.copy()
+
+                if "Country" in df_pi_base.columns and pi_country_filter in ["Indonesia", "Internasional"]:
+                    df_pi_base["_cu"] = df_pi_base["Country"].astype(str).str.strip().str.upper()
+                    domestic_alias    = ["INDONESIA", "ID", "IDN"]
+                    if pi_country_filter == "Indonesia":
+                        df_pi_base    = df_pi_base[df_pi_base["_cu"].isin(domestic_alias)]
+                        filter_label  = "🇮🇩 Indonesia"
+                    else:
+                        df_pi_base    = df_pi_base[~df_pi_base["_cu"].isin(domestic_alias)]
+                        filter_label  = "🌐 Internasional"
+                    df_pi_base.drop(columns=["_cu"], inplace=True)
+                else:
+                    filter_label = "🌏 Semua Wilayah"
+
+                # ── Filter 2: Nama Hotel (multiselect) ───────────────────────
+                with gf_col2:
+                    st.markdown("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;'>Filter Hotel (opsional)</div>", unsafe_allow_html=True)
+                    if "Hotel Name" in df_pi_base.columns:
+                        hotel_options = sorted(df_pi_base["Hotel Name"].dropna().unique().tolist())
+                        pi_hotel_filter = st.multiselect(
+                            label="pi_hotel_ms",
+                            options=hotel_options,
+                            default=[],
+                            placeholder="Semua hotel (pilih untuk filter spesifik)…",
+                            label_visibility="collapsed",
+                            key="pi_hotel_multiselect"
+                        )
+                    else:
+                        pi_hotel_filter = []
+
+                # ── Filter 3: Dimensi Pareto ─────────────────────────────────
+                with gf_col3:
+                    st.markdown("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;'>Dimensi Pareto</div>", unsafe_allow_html=True)
+                    dimension_options = [c for c in ["Hotel Name", "City", "Supplier Name"] if c in df_pi_base.columns]
+                    if dimension_options:
+                        pi_dimension = st.selectbox(
+                            label="pi_dim",
+                            options=dimension_options,
+                            label_visibility="collapsed",
+                            key="pi_dimension_select"
+                        )
+                    else:
+                        pi_dimension = None
+
+                # ── Apply hotel filter ───────────────────────────────────────
+                if pi_hotel_filter:
+                    df_pi_base = df_pi_base[df_pi_base["Hotel Name"].isin(pi_hotel_filter)]
+
+                # ── Filter summary badge ─────────────────────────────────────
+                total_records  = len(df_all)
+                filtered_records = len(df_pi_base)
+                filter_pct     = (filtered_records / total_records * 100) if total_records > 0 else 0
+                hotel_label    = f"{len(pi_hotel_filter)} hotel dipilih" if pi_hotel_filter else "Semua hotel"
+
+                st.markdown(f"""
+                <div style='background:#e6f4fb;border:1px solid #cce4f4;border-left:4px solid #1BA0E2;
+                            border-radius:8px;padding:10px 18px;margin:4px 0 22px 0;
+                            font-size:0.82em;color:#0D7FCC;display:flex;gap:20px;align-items:center;flex-wrap:wrap;'>
+                    <span>🔎 <b>Filter aktif</b></span>
+                    <span>Wilayah: <b>{filter_label}</b></span>
+                    <span>Hotel: <b>{hotel_label}</b></span>
+                    <span>Menampilkan <b>{filtered_records:,}</b> dari <b>{total_records:,}</b> records
+                        <span style='background:#1BA0E2;color:white;border-radius:20px;
+                                     padding:1px 10px;font-size:0.88em;margin-left:4px;'>{filter_pct:.1f}%</span>
                     </span>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
-            gf_col1, gf_col2, gf_col3 = st.columns([1.2, 2, 2])
+                if df_pi_base.empty:
+                    st.markdown('<div class="pi-empty">⚠️ Tidak ada data yang sesuai dengan filter yang dipilih.</div>',
+                                unsafe_allow_html=True)
+                    return  # keluar dari tab ini saja, tidak menghentikan tab lain
 
-            # ── Filter 1: Wilayah ────────────────────────────────────────
-            with gf_col1:
-                st.markdown("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;'>Wilayah</div>", unsafe_allow_html=True)
-                if "Country" in df_all.columns:
-                    pi_country_filter = st.radio(
-                        label="pi_wilayah",
-                        options=["Indonesia", "Internasional"],
-                        index=0, horizontal=True,
-                        label_visibility="collapsed",
-                        key="pi_country_radio"
-                    )
-                else:
-                    pi_country_filter = "Semua"
-                    st.info("Kolom Country tidak tersedia")
-
-            # ── Apply wilayah filter ke base dataframe ───────────────────
-            df_pi_base = df_all.copy()
-
-            if "Country" in df_pi_base.columns and pi_country_filter in ["Indonesia", "Internasional"]:
-                df_pi_base["_cu"] = df_pi_base["Country"].astype(str).str.strip().str.upper()
-                domestic_alias    = ["INDONESIA", "ID", "IDN"]
-                if pi_country_filter == "Indonesia":
-                    df_pi_base    = df_pi_base[df_pi_base["_cu"].isin(domestic_alias)]
-                    filter_label  = "🇮🇩 Indonesia"
-                else:
-                    df_pi_base    = df_pi_base[~df_pi_base["_cu"].isin(domestic_alias)]
-                    filter_label  = "🌐 Internasional"
-                df_pi_base.drop(columns=["_cu"], inplace=True)
-            else:
-                filter_label = "🌏 Semua Wilayah"
-
-            # ── Filter 2: Nama Hotel (multiselect) ───────────────────────
-            with gf_col2:
-                st.markdown("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;'>Filter Hotel (opsional)</div>", unsafe_allow_html=True)
-                if "Hotel Name" in df_pi_base.columns:
-                    hotel_options = sorted(df_pi_base["Hotel Name"].dropna().unique().tolist())
-                    pi_hotel_filter = st.multiselect(
-                        label="pi_hotel_ms",
-                        options=hotel_options,
-                        default=[],
-                        placeholder="Semua hotel (pilih untuk filter spesifik)…",
-                        label_visibility="collapsed",
-                        key="pi_hotel_multiselect"
-                    )
-                else:
-                    pi_hotel_filter = []
-
-            # ── Filter 3: Dimensi Pareto ─────────────────────────────────
-            with gf_col3:
-                st.markdown("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;'>Dimensi Pareto</div>", unsafe_allow_html=True)
-                dimension_options = [c for c in ["Hotel Name", "City", "Supplier Name"] if c in df_pi_base.columns]
-                if dimension_options:
-                    pi_dimension = st.selectbox(
-                        label="pi_dim",
-                        options=dimension_options,
-                        label_visibility="collapsed",
-                        key="pi_dimension_select"
-                    )
-                else:
-                    pi_dimension = None
-
-            # ── Apply hotel filter ───────────────────────────────────────
-            if pi_hotel_filter:
-                df_pi_base = df_pi_base[df_pi_base["Hotel Name"].isin(pi_hotel_filter)]
-
-            # ── Filter summary badge ─────────────────────────────────────
-            total_records  = len(df_all)
-            filtered_records = len(df_pi_base)
-            filter_pct     = (filtered_records / total_records * 100) if total_records > 0 else 0
-            hotel_label    = f"{len(pi_hotel_filter)} hotel dipilih" if pi_hotel_filter else "Semua hotel"
-
-            st.markdown(f"""
-            <div style='background:#e6f4fb;border:1px solid #cce4f4;border-left:4px solid #1BA0E2;
-                        border-radius:8px;padding:10px 18px;margin:4px 0 22px 0;
-                        font-size:0.82em;color:#0D7FCC;display:flex;gap:20px;align-items:center;flex-wrap:wrap;'>
-                <span>🔎 <b>Filter aktif</b></span>
-                <span>Wilayah: <b>{filter_label}</b></span>
-                <span>Hotel: <b>{hotel_label}</b></span>
-                <span>Menampilkan <b>{filtered_records:,}</b> dari <b>{total_records:,}</b> records
-                    <span style='background:#1BA0E2;color:white;border-radius:20px;
-                                 padding:1px 10px;font-size:0.88em;margin-left:4px;'>{filter_pct:.1f}%</span>
-                </span>
-            </div>
-            """, unsafe_allow_html=True)
-
-            if df_pi_base.empty:
-                st.markdown('<div class="pi-empty">⚠️ Tidak ada data yang sesuai dengan filter yang dipilih.</div>',
+                # ══════════════════════════════════════════════════════
+                #  SECTION 1 — PARETO SPEND CONCENTRATION
+                # ══════════════════════════════════════════════════════
+                st.markdown('<div class="pi-section-divider">Spend Concentration — Pareto 80/20</div>',
                             unsafe_allow_html=True)
-                st.stop()
 
-            # ══════════════════════════════════════════════════════
-            #  SECTION 1 — PARETO SPEND CONCENTRATION
-            # ══════════════════════════════════════════════════════
-            st.markdown('<div class="pi-section-divider">Spend Concentration — Pareto 80/20</div>',
-                        unsafe_allow_html=True)
-
-            if "Invoice Amount" not in df_pi_base.columns or pi_dimension is None:
-                st.markdown('<div class="pi-insight">⚠️ Kolom <strong>Invoice Amount</strong> atau dimensi tidak tersedia.</div>',
-                            unsafe_allow_html=True)
-            else:
-                df_sc = df_pi_base.dropna(subset=["Invoice Amount"]).copy()
-
-                if df_sc.empty:
-                    st.markdown('<div class="pi-insight">⚠️ Tidak ada data setelah filter.</div>',
+                if "Invoice Amount" not in df_pi_base.columns or pi_dimension is None:
+                    st.markdown('<div class="pi-insight">⚠️ Kolom <strong>Invoice Amount</strong> atau dimensi tidak tersedia.</div>',
                                 unsafe_allow_html=True)
                 else:
-                    pareto_df = (df_sc.groupby(pi_dimension)["Invoice Amount"]
-                                 .sum().reset_index()
-                                 .sort_values("Invoice Amount", ascending=False))
-                    total_spend           = pareto_df["Invoice Amount"].sum()
-                    pareto_df["Spend %"]  = pareto_df["Invoice Amount"] / total_spend * 100
-                    pareto_df["Cumulative %"] = pareto_df["Spend %"].cumsum()
-                    pareto_df["Rank"]     = range(1, len(pareto_df) + 1)
+                    df_sc = df_pi_base.dropna(subset=["Invoice Amount"]).copy()
 
-                    top_20_pct_count  = max(1, int(len(pareto_df) * 0.2))
-                    top_contributors  = pareto_df.head(top_20_pct_count)
-                    top_spend         = top_contributors["Invoice Amount"].sum()
-                    top_spend_pct     = top_spend / total_spend * 100
+                    if df_sc.empty:
+                        st.markdown('<div class="pi-insight">⚠️ Tidak ada data setelah filter.</div>',
+                                    unsafe_allow_html=True)
+                    else:
+                        pareto_df = (df_sc.groupby(pi_dimension)["Invoice Amount"]
+                                     .sum().reset_index()
+                                     .sort_values("Invoice Amount", ascending=False))
+                        total_spend           = pareto_df["Invoice Amount"].sum()
+                        pareto_df["Spend %"]  = pareto_df["Invoice Amount"] / total_spend * 100
+                        pareto_df["Cumulative %"] = pareto_df["Spend %"].cumsum()
+                        pareto_df["Rank"]     = range(1, len(pareto_df) + 1)
 
-                    # KPI Cards
+                        top_20_pct_count  = max(1, int(len(pareto_df) * 0.2))
+                        top_contributors  = pareto_df.head(top_20_pct_count)
+                        top_spend         = top_contributors["Invoice Amount"].sum()
+                        top_spend_pct     = top_spend / total_spend * 100
+
+                        # KPI Cards
+                        st.markdown(f"""
+                        <div class="pi-kpi-grid">
+                            <div class="pi-kpi" style="border-top-color:#1BA0E2;">
+                                <div class="pi-kpi-label">Total Spend · {filter_label}</div>
+                                <div class="pi-kpi-value">Rp{total_spend:,.0f}</div>
+                                <div class="pi-kpi-sub">keseluruhan periode</div>
+                            </div>
+                            <div class="pi-kpi" style="border-top-color:#1494C6;">
+                                <div class="pi-kpi-label">Top 20% Count</div>
+                                <div class="pi-kpi-value">{top_20_pct_count}</div>
+                                <div class="pi-kpi-sub">{pi_dimension} teratas</div>
+                            </div>
+                            <div class="pi-kpi" style="border-top-color:#0D7FCC;">
+                                <div class="pi-kpi-label">Top 20% Contribution</div>
+                                <div class="pi-kpi-value" style="color:#0D7FCC;">{top_spend_pct:.1f}%</div>
+                                <div class="pi-kpi-sub">dari total spend</div>
+                            </div>
+                            <div class="pi-kpi" style="border-top-color:#062440;">
+                                <div class="pi-kpi-label">Bottom 80% Spend</div>
+                                <div class="pi-kpi-value">Rp{(total_spend - top_spend):,.0f}</div>
+                                <div class="pi-kpi-sub">sisa {len(pareto_df) - top_20_pct_count} entitas</div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # Pareto Chart
+                        colors = ["#1BA0E2" if i < top_20_pct_count else "#d4e8f8"
+                                  for i in range(len(pareto_df))]
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=pareto_df[pi_dimension], y=pareto_df["Invoice Amount"],
+                            name="Spend", marker=dict(color=colors),
+                            hovertemplate="<b>%{x}</b><br>Rp%{y:,.0f}<extra></extra>"
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=pareto_df[pi_dimension], y=pareto_df["Cumulative %"],
+                            name="Cumulative %", yaxis="y2", mode="lines+markers",
+                            line=dict(color="#062440", width=2.5),
+                            marker=dict(size=5, color="#062440")
+                        ))
+                        fig.add_hline(y=80, yref="y2", line_dash="dash",
+                                      line_color="#1BA0E2", opacity=0.5,
+                                      annotation_text="80%", annotation_position="right",
+                                      annotation_font_color="#1BA0E2")
+                        fig.update_layout(
+                            template="plotly_white",
+                            yaxis=dict(title="Spend (Rp)", gridcolor="#e8f4fd"),
+                            yaxis2=dict(title="Cumulative %", overlaying="y", side="right",
+                                        range=[0, 100], showgrid=False, ticksuffix="%"),
+                            height=460, plot_bgcolor="white", paper_bgcolor="white",
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                        xanchor="right", x=1,
+                                        bgcolor="rgba(240,248,255,0.9)",
+                                        bordercolor="#cce4f4", borderwidth=1),
+                            margin=dict(l=60, r=80, t=40, b=100),
+                            xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
+                            hovermode="x unified"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        # Sub-tabs
+                        tab_sim, tab_detail, tab_insight = st.tabs([
+                            "💰  Saving Simulation", "📋  Detail Data", "💡  Insight"
+                        ])
+
+                        with tab_sim:
+                            renegotiation_rate = st.slider(
+                                "Target diskon pada Top 20% contributors (%)", 0, 25, 5, 1,
+                                key="pi_pareto_disc"
+                            )
+                            potential_saving = top_spend * (renegotiation_rate / 100)
+                            st.markdown(f"""
+                            <div class="pi-sim-grid">
+                                <div class="pi-sim-card pi-sim-current">
+                                    <div class="pi-sim-card-label">Top 20% Spend</div>
+                                    <div class="pi-sim-card-value">Rp{top_spend:,.0f}</div>
+                                    <div class="pi-sim-card-sub">{top_20_pct_count} {pi_dimension} · {top_spend_pct:.1f}% of all</div>
+                                </div>
+                                <div class="pi-sim-card pi-sim-neg">
+                                    <div class="pi-sim-card-label">Setelah Diskon {renegotiation_rate}%</div>
+                                    <div class="pi-sim-card-value">Rp{top_spend*(1-renegotiation_rate/100):,.0f}</div>
+                                    <div class="pi-sim-card-sub">spend setelah renegosiasi</div>
+                                </div>
+                                <div class="pi-sim-card pi-sim-saving">
+                                    <span class="pi-sim-saving-icon">💰</span>
+                                    <div class="pi-sim-card-label">Potensi Saving</div>
+                                    <div class="pi-sim-card-value">Rp{potential_saving:,.0f}</div>
+                                    <div class="pi-sim-card-sub">dengan target diskon {renegotiation_rate}%</div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                        with tab_detail:
+                            display_cols = [pi_dimension, "Invoice Amount", "Spend %", "Cumulative %", "Rank"]
+                            st.dataframe(
+                                top_contributors[display_cols].style
+                                .format({"Invoice Amount": "Rp{:,.0f}",
+                                         "Spend %": "{:.2f}%",
+                                         "Cumulative %": "{:.2f}%"})
+                                .background_gradient(subset=["Spend %"], cmap="Blues"),
+                                use_container_width=True
+                            )
+                            output_excel = BytesIO()
+                            top_contributors.to_excel(output_excel, index=False, sheet_name="Top Contributors")
+                            output_excel.seek(0)
+                            if st.session_state.get("role") == "Admin":
+                                st.download_button(
+                                    label="⬇️ Download Excel", data=output_excel,
+                                    file_name=f"pareto_{pi_dimension.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                )
+                            else:
+                                st.markdown('<div class="pi-locked">🔒 Download hanya tersedia untuk <strong>Admin</strong></div>',
+                                            unsafe_allow_html=True)
+
+                        with tab_insight:
+                            st.markdown(f"""
+                            <div class="pi-insight">
+                                <strong>Konsentrasi Spending · {filter_label} · {hotel_label}</strong><br>
+                                Top 20% (<em>{top_20_pct_count} {pi_dimension}</em>) menyumbang
+                                <em>{top_spend_pct:.1f}%</em> dari total pengeluaran
+                                <strong>Rp{total_spend:,.0f}</strong>.<br><br>
+                                Fokus renegosiasi pada kelompok ini memberikan dampak finansial terbesar.
+                                Dengan target diskon 10%, estimasi saving yang dapat dicapai adalah
+                                <em>Rp{top_spend * 0.10:,.0f}</em>.
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                # ══════════════════════════════════════════════════════
+                #  SECTION 2 — HOTEL PRICE INTELLIGENCE
+                # ══════════════════════════════════════════════════════
+                st.markdown('<div class="pi-section-divider">Hotel Price Intelligence</div>',
+                            unsafe_allow_html=True)
+
+                # Build hotel display name dari df_pi_base (sudah terfilter wilayah + hotel)
+                df_pi_hotel = df_pi_base.copy()
+
+                if "Canonical Hotel Name" in df_pi_hotel.columns:
+                    df_pi_hotel["Hotel Display"] = (df_pi_hotel["Canonical Hotel Name"].astype(str)
+                                                    .str.strip().str.replace(r"\s+", " ", regex=True).str.title())
+                elif "Hotel Name" in df_pi_hotel.columns:
+                    df_pi_hotel["Hotel Display"] = (df_pi_hotel["Hotel Name"].astype(str)
+                                                    .str.strip().str.replace(r"\s+", " ", regex=True).str.title())
+                else:
+                    st.markdown('<div class="pi-insight">⚠️ Kolom Hotel Name tidak tersedia.</div>',
+                                unsafe_allow_html=True)
+                    return  # keluar dari tab ini saja, tidak menghentikan tab lain
+
+                hotel_list_intel = sorted(df_pi_hotel["Hotel Display"].dropna().unique())
+
+                if not hotel_list_intel:
                     st.markdown(f"""
-                    <div class="pi-kpi-grid">
-                        <div class="pi-kpi" style="border-top-color:#1BA0E2;">
-                            <div class="pi-kpi-label">Total Spend · {filter_label}</div>
-                            <div class="pi-kpi-value">Rp{total_spend:,.0f}</div>
-                            <div class="pi-kpi-sub">keseluruhan periode</div>
-                        </div>
-                        <div class="pi-kpi" style="border-top-color:#1494C6;">
-                            <div class="pi-kpi-label">Top 20% Count</div>
-                            <div class="pi-kpi-value">{top_20_pct_count}</div>
-                            <div class="pi-kpi-sub">{pi_dimension} teratas</div>
-                        </div>
-                        <div class="pi-kpi" style="border-top-color:#0D7FCC;">
-                            <div class="pi-kpi-label">Top 20% Contribution</div>
-                            <div class="pi-kpi-value" style="color:#0D7FCC;">{top_spend_pct:.1f}%</div>
-                            <div class="pi-kpi-sub">dari total spend</div>
-                        </div>
-                        <div class="pi-kpi" style="border-top-color:#062440;">
-                            <div class="pi-kpi-label">Bottom 80% Spend</div>
-                            <div class="pi-kpi-value">Rp{(total_spend - top_spend):,.0f}</div>
-                            <div class="pi-kpi-sub">sisa {len(pareto_df) - top_20_pct_count} entitas</div>
-                        </div>
+                    <div class="pi-insight">
+                        ⚠️ Tidak ada data hotel untuk filter:
+                        <strong>{filter_label}</strong>
+                        {f"· <strong>{hotel_label}</strong>" if pi_hotel_filter else ""}.
+                        Coba ubah filter di atas.
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    # Tampilkan info berapa hotel tersedia
+                    st.markdown(f"""
+                    <div style='background:#f0f8ff;border:1px solid #cce4f4;border-left:3px solid #1BA0E2;
+                                border-radius:6px;padding:10px 16px;margin-bottom:14px;
+                                font-size:0.82em;color:#0D7FCC;'>
+                        🏨 <b>{len(hotel_list_intel):,} hotel</b> tersedia untuk
+                        <b>{filter_label}</b>
+                        {f"· filter: <b>{hotel_label}</b>" if pi_hotel_filter else ""}
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # Pareto Chart
-                    colors = ["#1BA0E2" if i < top_20_pct_count else "#d4e8f8"
-                              for i in range(len(pareto_df))]
-                    fig = go.Figure()
-                    fig.add_trace(go.Bar(
-                        x=pareto_df[pi_dimension], y=pareto_df["Invoice Amount"],
-                        name="Spend", marker=dict(color=colors),
-                        hovertemplate="<b>%{x}</b><br>Rp%{y:,.0f}<extra></extra>"
-                    ))
-                    fig.add_trace(go.Scatter(
-                        x=pareto_df[pi_dimension], y=pareto_df["Cumulative %"],
-                        name="Cumulative %", yaxis="y2", mode="lines+markers",
-                        line=dict(color="#062440", width=2.5),
-                        marker=dict(size=5, color="#062440")
-                    ))
-                    fig.add_hline(y=80, yref="y2", line_dash="dash",
-                                  line_color="#1BA0E2", opacity=0.5,
-                                  annotation_text="80%", annotation_position="right",
-                                  annotation_font_color="#1BA0E2")
-                    fig.update_layout(
-                        template="plotly_white",
-                        yaxis=dict(title="Spend (Rp)", gridcolor="#e8f4fd"),
-                        yaxis2=dict(title="Cumulative %", overlaying="y", side="right",
-                                    range=[0, 100], showgrid=False, ticksuffix="%"),
-                        height=460, plot_bgcolor="white", paper_bgcolor="white",
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                                    xanchor="right", x=1,
-                                    bgcolor="rgba(240,248,255,0.9)",
-                                    bordercolor="#cce4f4", borderwidth=1),
-                        margin=dict(l=60, r=80, t=40, b=100),
-                        xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
-                        hovermode="x unified"
+                    selected_hotel = st.selectbox(
+                        "Pilih hotel untuk analisis detail",
+                        hotel_list_intel,
+                        label_visibility="collapsed",
+                        key="pi_hotel_detail_select"
                     )
-                    st.plotly_chart(fig, use_container_width=True)
 
-                    # Sub-tabs
-                    tab_sim, tab_detail, tab_insight = st.tabs([
-                        "💰  Saving Simulation", "📋  Detail Data", "💡  Insight"
-                    ])
+                    df_hotel = df_pi_hotel[df_pi_hotel["Hotel Display"] == selected_hotel].copy()
 
-                    with tab_sim:
-                        renegotiation_rate = st.slider(
-                            "Target diskon pada Top 20% contributors (%)", 0, 25, 5, 1,
-                            key="pi_pareto_disc"
-                        )
-                        potential_saving = top_spend * (renegotiation_rate / 100)
-                        st.markdown(f"""
-                        <div class="pi-sim-grid">
-                            <div class="pi-sim-card pi-sim-current">
-                                <div class="pi-sim-card-label">Top 20% Spend</div>
-                                <div class="pi-sim-card-value">Rp{top_spend:,.0f}</div>
-                                <div class="pi-sim-card-sub">{top_20_pct_count} {pi_dimension} · {top_spend_pct:.1f}% of all</div>
-                            </div>
-                            <div class="pi-sim-card pi-sim-neg">
-                                <div class="pi-sim-card-label">Setelah Diskon {renegotiation_rate}%</div>
-                                <div class="pi-sim-card-value">Rp{top_spend*(1-renegotiation_rate/100):,.0f}</div>
-                                <div class="pi-sim-card-sub">spend setelah renegosiasi</div>
-                            </div>
-                            <div class="pi-sim-card pi-sim-saving">
-                                <span class="pi-sim-saving-icon">💰</span>
-                                <div class="pi-sim-card-label">Potensi Saving</div>
-                                <div class="pi-sim-card-value">Rp{potential_saving:,.0f}</div>
-                                <div class="pi-sim-card-sub">dengan target diskon {renegotiation_rate}%</div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    if not df_hotel.empty and "Invoice Amount" in df_hotel.columns and "Number of Rooms Night" in df_hotel.columns:
+                        df_valid = df_hotel[
+                            df_hotel["Invoice Amount"].notna() &
+                            (df_hotel["Number of Rooms Night"] > 0)
+                        ].copy()
+                        df_valid["Price Per Night"] = df_valid["Invoice Amount"] / df_valid["Number of Rooms Night"]
 
-                    with tab_detail:
-                        display_cols = [pi_dimension, "Invoice Amount", "Spend %", "Cumulative %", "Rank"]
-                        st.dataframe(
-                            top_contributors[display_cols].style
-                            .format({"Invoice Amount": "Rp{:,.0f}",
-                                     "Spend %": "{:.2f}%",
-                                     "Cumulative %": "{:.2f}%"})
-                            .background_gradient(subset=["Spend %"], cmap="Blues"),
-                            use_container_width=True
-                        )
-                        output_excel = BytesIO()
-                        top_contributors.to_excel(output_excel, index=False, sheet_name="Top Contributors")
-                        output_excel.seek(0)
-                        if st.session_state.get("role") == "Admin":
-                            st.download_button(
-                                label="⬇️ Download Excel", data=output_excel,
-                                file_name=f"pareto_{pi_dimension.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
-                        else:
-                            st.markdown('<div class="pi-locked">🔒 Download hanya tersedia untuk <strong>Admin</strong></div>',
+                        if df_valid.empty:
+                            st.markdown('<div class="pi-insight">⚠️ Tidak ada data harga yang valid untuk hotel ini.</div>',
                                         unsafe_allow_html=True)
+                        else:
+                            avg_rate          = df_valid["Price Per Night"].mean()
+                            median_rate       = df_valid["Price Per Night"].median()
+                            max_rate          = df_valid["Price Per Night"].max()
+                            min_rate          = df_valid["Price Per Night"].min()
+                            total_room_nights = df_valid["Number of Rooms Night"].sum()
 
-                    with tab_insight:
-                        st.markdown(f"""
-                        <div class="pi-insight">
-                            <strong>Konsentrasi Spending · {filter_label} · {hotel_label}</strong><br>
-                            Top 20% (<em>{top_20_pct_count} {pi_dimension}</em>) menyumbang
-                            <em>{top_spend_pct:.1f}%</em> dari total pengeluaran
-                            <strong>Rp{total_spend:,.0f}</strong>.<br><br>
-                            Fokus renegosiasi pada kelompok ini memberikan dampak finansial terbesar.
-                            Dengan target diskon 10%, estimasi saving yang dapat dicapai adalah
-                            <em>Rp{top_spend * 0.10:,.0f}</em>.
-                        </div>
-                        """, unsafe_allow_html=True)
-
-            # ══════════════════════════════════════════════════════
-            #  SECTION 2 — HOTEL PRICE INTELLIGENCE
-            # ══════════════════════════════════════════════════════
-            st.markdown('<div class="pi-section-divider">Hotel Price Intelligence</div>',
-                        unsafe_allow_html=True)
-
-            # Build hotel display name dari df_pi_base (sudah terfilter wilayah + hotel)
-            df_pi_hotel = df_pi_base.copy()
-
-            if "Canonical Hotel Name" in df_pi_hotel.columns:
-                df_pi_hotel["Hotel Display"] = (df_pi_hotel["Canonical Hotel Name"].astype(str)
-                                                .str.strip().str.replace(r"\s+", " ", regex=True).str.title())
-            elif "Hotel Name" in df_pi_hotel.columns:
-                df_pi_hotel["Hotel Display"] = (df_pi_hotel["Hotel Name"].astype(str)
-                                                .str.strip().str.replace(r"\s+", " ", regex=True).str.title())
-            else:
-                st.markdown('<div class="pi-insight">⚠️ Kolom Hotel Name tidak tersedia.</div>',
-                            unsafe_allow_html=True)
-                st.stop()
-
-            hotel_list_intel = sorted(df_pi_hotel["Hotel Display"].dropna().unique())
-
-            if not hotel_list_intel:
-                st.markdown(f"""
-                <div class="pi-insight">
-                    ⚠️ Tidak ada data hotel untuk filter:
-                    <strong>{filter_label}</strong>
-                    {f"· <strong>{hotel_label}</strong>" if pi_hotel_filter else ""}.
-                    Coba ubah filter di atas.
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                # Tampilkan info berapa hotel tersedia
-                st.markdown(f"""
-                <div style='background:#f0f8ff;border:1px solid #cce4f4;border-left:3px solid #1BA0E2;
-                            border-radius:6px;padding:10px 16px;margin-bottom:14px;
-                            font-size:0.82em;color:#0D7FCC;'>
-                    🏨 <b>{len(hotel_list_intel):,} hotel</b> tersedia untuk
-                    <b>{filter_label}</b>
-                    {f"· filter: <b>{hotel_label}</b>" if pi_hotel_filter else ""}
-                </div>
-                """, unsafe_allow_html=True)
-
-                selected_hotel = st.selectbox(
-                    "Pilih hotel untuk analisis detail",
-                    hotel_list_intel,
-                    label_visibility="collapsed",
-                    key="pi_hotel_detail_select"
-                )
-
-                df_hotel = df_pi_hotel[df_pi_hotel["Hotel Display"] == selected_hotel].copy()
-
-                if not df_hotel.empty and "Invoice Amount" in df_hotel.columns and "Number of Rooms Night" in df_hotel.columns:
-                    df_valid = df_hotel[
-                        df_hotel["Invoice Amount"].notna() &
-                        (df_hotel["Number of Rooms Night"] > 0)
-                    ].copy()
-                    df_valid["Price Per Night"] = df_valid["Invoice Amount"] / df_valid["Number of Rooms Night"]
-
-                    if df_valid.empty:
-                        st.markdown('<div class="pi-insight">⚠️ Tidak ada data harga yang valid untuk hotel ini.</div>',
-                                    unsafe_allow_html=True)
-                    else:
-                        avg_rate          = df_valid["Price Per Night"].mean()
-                        median_rate       = df_valid["Price Per Night"].median()
-                        max_rate          = df_valid["Price Per Night"].max()
-                        min_rate          = df_valid["Price Per Night"].min()
-                        total_room_nights = df_valid["Number of Rooms Night"].sum()
-
-                        # Hotel KPI Cards
-                        st.markdown(f"""
-                        <div class="pi-hotel-kpi-grid">
-                            <div class="pi-hotel-kpi" style="--pi-color:#1BA0E2;">
-                                <span class="pi-hotel-kpi-icon">📊</span>
-                                <div class="pi-hotel-kpi-label">Avg Rate</div>
-                                <div class="pi-hotel-kpi-value">Rp {avg_rate:,.0f}</div>
-                            </div>
-                            <div class="pi-hotel-kpi" style="--pi-color:#1494C6;">
-                                <span class="pi-hotel-kpi-icon">📍</span>
-                                <div class="pi-hotel-kpi-label">Median Rate</div>
-                                <div class="pi-hotel-kpi-value">Rp {median_rate:,.0f}</div>
-                            </div>
-                            <div class="pi-hotel-kpi" style="--pi-color:#d9534f;">
-                                <span class="pi-hotel-kpi-icon">🔺</span>
-                                <div class="pi-hotel-kpi-label">Max Rate</div>
-                                <div class="pi-hotel-kpi-value">Rp {max_rate:,.0f}</div>
-                            </div>
-                            <div class="pi-hotel-kpi" style="--pi-color:#2e8a57;">
-                                <span class="pi-hotel-kpi-icon">🔻</span>
-                                <div class="pi-hotel-kpi-label">Min Rate</div>
-                                <div class="pi-hotel-kpi-value">Rp {min_rate:,.0f}</div>
-                            </div>
-                            <div class="pi-hotel-kpi" style="--pi-color:#0D7FCC;">
-                                <span class="pi-hotel-kpi-icon">🌙</span>
-                                <div class="pi-hotel-kpi-label">Total Room Nights</div>
-                                <div class="pi-hotel-kpi-value">{total_room_nights:,.0f}</div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        # Negotiation Simulator
-                        st.markdown('<div class="pi-section-divider">Negotiation Simulator</div>',
-                                    unsafe_allow_html=True)
-
-                        target_discount  = st.slider("🎯 Target Discount (%)", 0, 30, 10, key="pi_hotel_disc")
-                        negotiated_rate  = avg_rate * (1 - target_discount / 100)
-                        estimated_saving = (avg_rate - negotiated_rate) * total_room_nights
-
-                        st.markdown(f"""
-                        <div class="pi-sim-grid">
-                            <div class="pi-sim-card pi-sim-current">
-                                <div class="pi-sim-card-label">Current Avg Rate / Malam</div>
-                                <div class="pi-sim-card-value">Rp {avg_rate:,.0f}</div>
-                                <div class="pi-sim-card-sub">basis {total_room_nights:,.0f} room nights</div>
-                            </div>
-                            <div class="pi-sim-card pi-sim-neg">
-                                <div class="pi-sim-card-label">Negotiated Rate (–{target_discount}%)</div>
-                                <div class="pi-sim-card-value">Rp {negotiated_rate:,.0f}</div>
-                                <div class="pi-sim-card-sub">target rate kontrak</div>
-                            </div>
-                            <div class="pi-sim-card pi-sim-saving">
-                                <span class="pi-sim-saving-icon">💰</span>
-                                <div class="pi-sim-card-label">Estimated Saving</div>
-                                <div class="pi-sim-card-value">Rp {estimated_saving:,.0f}</div>
-                                <div class="pi-sim-card-sub">total potensi hemat</div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        with st.expander("📘 Cara Perhitungan Estimated Saving", expanded=False):
+                            # Hotel KPI Cards
                             st.markdown(f"""
-                            <div class="pi-insight">
-                                <strong>Formula:</strong><br>
-                                Saving = (Avg Rate − Negotiated Rate) × Total Room Nights<br><br>
-                                = (Rp {avg_rate:,.0f} − Rp {negotiated_rate:,.0f})
-                                × <em>{total_room_nights:,.0f} malam</em><br>
-                                = <strong>Rp {estimated_saving:,.0f}</strong>
+                            <div class="pi-hotel-kpi-grid">
+                                <div class="pi-hotel-kpi" style="--pi-color:#1BA0E2;">
+                                    <span class="pi-hotel-kpi-icon">📊</span>
+                                    <div class="pi-hotel-kpi-label">Avg Rate</div>
+                                    <div class="pi-hotel-kpi-value">Rp {avg_rate:,.0f}</div>
+                                </div>
+                                <div class="pi-hotel-kpi" style="--pi-color:#1494C6;">
+                                    <span class="pi-hotel-kpi-icon">📍</span>
+                                    <div class="pi-hotel-kpi-label">Median Rate</div>
+                                    <div class="pi-hotel-kpi-value">Rp {median_rate:,.0f}</div>
+                                </div>
+                                <div class="pi-hotel-kpi" style="--pi-color:#d9534f;">
+                                    <span class="pi-hotel-kpi-icon">🔺</span>
+                                    <div class="pi-hotel-kpi-label">Max Rate</div>
+                                    <div class="pi-hotel-kpi-value">Rp {max_rate:,.0f}</div>
+                                </div>
+                                <div class="pi-hotel-kpi" style="--pi-color:#2e8a57;">
+                                    <span class="pi-hotel-kpi-icon">🔻</span>
+                                    <div class="pi-hotel-kpi-label">Min Rate</div>
+                                    <div class="pi-hotel-kpi-value">Rp {min_rate:,.0f}</div>
+                                </div>
+                                <div class="pi-hotel-kpi" style="--pi-color:#0D7FCC;">
+                                    <span class="pi-hotel-kpi-icon">🌙</span>
+                                    <div class="pi-hotel-kpi-label">Total Room Nights</div>
+                                    <div class="pi-hotel-kpi-value">{total_room_nights:,.0f}</div>
+                                </div>
                             </div>
                             """, unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="pi-insight">⚠️ Data tidak cukup untuk hotel yang dipilih.</div>',
-                                unsafe_allow_html=True)
 
-# ======================================
-        # TAB 7: SANKEY FLOW — MTRAX Blue Theme
-        # ======================================
+                            # Negotiation Simulator
+                            st.markdown('<div class="pi-section-divider">Negotiation Simulator</div>',
+                                        unsafe_allow_html=True)
+
+                            target_discount  = st.slider("🎯 Target Discount (%)", 0, 30, 10, key="pi_hotel_disc")
+                            negotiated_rate  = avg_rate * (1 - target_discount / 100)
+                            estimated_saving = (avg_rate - negotiated_rate) * total_room_nights
+
+                            st.markdown(f"""
+                            <div class="pi-sim-grid">
+                                <div class="pi-sim-card pi-sim-current">
+                                    <div class="pi-sim-card-label">Current Avg Rate / Malam</div>
+                                    <div class="pi-sim-card-value">Rp {avg_rate:,.0f}</div>
+                                    <div class="pi-sim-card-sub">basis {total_room_nights:,.0f} room nights</div>
+                                </div>
+                                <div class="pi-sim-card pi-sim-neg">
+                                    <div class="pi-sim-card-label">Negotiated Rate (–{target_discount}%)</div>
+                                    <div class="pi-sim-card-value">Rp {negotiated_rate:,.0f}</div>
+                                    <div class="pi-sim-card-sub">target rate kontrak</div>
+                                </div>
+                                <div class="pi-sim-card pi-sim-saving">
+                                    <span class="pi-sim-saving-icon">💰</span>
+                                    <div class="pi-sim-card-label">Estimated Saving</div>
+                                    <div class="pi-sim-card-value">Rp {estimated_saving:,.0f}</div>
+                                    <div class="pi-sim-card-sub">total potensi hemat</div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            with st.expander("📘 Cara Perhitungan Estimated Saving", expanded=False):
+                                st.markdown(f"""
+                                <div class="pi-insight">
+                                    <strong>Formula:</strong><br>
+                                    Saving = (Avg Rate − Negotiated Rate) × Total Room Nights<br><br>
+                                    = (Rp {avg_rate:,.0f} − Rp {negotiated_rate:,.0f})
+                                    × <em>{total_room_nights:,.0f} malam</em><br>
+                                    = <strong>Rp {estimated_saving:,.0f}</strong>
+                                </div>
+                                """, unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="pi-insight">⚠️ Data tidak cukup untuk hotel yang dipilih.</div>',
+                                    unsafe_allow_html=True)
+
+            # ======================================
+            # TAB 7: SANKEY FLOW — MTRAX Blue Theme
+            # ======================================
+            _render_tab6()
         with tab7:
 
             st.markdown("""
@@ -5696,252 +5703,254 @@ def main_app():
         # TAB 8: DATA HOTEL
         # ======================================
         with tab8:
-            st.markdown("<div class='section-title'>Data Hotel</div>", unsafe_allow_html=True)
+            def _render_tab8():
+                st.markdown("<div class='section-title'>Data Hotel</div>", unsafe_allow_html=True)
 
-            # =========================
-            # FILTER DOMESTIK / INTERNATIONAL
-            # =========================
-            if "Country" in df_overview.columns:
+                # =========================
+                # FILTER DOMESTIK / INTERNATIONAL
+                # =========================
+                if "Country" in df_overview.columns:
 
-                st.markdown("""
-                <style>
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"]{
-                    display:inline-flex!important;
-                    background:#1BA0E2;
-                    border-radius:50px;
-                    padding:3px;
-                }
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label{
-                    cursor:pointer;
-                    padding:4px 16px!important;
-                    border-radius:50px!important;
-                    font-size:0.78em!important;
-                    font-weight:500!important;
-                    color:rgba(255,255,255,0.80)!important;
-                    margin:0!important;
-                }
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label > div:first-child{
-                    display:none!important;
-                }
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] 
-                > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked){
-                    background:white!important;
-                    color:#1BA0E2!important;
-                }
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] 
-                > div[role="radiogroup"] > label:has(input:checked) > div:last-child p{
-                    color:#1BA0E2!important;
-                }
-                div[data-testid="stRadio"][data-key="tab8_country_radio"] > label{
-                    display:none!important;
-                }
-                </style>
-                """, unsafe_allow_html=True)
+                    st.markdown("""
+                    <style>
+                    div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"]{
+                        display:inline-flex!important;
+                        background:#1BA0E2;
+                        border-radius:50px;
+                        padding:3px;
+                    }
+                    div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label{
+                        cursor:pointer;
+                        padding:4px 16px!important;
+                        border-radius:50px!important;
+                        font-size:0.78em!important;
+                        font-weight:500!important;
+                        color:rgba(255,255,255,0.80)!important;
+                        margin:0!important;
+                    }
+                    div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label > div:first-child{
+                        display:none!important;
+                    }
+                    div[data-testid="stRadio"][data-key="tab8_country_radio"] 
+                    > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked){
+                        background:white!important;
+                        color:#1BA0E2!important;
+                    }
+                    div[data-testid="stRadio"][data-key="tab8_country_radio"] 
+                    > div[role="radiogroup"] > label:has(input:checked) > div:last-child p{
+                        color:#1BA0E2!important;
+                    }
+                    div[data-testid="stRadio"][data-key="tab8_country_radio"] > label{
+                        display:none!important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
 
-                tab8_country_filter = st.radio(
-                    label="filter_tab8",
-                    options=["Domestik", "Internasional"],
-                    index=0,
-                    horizontal=True,
-                    label_visibility="collapsed",
-                    key="tab8_country_radio"
-                )
+                    tab8_country_filter = st.radio(
+                        label="filter_tab8",
+                        options=["Domestik", "Internasional"],
+                        index=0,
+                        horizontal=True,
+                        label_visibility="collapsed",
+                        key="tab8_country_radio"
+                    )
 
-                # Copy dataframe
-                _df_tab8 = df_overview.copy()
+                    # Copy dataframe
+                    _df_tab8 = df_overview.copy()
 
-                # Normalisasi country
-                _df_tab8["_country_up"] = (
-                    _df_tab8["Country"]
-                    .astype(str)
-                    .str.strip()
-                    .str.upper()
-                )
+                    # Normalisasi country
+                    _df_tab8["_country_up"] = (
+                        _df_tab8["Country"]
+                        .astype(str)
+                        .str.strip()
+                        .str.upper()
+                    )
 
-                # Alias domestik (jika data tidak konsisten)
-                domestic_alias = ["INDONESIA", "ID", "IDN"]
+                    # Alias domestik (jika data tidak konsisten)
+                    domestic_alias = ["INDONESIA", "ID", "IDN"]
 
-                if tab8_country_filter == "Domestik":
-                    df_tab8 = _df_tab8[_df_tab8["_country_up"].isin(domestic_alias)].copy()
-                    tab8_label = "🇮🇩 Domestik"
+                    if tab8_country_filter == "Domestik":
+                        df_tab8 = _df_tab8[_df_tab8["_country_up"].isin(domestic_alias)].copy()
+                        tab8_label = "🇮🇩 Domestik"
+                    else:
+                        df_tab8 = _df_tab8[~_df_tab8["_country_up"].isin(domestic_alias)].copy()
+                        tab8_label = "🌍 Internasional"
+
+                    df_tab8.drop(columns=["_country_up"], inplace=True)
+
+                    if df_tab8.empty:
+                        st.warning(f"⚠️ Tidak ada data untuk filter: {tab8_label}")
+                        return  # keluar dari tab ini saja, tidak menghentikan tab lain
+
                 else:
-                    df_tab8 = _df_tab8[~_df_tab8["_country_up"].isin(domestic_alias)].copy()
-                    tab8_label = "🌍 Internasional"
+                    df_tab8 = df_overview.copy()
+                    tab8_label = "Semua Data"
 
-                df_tab8.drop(columns=["_country_up"], inplace=True)
+                # =========================
+                # VISUALISASI
+                # =========================
+                cols1, cols2 = st.columns(2)
 
-                if df_tab8.empty:
-                    st.warning(f"⚠️ Tidak ada data untuk filter: {tab8_label}")
-                    st.stop()
+                # ==================================================
+                # COL 1 — TOP 100 HOTEL
+                # ==================================================
+                with cols1:
+                    if "Hotel Name" in df_tab8.columns and "Number of Rooms Night" in df_tab8.columns:
 
-            else:
-                df_tab8 = df_overview.copy()
-                tab8_label = "Semua Data"
-
-            # =========================
-            # VISUALISASI
-            # =========================
-            cols1, cols2 = st.columns(2)
-
-            # ==================================================
-            # COL 1 — TOP 100 HOTEL
-            # ==================================================
-            with cols1:
-                if "Hotel Name" in df_tab8.columns and "Number of Rooms Night" in df_tab8.columns:
-
-                    top_hotels_tab = (
-                        df_tab8.groupby("Hotel Name")["Number of Rooms Night"]
-                        .sum()
-                        .sort_values(ascending=False)
-                        .head(100)
-                        .reset_index()
-                    )
-
-                    top_hotels_tab["Rank"] = top_hotels_tab.index + 1
-                    top_hotels_tab["Highlight"] = top_hotels_tab["Rank"].apply(
-                        lambda x: "Top 20" if x <= 20 else "Others"
-                    )
-
-                    fig_hotels = px.bar(
-                        top_hotels_tab,
-                        x="Number of Rooms Night",
-                        y="Hotel Name",
-                        orientation="h",
-                        color="Highlight",
-                        color_discrete_map={
-                            "Top 20": "#1BA0E2",
-                            "Others": "#e0e0e0"
-                        },
-                        title=f"Top 100 Hotels by Total Room Nights · {tab8_label}"
-                    )
-
-                    fig_hotels.update_traces(
-                        texttemplate="%{x:,.0f}",
-                        textposition="outside",
-                        textfont_size=10
-                    )
-
-                    fig_hotels.update_layout(
-                        height=1700,
-                        yaxis=dict(
-                            autorange="reversed",
-                            tickfont=dict(size=10)
-                        ),
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=10, r=80, t=50, b=10)
-                    )
-
-                    st.plotly_chart(fig_hotels, use_container_width=True)
-
-                    # Download
-                    output_hotels = BytesIO()
-                    top_hotels_tab.drop(columns=["Rank", "Highlight"]).to_excel(
-                        output_hotels,
-                        index=False,
-                        sheet_name="Top 100 Hotels"
-                    )
-                    output_hotels.seek(0)
-
-                    if st.session_state.get("role") == "Admin":
-                        st.download_button(
-                            label="⬇️ Download Data",
-                            data=output_hotels,
-                            file_name="top_100_hotels_by_room_nights.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        top_hotels_tab = (
+                            df_tab8.groupby("Hotel Name")["Number of Rooms Night"]
+                            .sum()
+                            .sort_values(ascending=False)
+                            .head(100)
+                            .reset_index()
                         )
-                    else:
-                        st.markdown("""
-                        <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;
-                        border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>
-                        🔒 Download hanya tersedia untuk <strong>Admin</strong>
-                        </div>
-                        """, unsafe_allow_html=True)
 
-            # ==================================================
-            # COL 2 — TOP 100 CITY
-            # ==================================================
-            with cols2:
-
-                city_col = next(
-                    (c for c in ["City", "City Destination"] if c in df_tab8.columns),
-                    None
-                )
-
-                if city_col and "Number of Rooms Night" in df_tab8.columns:
-
-                    top_cities_tab = (
-                        df_tab8.groupby(city_col)["Number of Rooms Night"]
-                        .sum()
-                        .sort_values(ascending=False)
-                        .head(100)
-                        .reset_index()
-                    )
-
-                    top_cities_tab["Rank"] = top_cities_tab.index + 1
-                    top_cities_tab["Highlight"] = top_cities_tab["Rank"].apply(
-                        lambda x: "Top 20" if x <= 20 else "Others"
-                    )
-
-                    fig_cities_tab = px.bar(
-                        top_cities_tab,
-                        x="Number of Rooms Night",
-                        y=city_col,
-                        orientation="h",
-                        color="Highlight",
-                        color_discrete_map={
-                            "Top 20": "#1BA0E2",
-                            "Others": "#e0e0e0"
-                        },
-                        title=f"Top 100 Cities by Total Room Nights · {tab8_label}"
-                    )
-
-                    fig_cities_tab.update_traces(
-                        texttemplate="%{x:,.0f}",
-                        textposition="outside",
-                        textfont_size=10
-                    )
-
-                    fig_cities_tab.update_layout(
-                        height=1700,
-                        yaxis=dict(
-                            autorange="reversed",
-                            tickfont=dict(size=10)
-                        ),
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=10, r=80, t=50, b=10)
-                    )
-
-                    st.plotly_chart(fig_cities_tab, use_container_width=True)
-
-                    # Download
-                    output_cities = BytesIO()
-                    top_cities_tab.drop(columns=["Rank", "Highlight"]).to_excel(
-                        output_cities,
-                        index=False,
-                        sheet_name="Top 100 Cities"
-                    )
-                    output_cities.seek(0)
-
-                    if st.session_state.get("role") == "Admin":
-                        st.download_button(
-                            label="⬇️ Download Data",
-                            data=output_cities,
-                            file_name="top_100_cities_by_room_nights.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        top_hotels_tab["Rank"] = top_hotels_tab.index + 1
+                        top_hotels_tab["Highlight"] = top_hotels_tab["Rank"].apply(
+                            lambda x: "Top 20" if x <= 20 else "Others"
                         )
-                    else:
-                        st.markdown("""
-                        <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;
-                        border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>
-                        🔒 Download hanya tersedia untuk <strong>Admin</strong>
-                        </div>
-                        """, unsafe_allow_html=True)
 
-# ======================================
-        # TAB 9: DENDROGRAM CLUSTERING — MTRAX Blue Theme
-        # ======================================
+                        fig_hotels = px.bar(
+                            top_hotels_tab,
+                            x="Number of Rooms Night",
+                            y="Hotel Name",
+                            orientation="h",
+                            color="Highlight",
+                            color_discrete_map={
+                                "Top 20": "#1BA0E2",
+                                "Others": "#e0e0e0"
+                            },
+                            title=f"Top 100 Hotels by Total Room Nights · {tab8_label}"
+                        )
+
+                        fig_hotels.update_traces(
+                            texttemplate="%{x:,.0f}",
+                            textposition="outside",
+                            textfont_size=10
+                        )
+
+                        fig_hotels.update_layout(
+                            height=1700,
+                            yaxis=dict(
+                                autorange="reversed",
+                                tickfont=dict(size=10)
+                            ),
+                            plot_bgcolor="white",
+                            paper_bgcolor="white",
+                            margin=dict(l=10, r=80, t=50, b=10)
+                        )
+
+                        st.plotly_chart(fig_hotels, use_container_width=True)
+
+                        # Download
+                        output_hotels = BytesIO()
+                        top_hotels_tab.drop(columns=["Rank", "Highlight"]).to_excel(
+                            output_hotels,
+                            index=False,
+                            sheet_name="Top 100 Hotels"
+                        )
+                        output_hotels.seek(0)
+
+                        if st.session_state.get("role") == "Admin":
+                            st.download_button(
+                                label="⬇️ Download Data",
+                                data=output_hotels,
+                                file_name="top_100_hotels_by_room_nights.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        else:
+                            st.markdown("""
+                            <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;
+                            border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>
+                            🔒 Download hanya tersedia untuk <strong>Admin</strong>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                # ==================================================
+                # COL 2 — TOP 100 CITY
+                # ==================================================
+                with cols2:
+
+                    city_col = next(
+                        (c for c in ["City", "City Destination"] if c in df_tab8.columns),
+                        None
+                    )
+
+                    if city_col and "Number of Rooms Night" in df_tab8.columns:
+
+                        top_cities_tab = (
+                            df_tab8.groupby(city_col)["Number of Rooms Night"]
+                            .sum()
+                            .sort_values(ascending=False)
+                            .head(100)
+                            .reset_index()
+                        )
+
+                        top_cities_tab["Rank"] = top_cities_tab.index + 1
+                        top_cities_tab["Highlight"] = top_cities_tab["Rank"].apply(
+                            lambda x: "Top 20" if x <= 20 else "Others"
+                        )
+
+                        fig_cities_tab = px.bar(
+                            top_cities_tab,
+                            x="Number of Rooms Night",
+                            y=city_col,
+                            orientation="h",
+                            color="Highlight",
+                            color_discrete_map={
+                                "Top 20": "#1BA0E2",
+                                "Others": "#e0e0e0"
+                            },
+                            title=f"Top 100 Cities by Total Room Nights · {tab8_label}"
+                        )
+
+                        fig_cities_tab.update_traces(
+                            texttemplate="%{x:,.0f}",
+                            textposition="outside",
+                            textfont_size=10
+                        )
+
+                        fig_cities_tab.update_layout(
+                            height=1700,
+                            yaxis=dict(
+                                autorange="reversed",
+                                tickfont=dict(size=10)
+                            ),
+                            plot_bgcolor="white",
+                            paper_bgcolor="white",
+                            margin=dict(l=10, r=80, t=50, b=10)
+                        )
+
+                        st.plotly_chart(fig_cities_tab, use_container_width=True)
+
+                        # Download
+                        output_cities = BytesIO()
+                        top_cities_tab.drop(columns=["Rank", "Highlight"]).to_excel(
+                            output_cities,
+                            index=False,
+                            sheet_name="Top 100 Cities"
+                        )
+                        output_cities.seek(0)
+
+                        if st.session_state.get("role") == "Admin":
+                            st.download_button(
+                                label="⬇️ Download Data",
+                                data=output_cities,
+                                file_name="top_100_cities_by_room_nights.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        else:
+                            st.markdown("""
+                            <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;
+                            border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>
+                            🔒 Download hanya tersedia untuk <strong>Admin</strong>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+            # ======================================
+            # TAB 9: DENDROGRAM CLUSTERING — MTRAX Blue Theme
+            # ======================================
+            _render_tab8()
         with tab9:
             from plotly.subplots import make_subplots as _make_subplots
             from scipy.cluster.hierarchy import linkage as sk_linkage, dendrogram as scipy_dendrogram, fcluster
@@ -6537,7 +6546,7 @@ def main_app():
                 """, unsafe_allow_html=True)
 
         # ======================================
-        # TAB 9: EXPORT
+        # TAB 10: EXPORT
         # ======================================
         with tab10:
             st.markdown("<div class='section-title'>Export Data</div>", unsafe_allow_html=True)
