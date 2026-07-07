@@ -1304,6 +1304,24 @@ def login_page():
     *, *::before, *::after { font-family:'Inter',sans-serif !important; box-sizing:border-box; margin:0; padding:0; }
     html, body { height:100%; overflow:hidden; }
 
+    /* ── FIX: kembalikan font Material Symbols untuk ikon bawaan Streamlit
+         (mis. tombol show/hide password) — tanpa ini, wildcard font-family di atas
+         merusak ligature ikon sehingga muncul teks literal "visibility" alih-alih ikon mata ── */
+    [data-testid="stIconMaterial"] {
+        font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
+        font-weight: normal !important;
+        font-style: normal !important;
+        letter-spacing: normal !important;
+        text-transform: none !important;
+        white-space: nowrap !important;
+        word-wrap: normal !important;
+        direction: ltr !important;
+        -webkit-font-feature-settings: 'liga' !important;
+        font-feature-settings: 'liga' !important;
+        -webkit-font-smoothing: antialiased !important;
+        font-size: 1.2rem !important;
+    }
+
     .stApp                              { background:#0D7FCC !important; overflow:hidden; }
     [data-testid="stHeader"]            { display:none !important; }
     [data-testid="stToolbar"]           { display:none !important; }
@@ -1518,6 +1536,8 @@ def login_page():
     }
     .stTextInput > div > div > div > button {
         background: transparent !important; border: none !important; color: #b0bec8 !important;
+        display: inline-flex !important; align-items: center !important; justify-content: center !important;
+        min-width: 32px !important; height: 32px !important; padding: 0 !important;
     }
     .stTextInput > div > div > div > button:hover { color: #0D7FCC !important; }
 
@@ -1671,6 +1691,23 @@ def main_app():
 
         * {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica', sans-serif;
+        }
+
+        /* ── Proteksi tambahan: pastikan ikon Material Symbols bawaan Streamlit
+             (selectbox, multiselect, date picker, expander, dsb.) tidak ikut
+             ter-override font-family-nya oleh rule '*' di atas ── */
+        [data-testid="stIconMaterial"] {
+            font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
+            font-weight: normal !important;
+            font-style: normal !important;
+            letter-spacing: normal !important;
+            text-transform: none !important;
+            white-space: nowrap !important;
+            word-wrap: normal !important;
+            direction: ltr !important;
+            -webkit-font-feature-settings: 'liga' !important;
+            font-feature-settings: 'liga' !important;
+            -webkit-font-smoothing: antialiased !important;
         }
 
         .stApp {
@@ -3422,8 +3459,8 @@ def main_app():
                             label="⬇️ Download Data",
                             data=output_tr_trend,
                             file_name="monthly_travel_request_trend.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_monthly_tr_trend")
                     else:
                         st.markdown("""
                         <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
@@ -3526,8 +3563,8 @@ def main_app():
                             label="⬇️ Download Data",
                             data=output_rn_trend,
                             file_name="monthly_room_nights_trend.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_monthly_rn_trend")
                     else:
                         st.markdown("""
                         <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
@@ -3625,8 +3662,8 @@ def main_app():
                             label="⬇️ Download Similarity Result (Excel)",
                             data=output,
                             file_name="hotel_name_similarity.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_hotel_similarity")
                     else:
                         st.markdown("""
                         <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
@@ -3657,8 +3694,8 @@ def main_app():
                         "⬇️ Download Canonical Mapping (Excel)",
                         data=output,
                         file_name="hotel_canonical_mapping.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_hotel_canonical_mapping")
                 else:
                     st.markdown("""
                     <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
@@ -3782,8 +3819,8 @@ def main_app():
                         label="⬇️ Download Data",
                         data=output,
                         file_name="employee_booking_cohort.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_employee_cohort")
                 else:
                     st.markdown("""
                     <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
@@ -3845,7 +3882,10 @@ def main_app():
                     st.markdown("### Behavioral Persona Clustering")
 
                     df_behavior = df_all.copy()
-                    selected_data = pd.DataFrame()  # default agar aman jika kolom tidak lengkap
+                    selected_data = pd.DataFrame()       # default agar aman jika kolom tidak lengkap
+                    selected_cluster = None              # default — dipakai di blok radar chart di bawah
+                    employee_features = pd.DataFrame()   # default — dipakai di blok radar/insight di bawah
+                    feature_cols = []                    # default — dipakai di blok radar/insight di bawah
 
                     required_cols = ["Travel Request Number","Employee Id","Issue Time","Check in Date","Check out Date","Number of Rooms Night"]
 
@@ -4651,19 +4691,19 @@ def main_app():
                 }
 
                 /* ── Radio pill override ── */
-                div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] {
+                div[data-testid="stRadio"].st-key-pi_country_radio > div[role="radiogroup"] {
                     display:inline-flex!important; background:#1BA0E2;
                     border-radius:50px; padding:3px; gap:0;
                 }
-                div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label {
+                div[data-testid="stRadio"].st-key-pi_country_radio > div[role="radiogroup"] > label {
                     cursor:pointer; padding:5px 18px!important; border-radius:50px!important;
                     font-size:0.78em!important; font-weight:500!important;
                     color:rgba(255,255,255,0.80)!important; margin:0!important;
                 }
-                div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label > div:first-child { display:none!important; }
-                div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background:white!important; }
-                div[data-testid="stRadio"][data-key="pi_country_radio"] > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color:#1BA0E2!important; font-weight:700!important; }
-                div[data-testid="stRadio"][data-key="pi_country_radio"] > label { display:none!important; }
+                div[data-testid="stRadio"].st-key-pi_country_radio > div[role="radiogroup"] > label > div:first-child { display:none!important; }
+                div[data-testid="stRadio"].st-key-pi_country_radio > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background:white!important; }
+                div[data-testid="stRadio"].st-key-pi_country_radio > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color:#1BA0E2!important; font-weight:700!important; }
+                div[data-testid="stRadio"].st-key-pi_country_radio > label { display:none!important; }
                 </style>
 
                 <!-- Header -->
@@ -4926,8 +4966,8 @@ def main_app():
                                 st.download_button(
                                     label="⬇️ Download Excel", data=output_excel,
                                     file_name=f"pareto_{pi_dimension.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                )
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key="dl_pareto_contributors")
                             else:
                                 st.markdown('<div class="pi-locked">🔒 Download hanya tersedia untuk <strong>Admin</strong></div>',
                                             unsafe_allow_html=True)
@@ -5288,19 +5328,19 @@ def main_app():
             }
 
             /* ════════════ RADIO PILL — WILAYAH ════════════ */
-            div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] {
+            div[data-testid="stRadio"].st-key-sankey_country_radio > div[role="radiogroup"] {
                 display:inline-flex!important; background:#1BA0E2;
                 border-radius:50px; padding:3px; gap:0;
             }
-            div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] > label {
+            div[data-testid="stRadio"].st-key-sankey_country_radio > div[role="radiogroup"] > label {
                 cursor:pointer; padding:5px 20px!important; border-radius:50px!important;
                 font-size:0.78em!important; font-weight:500!important;
                 color:rgba(255,255,255,0.80)!important; margin:0!important;
             }
-            div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] > label > div:first-child { display:none!important; }
-            div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background:white!important; }
-            div[data-testid="stRadio"][data-key="sankey_country_radio"] > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color:#1BA0E2!important; font-weight:700!important; }
-            div[data-testid="stRadio"][data-key="sankey_country_radio"] > label { display:none!important; }
+            div[data-testid="stRadio"].st-key-sankey_country_radio > div[role="radiogroup"] > label > div:first-child { display:none!important; }
+            div[data-testid="stRadio"].st-key-sankey_country_radio > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background:white!important; }
+            div[data-testid="stRadio"].st-key-sankey_country_radio > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color:#1BA0E2!important; font-weight:700!important; }
+            div[data-testid="stRadio"].st-key-sankey_country_radio > label { display:none!important; }
             </style>
 
             <!-- ── Header ── -->
@@ -5691,8 +5731,8 @@ def main_app():
                                     f"sankey_flow_{sankey_label.replace('🇮🇩','').replace('🌐','').strip()}_"
                                     f"{datetime.now().strftime('%Y%m%d')}.xlsx"
                                 ),
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="dl_sankey_flow")
                         else:
                             st.markdown(
                                 '<div class="sk-locked">🔒 Download hanya tersedia untuk <strong>Admin</strong></div>',
@@ -5713,13 +5753,13 @@ def main_app():
 
                     st.markdown("""
                     <style>
-                    div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"]{
+                    div[data-testid="stRadio"].st-key-tab8_country_radio > div[role="radiogroup"]{
                         display:inline-flex!important;
                         background:#1BA0E2;
                         border-radius:50px;
                         padding:3px;
                     }
-                    div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label{
+                    div[data-testid="stRadio"].st-key-tab8_country_radio > div[role="radiogroup"] > label{
                         cursor:pointer;
                         padding:4px 16px!important;
                         border-radius:50px!important;
@@ -5728,19 +5768,19 @@ def main_app():
                         color:rgba(255,255,255,0.80)!important;
                         margin:0!important;
                     }
-                    div[data-testid="stRadio"][data-key="tab8_country_radio"] > div[role="radiogroup"] > label > div:first-child{
+                    div[data-testid="stRadio"].st-key-tab8_country_radio > div[role="radiogroup"] > label > div:first-child{
                         display:none!important;
                     }
-                    div[data-testid="stRadio"][data-key="tab8_country_radio"] 
+                    div[data-testid="stRadio"].st-key-tab8_country_radio 
                     > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked){
                         background:white!important;
                         color:#1BA0E2!important;
                     }
-                    div[data-testid="stRadio"][data-key="tab8_country_radio"] 
+                    div[data-testid="stRadio"].st-key-tab8_country_radio 
                     > div[role="radiogroup"] > label:has(input:checked) > div:last-child p{
                         color:#1BA0E2!important;
                     }
-                    div[data-testid="stRadio"][data-key="tab8_country_radio"] > label{
+                    div[data-testid="stRadio"].st-key-tab8_country_radio > label{
                         display:none!important;
                     }
                     </style>
@@ -5856,8 +5896,8 @@ def main_app():
                                 label="⬇️ Download Data",
                                 data=output_hotels,
                                 file_name="top_100_hotels_by_room_nights.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="dl_top100_hotels")
                         else:
                             st.markdown("""
                             <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;
@@ -5937,8 +5977,8 @@ def main_app():
                                 label="⬇️ Download Data",
                                 data=output_cities,
                                 file_name="top_100_cities_by_room_nights.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="dl_top100_cities")
                         else:
                             st.markdown("""
                             <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;
@@ -6562,7 +6602,8 @@ def main_app():
                     if st.session_state.get('role') == 'Admin':
                         st.download_button("⬇️ Download",data=csv,
                             file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv",use_container_width=True)
+                            mime="text/csv",use_container_width=True,
+                            key="dl_export_csv")
                     else:
                         st.markdown("""<div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
                         padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>🔒 Download hanya tersedia untuk <strong>Admin</strong></div>""",
@@ -6579,7 +6620,8 @@ def main_app():
                         st.download_button("⬇️ Download",data=buffer.getvalue(),
                             file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True)
+                            use_container_width=True,
+                            key="dl_export_xlsx")
                     else:
                         st.markdown("""<div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
                         padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>🔒 Download hanya tersedia untuk <strong>Admin</strong></div>""",
@@ -6593,7 +6635,8 @@ def main_app():
                     if st.session_state.get('role') == 'Admin':
                         st.download_button("⬇️ Download",data=json_data,
                             file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                            mime="application/json",use_container_width=True)
+                            mime="application/json",use_container_width=True,
+                            key="dl_export_json")
                     else:
                         st.markdown("""<div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
                         padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>🔒 Download hanya tersedia untuk <strong>Admin</strong></div>""",
@@ -7030,8 +7073,8 @@ def main_app():
                                     label="⬇️ Download Tabel",
                                     data=_output_pj,
                                     file_name=f"patra_jasa_comparison_{_pj_metric_opt.replace(' ','_')}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                )
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key="dl_patra_jasa_comparison")
                             else:
                                 st.markdown("""
                                 <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
