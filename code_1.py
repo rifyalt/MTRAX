@@ -1542,7 +1542,9 @@ def login_page():
     .stTextInput > div > div > div > button:hover { color: #0D7FCC !important; }
 
     /* ── LOG IN BUTTON — lime gradient ── */
-    div[data-testid="stButton"] > button {
+    /* (mencakup stButton dan stFormSubmitButton — form dipakai agar tombol Enter bisa submit login) */
+    div[data-testid="stButton"] > button,
+    div[data-testid="stFormSubmitButton"] > button {
         background: linear-gradient(135deg, #e2f871 0%, #cce84a 50%, #b8d930 100%) !important;
         color: #07395f !important;
         border: none !important;
@@ -1558,12 +1560,21 @@ def login_page():
         margin-top: 6px !important;
         box-shadow: 0 4px 18px rgba(226,248,113,0.55), 0 1px 4px rgba(7,57,95,0.12) !important;
     }
-    div[data-testid="stButton"] > button:hover {
+    div[data-testid="stButton"] > button:hover,
+    div[data-testid="stFormSubmitButton"] > button:hover {
         background: linear-gradient(135deg, #d4e860 0%, #bdd938 50%, #a8c820 100%) !important;
         box-shadow: 0 6px 24px rgba(226,248,113,0.70), 0 2px 8px rgba(7,57,95,0.15) !important;
         transform: translateY(-1.5px) !important;
     }
-    div[data-testid="stButton"] > button:active { transform: translateY(0) !important; }
+    div[data-testid="stButton"] > button:active,
+    div[data-testid="stFormSubmitButton"] > button:active { transform: translateY(0) !important; }
+
+    /* Streamlit's st.form menambahkan border bawaan di sekeliling form — dihilangkan
+       supaya tetap menyatu dengan desain kartu login yang sudah ada */
+    div[data-testid="stForm"] {
+        border: none !important;
+        padding: 0 !important;
+    }
 
     .stAlert { border-radius: 8px !important; margin-top: 8px !important; font-size: 0.78em !important; }
     </style>
@@ -1613,20 +1624,26 @@ def login_page():
              letter-spacing:0.10em;text-transform:uppercase;margin-bottom:6px;">Username</div>
         """, unsafe_allow_html=True)
 
-        username = st.text_input("_u", placeholder="Enter Username ...",
-                                 label_visibility="collapsed", key="login_username")
+        # Dibungkus st.form supaya menekan Enter di kolom Username/Password
+        # langsung men-submit login (form_submit_button otomatis ter-trigger oleh Enter),
+        # tanpa harus mengklik tombol LOG IN secara manual.
+        with st.form("login_form", clear_on_submit=False):
+            username = st.text_input("_u", placeholder="Enter Username ...",
+                                     label_visibility="collapsed", key="login_username")
 
-        st.markdown("""
-        <div style="font-size:0.70em;font-weight:700;color:#07395f;
-             letter-spacing:0.10em;text-transform:uppercase;margin:14px 0 6px;">Password</div>
-        """, unsafe_allow_html=True)
+            st.markdown("""
+            <div style="font-size:0.70em;font-weight:700;color:#07395f;
+                 letter-spacing:0.10em;text-transform:uppercase;margin:14px 0 6px;">Password</div>
+            """, unsafe_allow_html=True)
 
-        password = st.text_input("_p", type="password", placeholder="Enter Password ...",
-                                 label_visibility="collapsed", key="login_password")
+            password = st.text_input("_p", type="password", placeholder="Enter Password ...",
+                                     label_visibility="collapsed", key="login_password")
 
-        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
-        if st.button("LOG IN", use_container_width=True, key="login_btn"):
+            submitted = st.form_submit_button("LOG IN", use_container_width=True)
+
+        if submitted:
             if not validate_username(username):
                 st.error("Invalid username format.")
                 return
@@ -6693,7 +6710,12 @@ def main_app():
                         lambda x: "Patra Jasa Group" if x in PATRA_JASA_NORMALIZED else "Non-Patra Jasa"
                     )
 
-                    # ── Tambahkan kolom bulan ──
+                    # ── Tambahkan kolom bulan & tahun ──
+                    # PERBAIKAN: sebelumnya hanya .dt.month tanpa memperhitungkan tahun,
+                    # sehingga bulan yang sama dari tahun berbeda bisa tercampur/menyembunyikan data.
+                    # PERBAIKAN 2: tambah fallback antar-kolom tanggal per baris — kalau kolom utama
+                    # gagal di-parse (NaT) untuk sebagian baris, baris itu tidak lagi hilang diam-diam
+                    # dari agregasi bulanan, melainkan dicoba pakai kolom tanggal lain yang tersedia.
                     _date_col_pj = None
                     for _c in ["Issue Time", "Check in Date"]:
                         if _c in df_pj.columns:
@@ -6701,7 +6723,20 @@ def main_app():
                             break
                     if _date_col_pj:
                         df_pj["_dt"] = pd.to_datetime(df_pj[_date_col_pj], errors="coerce", dayfirst=True)
+                        for _fb_col in [c for c in ["Issue Time", "Check in Date", "Check out Date"]
+                                        if c in df_pj.columns and c != _date_col_pj]:
+                            _fb_dt = pd.to_datetime(df_pj[_fb_col], errors="coerce", dayfirst=True)
+                            df_pj["_dt"] = df_pj["_dt"].fillna(_fb_dt)
                         df_pj["_month"] = df_pj["_dt"].dt.month
+                        df_pj["_year"] = df_pj["_dt"].dt.year
+
+                        _n_unparsed = df_pj["_dt"].isna().sum()
+                        if _n_unparsed > 0:
+                            st.caption(
+                                f"⚠️ {_n_unparsed:,} baris tidak punya tanggal yang bisa dibaca "
+                                f"(kolom {_date_col_pj} dan alternatifnya kosong/format tidak dikenali) "
+                                f"— baris ini tidak masuk ke tabel bulanan di bawah."
+                            )
 
                     # ── Filter Nama Perusahaan (opsional) ──
                     st.markdown("""
@@ -6714,7 +6749,7 @@ def main_app():
                         </div>
                     </div>""", unsafe_allow_html=True)
 
-                    _pj_col1, _pj_col2 = st.columns([2, 1])
+                    _pj_col1, _pj_col2, _pj_col3 = st.columns([1.6, 1, 1])
 
                     with _pj_col1:
                         if "Nama Perusahaan" in df_pj.columns:
@@ -6732,6 +6767,21 @@ def main_app():
                             _pj_selected_companies = []
 
                     with _pj_col2:
+                        # PERBAIKAN: selector tahun eksplisit agar tabel bulanan tidak pernah
+                        # mencampur bulan yang sama dari tahun berbeda (mis. Jan 2025 + Jan 2026
+                        # tergabung jadi satu kolom "Jan"). Default ke tahun terbaru yang ada di data.
+                        if "_year" in df_pj.columns and df_pj["_year"].notna().any():
+                            _pj_year_opts = sorted(df_pj["_year"].dropna().astype(int).unique().tolist(), reverse=True)
+                            _pj_selected_year = st.selectbox(
+                                "📅 Tahun (Tabel Bulanan)",
+                                options=_pj_year_opts,
+                                index=0,
+                                key="pj_year_select"
+                            )
+                        else:
+                            _pj_selected_year = None
+
+                    with _pj_col3:
                         _pj_metric_opt = st.selectbox(
                             "📊 Metrik Tabel",
                             options=["Invoice (unique)", "Room Nights"],
@@ -6931,35 +6981,44 @@ def main_app():
                     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
                     # ── Tabel Bulanan ──
+                    _pj_year_label = f" · Tahun {_pj_selected_year}" if _pj_selected_year is not None else ""
                     st.markdown(
                         f"<div class='section-title'>Tabel Perbandingan Bulanan — "
-                        f"{'Invoice (unique)' if _pj_metric_opt == 'Invoice (unique)' else 'Room Nights'}</div>",
+                        f"{'Invoice (unique)' if _pj_metric_opt == 'Invoice (unique)' else 'Room Nights'}"
+                        f"{_pj_year_label}</div>",
                         unsafe_allow_html=True
                     )
 
-                    if _date_col_pj and "_month" in df_pj.columns:
+                    # PERBAIKAN: scope tabel bulanan ke SATU tahun yang dipilih di atas —
+                    # ini mencegah bulan yang sama dari tahun berbeda tergabung jadi satu kolom
+                    # (mis. data Jan 2025 + Jan 2026 tidak lagi ikut menumpuk/menyembunyikan bulan lain).
+                    df_pj_month_table = df_pj.copy()
+                    if _pj_selected_year is not None and "_year" in df_pj_month_table.columns:
+                        df_pj_month_table = df_pj_month_table[df_pj_month_table["_year"] == _pj_selected_year]
+
+                    if _date_col_pj and "_month" in df_pj_month_table.columns and not df_pj_month_table.empty:
                         MONTH_NAMES = {
                             1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",
                             7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"
                         }
 
                         if _pj_metric_opt == "Invoice (unique)":
-                            if "Travel Request Number" in df_pj.columns:
+                            if "Travel Request Number" in df_pj_month_table.columns:
                                 _monthly_agg = (
-                                    df_pj.groupby(["Grup Hotel","_month"])["Travel Request Number"]
+                                    df_pj_month_table.groupby(["Grup Hotel","_month"])["Travel Request Number"]
                                     .nunique()
                                     .reset_index(name="Nilai")
                                 )
                             else:
                                 _monthly_agg = (
-                                    df_pj.groupby(["Grup Hotel","_month"])
+                                    df_pj_month_table.groupby(["Grup Hotel","_month"])
                                     .size()
                                     .reset_index(name="Nilai")
                                 )
                         else:
-                            if "Number of Rooms Night" in df_pj.columns:
+                            if "Number of Rooms Night" in df_pj_month_table.columns:
                                 _monthly_agg = (
-                                    df_pj.groupby(["Grup Hotel","_month"])["Number of Rooms Night"]
+                                    df_pj_month_table.groupby(["Grup Hotel","_month"])["Number of Rooms Night"]
                                     .sum()
                                     .reset_index(name="Nilai")
                                 )
@@ -6974,6 +7033,12 @@ def main_app():
                                 values="Nilai",
                                 fill_value=0
                             )
+                            # PERBAIKAN: normalisasi label kolom ke int murni — pivot_table bisa
+                            # menghasilkan kolom bertipe float (mis. 4.0) kalau ada NaN tercampur
+                            # di data sumber sebelum di-groupby, sehingga pengecekan
+                            # "if _m not in _pivot.columns" di bawah (memakai int biasa) gagal
+                            # mengenali kolom yang sebenarnya sudah ada, lalu menimpanya dengan 0.
+                            _pivot.columns = [int(c) for c in _pivot.columns]
 
                             # Pastikan semua 12 bulan ada
                             for _m in range(1, 13):
@@ -7081,21 +7146,29 @@ def main_app():
                                 padding:10px 16px;font-size:0.82em;color:#1BA0E2;display:flex;align-items:center;gap:8px;'>
                                     <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
                                 </div>""", unsafe_allow_html=True)
+                        else:
+                            st.info(f"ℹ️ Tidak ada data bulanan untuk ditampilkan pada tahun {_pj_selected_year}.")
                     else:
-                        st.info("ℹ️ Kolom tanggal (Issue Time / Check in Date) tidak ditemukan. Tabel bulanan tidak dapat ditampilkan.")
+                        if not _date_col_pj:
+                            st.info("ℹ️ Kolom tanggal (Issue Time / Check in Date) tidak ditemukan. Tabel bulanan tidak dapat ditampilkan.")
+                        elif df_pj_month_table.empty:
+                            st.info(f"ℹ️ Tidak ada data untuk tahun {_pj_selected_year} setelah filter yang aktif diterapkan. Coba pilih tahun lain di atas.")
+                        else:
+                            st.info("ℹ️ Tabel bulanan tidak dapat ditampilkan untuk kombinasi filter saat ini.")
 
                     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
                     # ── Kamus Referensi + Data Per Hotel ──
-                    with st.expander("📋 Detail Per Hotel Patra Jasa Group — Invoice & Room Nights Bulanan"):
+                    with st.expander(f"📋 Detail Per Hotel Patra Jasa Group — Invoice & Room Nights Bulanan{_pj_year_label}"):
 
                         MONTH_NAMES_KM = {
                             1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",
                             7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"
                         }
 
-                        # Data hanya hotel Patra Jasa
-                        df_kamus = df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"].copy()
+                        # Data hanya hotel Patra Jasa — pakai df_pj_month_table (sudah di-scope ke tahun terpilih)
+                        # agar konsisten dengan tabel perbandingan bulanan di atas dan tidak mencampur tahun.
+                        df_kamus = df_pj_month_table[df_pj_month_table["Grup Hotel"] == "Patra Jasa Group"].copy()
 
                         # Normalisasi nama hotel ke nama kanonik dari kamus
                         _norm_to_canonical = {h.lower().strip(): h for h in PATRA_JASA_HOTELS}
@@ -7128,6 +7201,7 @@ def main_app():
                                 index="Nama Hotel Canonical", columns="_month",
                                 values="Nilai", fill_value=0
                             )
+                            _km_inv_pivot.columns = [int(c) for c in _km_inv_pivot.columns]  # normalisasi tipe kolom
                             for _m in range(1, 13):
                                 if _m not in _km_inv_pivot.columns:
                                     _km_inv_pivot[_m] = 0
@@ -7186,6 +7260,7 @@ def main_app():
                                 index="Nama Hotel Canonical", columns="_month",
                                 values="Nilai", fill_value=0
                             )
+                            _km_rn_pivot.columns = [int(c) for c in _km_rn_pivot.columns]  # normalisasi tipe kolom
                             for _m in range(1, 13):
                                 if _m not in _km_rn_pivot.columns:
                                     _km_rn_pivot[_m] = 0
