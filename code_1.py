@@ -13,6 +13,7 @@ import shutil
 import time
 import re
 import hmac
+import secrets
 
 from datetime import datetime
 from io import BytesIO
@@ -200,10 +201,115 @@ def init_login_security():
 def check_session_timeout():
     if st.session_state.get("login_time"):
         if time.time() - st.session_state.login_time > SESSION_TIMEOUT:
+            _revoke_session_token(st.session_state.get("_session_token"))
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
+            _clear_session_cookie()
             st.warning("Session expired. Please login again.")
             st.stop()
+
+
+# ======================================
+# PERSISTENT LOGIN ACROSS PAGE RELOAD
+# ── session_state Streamlit terikat ke koneksi WebSocket browser, jadi akan
+#    kosong lagi setiap kali halaman di-reload (F5). Token sesi acak disimpan
+#    di COOKIE browser (bukan URL query param — st.query_params terbukti tidak
+#    reliable bertahan setelah reload, ini bug yang sudah dikonfirmasi tim
+#    Streamlit sendiri: github.com/streamlit/streamlit/issues/10406).
+#
+#    Streamlit hanya bisa MEMBACA cookie secara native (st.context.cookies,
+#    read-only, sejak v1.38+). Untuk MENULIS cookie, tetap perlu sedikit
+#    JavaScript lewat components.html — Streamlit belum punya API native
+#    untuk itu (github.com/streamlit/streamlit/issues/7892).
+#
+#    CATATAN KEAMANAN: cookie diset tanpa flag HttpOnly (karena ditulis lewat
+#    JS di sisi klien, bukan header HTTP dari server), jadi secara teknis
+#    bisa dibaca script lain di origin yang sama. Untuk aplikasi internal ini
+#    risikonya wajar selama diakses di jaringan/perangkat tepercaya, dan
+#    session_timeout_minutes di secrets.toml (default 30 menit) membatasi
+#    umur token-nya.
+# ======================================
+_SESSION_COOKIE_NAME = "mtrax_session"
+
+@st.cache_resource
+def _get_session_store():
+    """Dict bersama di semua sesi selama proses server ini hidup: token -> {username, role, expires_at}."""
+    return {}
+
+def _create_session_token(username: str, role: str) -> str:
+    token = secrets.token_urlsafe(32)
+    store = _get_session_store()
+    store[token] = {
+        "username": username,
+        "role": role,
+        "expires_at": time.time() + SESSION_TIMEOUT,
+    }
+    return token
+
+def _validate_session_token(token: str):
+    """Return (username, role) kalau token valid & belum kedaluwarsa, else None. Otomatis bersihkan token basi."""
+    if not token:
+        return None
+    store = _get_session_store()
+    entry = store.get(token)
+    if not entry:
+        return None
+    if time.time() > entry["expires_at"]:
+        store.pop(token, None)
+        return None
+    # Sliding expiry: perpanjang masa berlaku selama masih aktif dipakai
+    entry["expires_at"] = time.time() + SESSION_TIMEOUT
+    return entry["username"], entry["role"]
+
+def _revoke_session_token(token):
+    if token:
+        _get_session_store().pop(token, None)
+
+def _set_session_cookie(token: str):
+    """Tulis cookie sesi di browser lewat JS (Streamlit tidak punya API native untuk set cookie)."""
+    import streamlit.components.v1 as _components
+    max_age = int(SESSION_TIMEOUT)
+    _components.html(
+        f"""<script>
+        document.cookie = "{_SESSION_COOKIE_NAME}={token}; max-age={max_age}; path=/; SameSite=Lax";
+        </script>""",
+        height=0
+    )
+
+def _clear_session_cookie():
+    """Hapus cookie sesi di browser (dipanggil saat logout / timeout)."""
+    import streamlit.components.v1 as _components
+    _components.html(
+        f"""<script>
+        document.cookie = "{_SESSION_COOKIE_NAME}=; max-age=0; path=/; SameSite=Lax";
+        </script>""",
+        height=0
+    )
+
+def _try_restore_session_from_cookie():
+    """Dipanggil sebelum pengecekan authenticated — pulihkan sesi dari cookie kalau ada & valid."""
+    if st.session_state.get("authenticated"):
+        return
+    try:
+        token = st.context.cookies.get(_SESSION_COOKIE_NAME)
+    except Exception:
+        token = None
+    if not token:
+        return
+    result = _validate_session_token(token)
+    if result is None:
+        return
+    username, role = result
+    st.session_state.login_attempts = 0
+    st.session_state.lockout_until  = 0
+    st.session_state.authenticated  = True
+    st.session_state.logged_in      = True
+    st.session_state.username       = username
+    st.session_state.role           = role
+    st.session_state.login_time     = time.time()
+    st.session_state.pending_2fa    = False
+    st.session_state.pending_user   = ""
+    st.session_state._session_token = token
 
 init_login_security()
 
@@ -305,6 +411,65 @@ def build_employee_cohort(df):
     cohort_pivot.index = cohort_pivot.index.astype(str)
 
     return cohort_pivot
+
+
+#==========================#
+# FUNGSI PERSONA CLUSTERING (KMeans) — DI-CACHE
+# ── Perhitungan ini (parsing tanggal, agregasi, scaling, fit KMeans) tidak
+#    tergantung pada Employee Id mana yang dipilih user di dropdown, jadi
+#    hasilnya bisa dipakai ulang selama data sumber belum berubah. Tanpa cache,
+#    seluruh pipeline ini dihitung ulang setiap kali dropdown diganti, karena
+#    st.tabs() menjalankan ulang seluruh script di setiap interaksi widget. ──
+#==========================#
+@st.cache_data(show_spinner=False)
+def build_employee_persona_clusters(df_behavior_raw):
+    df_behavior = df_behavior_raw.copy()
+
+    df_behavior["Issue Time"] = pd.to_datetime(df_behavior["Issue Time"], errors="coerce", dayfirst=True)
+    df_behavior["Check in Date"] = pd.to_datetime(df_behavior["Check in Date"], errors="coerce", dayfirst=True)
+    df_behavior["Check out Date"] = pd.to_datetime(df_behavior["Check out Date"], errors="coerce", dayfirst=True)
+
+    df_behavior["Lead_Time"] = (df_behavior["Check in Date"] - df_behavior["Issue Time"]).dt.days
+    df_behavior["Last_Minute"] = df_behavior["Lead_Time"].apply(lambda x: 1 if pd.notnull(x) and x <= 2 else 0)
+    df_behavior["Weekend_Stay"] = df_behavior["Check in Date"].dt.weekday.apply(lambda x: 1 if pd.notnull(x) and x >= 5 else 0)
+
+    employee_features = df_behavior.groupby("Employee Id").agg(
+        Booking_Frequency=("Travel Request Number", "nunique"),
+        Avg_Lead_Time=("Lead_Time", "mean"),
+        Last_Minute_Ratio=("Last_Minute", "mean"),
+        Avg_Stay=("Number of Rooms Night", "mean"),
+        Weekend_Ratio=("Weekend_Stay", "mean")
+    ).reset_index()
+
+    employee_features = employee_features.fillna(0)
+
+    feature_cols = ["Booking_Frequency","Avg_Lead_Time","Last_Minute_Ratio","Avg_Stay","Weekend_Ratio"]
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(employee_features[feature_cols])
+
+    n_employee = len(employee_features)
+    if n_employee >= 4: n_cluster = 4
+    elif n_employee >= 2: n_cluster = 2
+    else: n_cluster = 1
+
+    kmeans = KMeans(n_clusters=n_cluster, random_state=42, n_init=10)
+    employee_features["Cluster"] = kmeans.fit_predict(X_scaled)
+
+    cluster_profile = employee_features.groupby("Cluster")[feature_cols].mean()
+
+    persona_map = {}
+    for cluster_id, row in cluster_profile.iterrows():
+        if row["Last_Minute_Ratio"] > 0.5: persona = "Last Minute Traveler"
+        elif row["Avg_Lead_Time"] > 14: persona = "Strategic Planner"
+        elif row["Weekend_Ratio"] > 0.4: persona = "Weekend Traveler"
+        elif row["Booking_Frequency"] > employee_features["Booking_Frequency"].median(): persona = "Frequent Traveler"
+        else: persona = "Regular Business Traveler"
+        persona_map[cluster_id] = persona
+
+    employee_features["Persona"] = employee_features["Cluster"].map(persona_map)
+
+    return employee_features, feature_cols
 
 
 #==========================#
@@ -526,8 +691,11 @@ USERS = {
 # ======================================
 # BMKG FUNCTIONS
 # ======================================
+@st.cache_data(ttl=300, show_spinner=False)
 def get_bmkg_realtime_quake():
-    """Mengambil data gempa real-time dari BMKG"""
+    """Mengambil data gempa real-time dari BMKG (di-cache 5 menit — sebelumnya
+    fetch HTTP baru dilakukan di SETIAP interaksi widget di seluruh aplikasi,
+    karena fungsi ini dipanggil ulang tiap kali main_app() jalan)."""
     url = "https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json"
     try:
         r = requests.get(url, timeout=10)
@@ -539,14 +707,22 @@ def get_bmkg_realtime_quake():
 
         return None
 
-    except Exception as e:
-        st.sidebar.error(f"BMKG Error: {e}")
+    except Exception:
+        # Tidak lagi memanggil st.sidebar.error() di sini — pemanggilan elemen UI
+        # dari dalam fungsi ber-cache bisa berperilaku tidak konsisten antara
+        # cache-hit dan cache-miss. Kegagalan cukup direpresentasikan sebagai None;
+        # tampilan sisi pemanggil sudah punya fallback "No recent data".
         return None
 
 # ======================================
 # NEWS TICKER
 # ======================================
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_rss_news(limit=10):
+    """Sebelumnya melakukan 3x HTTP request ke Google News di SETIAP interaksi
+    widget di seluruh aplikasi (karena dipanggil ulang tiap main_app() jalan,
+    dan main_app() jalan ulang di setiap klik). Sekarang di-cache 5 menit —
+    berita tidak perlu ambil ulang secepat itu."""
     urls = [
         "https://news.google.com/rss/search?q=danantara&hl=id&gl=ID&ceid=ID:id",
         "https://news.google.com/rss/search?q=pertamina&hl=id&gl=ID&ceid=ID:id",
@@ -1257,6 +1433,10 @@ def _finish_login(username: str):
     st.session_state.login_time     = time.time()
     st.session_state.pending_2fa    = False
     st.session_state.pending_user   = ""
+    # Simpan token sesi di cookie browser supaya login tetap bertahan saat halaman di-reload (F5)
+    _token = _create_session_token(username, USERS[username]["role"])
+    st.session_state._session_token = _token
+    _set_session_cookie(_token)
     st.success("✅ Login berhasil! Selamat datang.")
     time.sleep(0.5)
     st.rerun()
@@ -2218,6 +2398,9 @@ def main_app():
 
         # Logout
         if st.button("Logout", use_container_width=True, type="primary"):
+            _revoke_session_token(st.session_state.get("_session_token"))
+            _clear_session_cookie()
+            time.sleep(0.3)
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
@@ -3908,57 +4091,53 @@ def main_app():
 
                     if all(col in df_behavior.columns for col in required_cols):
 
-                        df_behavior["Issue Time"] = pd.to_datetime(df_behavior["Issue Time"], errors="coerce", dayfirst=True)
-                        df_behavior["Check in Date"] = pd.to_datetime(df_behavior["Check in Date"], errors="coerce", dayfirst=True)
-                        df_behavior["Check out Date"] = pd.to_datetime(df_behavior["Check out Date"], errors="coerce", dayfirst=True)
+                        # PERBAIKAN PERFORMA: pipeline clustering (parsing tanggal, groupby,
+                        # scaling, fit KMeans) dipindah ke fungsi ber-cache — hasilnya sama
+                        # persis berapa pun kali dropdown Employee Id di bawah ini diganti,
+                        # jadi tidak perlu dihitung ulang setiap kali (sebelumnya inilah yang
+                        # membuat mengganti Employee Id terasa memicu render ulang seluruh halaman).
+                        _df_behavior_slim = df_behavior[required_cols].copy()
+                        employee_features, feature_cols = build_employee_persona_clusters(_df_behavior_slim)
 
-                        df_behavior["Lead_Time"] = (df_behavior["Check in Date"] - df_behavior["Issue Time"]).dt.days
-                        df_behavior["Last_Minute"] = df_behavior["Lead_Time"].apply(lambda x: 1 if pd.notnull(x) and x <= 2 else 0)
-                        df_behavior["Weekend_Stay"] = df_behavior["Check in Date"].dt.weekday.apply(lambda x: 1 if pd.notnull(x) and x >= 5 else 0)
+                        # PERBAIKAN: dropdown Employee Id diganti free-text search sesuai permintaan —
+                        # user mengetik (sebagian/seluruh) Employee Id, bukan memilih dari daftar dropdown.
+                        _emp_search = st.text_input(
+                            "🔍 Cari Employee Id",
+                            value="",
+                            placeholder="Ketik Employee ID (boleh sebagian)...",
+                            key="persona_employee_search"
+                        )
 
-                        employee_features = df_behavior.groupby("Employee Id").agg(
-                            Booking_Frequency=("Travel Request Number", "nunique"),
-                            Avg_Lead_Time=("Lead_Time", "mean"),
-                            Last_Minute_Ratio=("Last_Minute", "mean"),
-                            Avg_Stay=("Number of Rooms Night", "mean"),
-                            Weekend_Ratio=("Weekend_Stay", "mean")
-                        ).reset_index()
+                        selected_data = pd.DataFrame()
 
-                        employee_features = employee_features.fillna(0)
+                        if not _emp_search.strip():
+                            st.info("ℹ️ Ketik Employee ID di atas untuk melihat profil persona-nya.")
+                        else:
+                            _emp_matches = employee_features[
+                                employee_features["Employee Id"].astype(str)
+                                .str.contains(_emp_search.strip(), case=False, na=False, regex=False)
+                            ]
 
-                        feature_cols = ["Booking_Frequency","Avg_Lead_Time","Last_Minute_Ratio","Avg_Stay","Weekend_Ratio"]
-
-                        scaler = StandardScaler()
-                        X_scaled = scaler.fit_transform(employee_features[feature_cols])
-
-                        n_employee = len(employee_features)
-                        if n_employee >= 4: n_cluster = 4
-                        elif n_employee >= 2: n_cluster = 2
-                        else: n_cluster = 1
-
-                        kmeans = KMeans(n_clusters=n_cluster, random_state=42, n_init=10)
-                        employee_features["Cluster"] = kmeans.fit_predict(X_scaled)
-
-                        cluster_profile = employee_features.groupby("Cluster")[feature_cols].mean()
-
-                        persona_map = {}
-                        for cluster_id, row in cluster_profile.iterrows():
-                            if row["Last_Minute_Ratio"] > 0.5: persona = "Last Minute Traveler"
-                            elif row["Avg_Lead_Time"] > 14: persona = "Strategic Planner"
-                            elif row["Weekend_Ratio"] > 0.4: persona = "Weekend Traveler"
-                            elif row["Booking_Frequency"] > employee_features["Booking_Frequency"].median(): persona = "Frequent Traveler"
-                            else: persona = "Regular Business Traveler"
-                            persona_map[cluster_id] = persona
-
-                        employee_features["Persona"] = employee_features["Cluster"].map(persona_map)
-
-                        selected_employee = st.selectbox("Select Employee Id", employee_features["Employee Id"])
-
-                        selected_data = employee_features[employee_features["Employee Id"] == selected_employee]
-                        selected_cluster = selected_data["Cluster"].values[0]
-                        selected_persona = selected_data["Persona"].values[0]
-
-                        st.success(f"Persona: {selected_persona}")
+                            if _emp_matches.empty:
+                                st.warning(f"⚠️ Employee Id yang mengandung \"{_emp_search.strip()}\" tidak ditemukan.")
+                            elif len(_emp_matches) == 1:
+                                selected_data = _emp_matches
+                                selected_employee = selected_data["Employee Id"].values[0]
+                                selected_cluster = selected_data["Cluster"].values[0]
+                                selected_persona = selected_data["Persona"].values[0]
+                                st.success(f"Employee Id: {selected_employee} — Persona: {selected_persona}")
+                            else:
+                                st.info(
+                                    f"🔎 Ditemukan {len(_emp_matches)} Employee Id yang cocok — "
+                                    f"perjelas ketikan Anda untuk mempersempit ke satu hasil."
+                                )
+                                _preview_cols = [c for c in ["Employee Id", "Persona", "Booking_Frequency"] if c in _emp_matches.columns]
+                                st.dataframe(
+                                    _emp_matches[_preview_cols].head(15),
+                                    use_container_width=True, hide_index=True
+                                )
+                                if len(_emp_matches) > 15:
+                                    st.caption(f"Menampilkan 15 dari {len(_emp_matches)} hasil.")
 
                 if not selected_data.empty:
                     st.markdown("""
@@ -7331,8 +7510,10 @@ def main_app():
 
 # ===============================
 # ROUTING — WAJIB PALING BAWAH
-# ── DIMODIFIKASI: tambah pengecekan pending_2fa ──
+# ── DIMODIFIKASI: tambah pengecekan pending_2fa + pemulihan sesi dari cookie ──
 # ===============================
+_try_restore_session_from_cookie()  # pulihkan login kalau cookie sesi masih valid (mis. setelah reload halaman)
+
 if not st.session_state.get("authenticated"):
 
     if st.session_state.get("pending_2fa"):
