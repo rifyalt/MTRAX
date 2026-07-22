@@ -2696,6 +2696,7 @@ def main_app():
         if _tab_locked():
             st.markdown("""
             <style>
+            div[data-baseweb="tab-list"] button:nth-child(1),
             div[data-baseweb="tab-list"] button:nth-child(4),
             div[data-baseweb="tab-list"] button:nth-child(5),
             div[data-baseweb="tab-list"] button:nth-child(6),
@@ -2710,436 +2711,439 @@ def main_app():
                 # TAB 1: STRATEGIC VALUE CREATION
         # ======================================
         with tab1:
+            if _tab_locked():
+                _render_coming_soon('Value Creation')
+            else:
 
-            import streamlit.components.v1 as components
+                import streamlit.components.v1 as components
 
-            components.html("""
-<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+                components.html("""
+    <!DOCTYPE html>
+    <html lang="id">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+      *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-  body {
-    font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 14px;
-    line-height: 1.6;
-    background: #fafafa;
-    color: #1a1a1a;
-    padding: 8px 4px 40px;
-    -webkit-font-smoothing: antialiased;
-  }
+      body {
+        font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+        background: #fafafa;
+        color: #1a1a1a;
+        padding: 8px 4px 40px;
+        -webkit-font-smoothing: antialiased;
+      }
 
-  :root {
-    --purple : #1BA0E2;
-    --purp-l : rgba(156,87,137,0.08);
-    --purp-b : rgba(156,87,137,0.22);
-    --black  : #1a1a1a;
-    --grey   : #888888;
-    --grey-l : #e0e0e0;
-    --white  : #fafafa;
-    --surf   : #ffffff;
-    --bdr    : #e0e0e0;
-  }
+      :root {
+        --purple : #1BA0E2;
+        --purp-l : rgba(156,87,137,0.08);
+        --purp-b : rgba(156,87,137,0.22);
+        --black  : #1a1a1a;
+        --grey   : #888888;
+        --grey-l : #e0e0e0;
+        --white  : #fafafa;
+        --surf   : #ffffff;
+        --bdr    : #e0e0e0;
+      }
 
-  /* ── Page Header ── */
-  .hdr {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-bottom: 18px; border-bottom: 1px solid var(--bdr);
-    margin-bottom: 28px;
-  }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .mark {
-    width: 34px; height: 34px; background: var(--purple);
-    border-radius: 6px; display: inline-flex;
-    align-items: center; justify-content: center;
-    font-family: 'Geist Mono', monospace;
-    font-size: 11px; font-weight: 600; color: #fff; letter-spacing: .04em;
-    flex-shrink: 0;
-  }
-  .brand-title {
-    font-size: 17px; font-weight: 600; color: var(--black);
-    letter-spacing: -.02em; line-height: 1.2; margin: 0;
-  }
-  .brand-sub { font-size: 12px; color: var(--grey); margin: 2px 0 0; }
-  .hdr-right { display: flex; align-items: center; gap: 8px; }
-  .mod-tag {
-    font-family: 'Geist Mono', monospace; font-size: 10px;
-    color: var(--grey); background: var(--grey-l);
-    padding: 4px 10px; border-radius: 4px; letter-spacing: .08em;
-  }
-  .live-badge {
-    display: inline-flex; align-items: center; gap: 6px;
-    border: 1px solid var(--bdr); border-radius: 100px;
-    padding: 4px 12px; font-size: 11px; color: var(--grey);
-    background: var(--surf);
-  }
-  .live-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--purple); display: inline-block;
-    animation: blink 2.4s ease infinite;
-  }
-  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+      /* ── Page Header ── */
+      .hdr {
+        display: flex; align-items: center; justify-content: space-between;
+        padding-bottom: 18px; border-bottom: 1px solid var(--bdr);
+        margin-bottom: 28px;
+      }
+      .brand { display: flex; align-items: center; gap: 12px; }
+      .mark {
+        width: 34px; height: 34px; background: var(--purple);
+        border-radius: 6px; display: inline-flex;
+        align-items: center; justify-content: center;
+        font-family: 'Geist Mono', monospace;
+        font-size: 11px; font-weight: 600; color: #fff; letter-spacing: .04em;
+        flex-shrink: 0;
+      }
+      .brand-title {
+        font-size: 17px; font-weight: 600; color: var(--black);
+        letter-spacing: -.02em; line-height: 1.2; margin: 0;
+      }
+      .brand-sub { font-size: 12px; color: var(--grey); margin: 2px 0 0; }
+      .hdr-right { display: flex; align-items: center; gap: 8px; }
+      .mod-tag {
+        font-family: 'Geist Mono', monospace; font-size: 10px;
+        color: var(--grey); background: var(--grey-l);
+        padding: 4px 10px; border-radius: 4px; letter-spacing: .08em;
+      }
+      .live-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        border: 1px solid var(--bdr); border-radius: 100px;
+        padding: 4px 12px; font-size: 11px; color: var(--grey);
+        background: var(--surf);
+      }
+      .live-dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--purple); display: inline-block;
+        animation: blink 2.4s ease infinite;
+      }
+      @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-  /* ── Eyebrow ── */
-  .eyebrow {
-    display: flex; align-items: center; gap: 10px;
-    font-family: 'Geist Mono', monospace; font-size: 10px; font-weight: 500;
-    color: var(--grey); letter-spacing: .18em;
-    text-transform: uppercase; margin-bottom: 14px;
-  }
-  .eyebrow-ln { flex: 1; height: 1px; background: var(--bdr); }
+      /* ── Eyebrow ── */
+      .eyebrow {
+        display: flex; align-items: center; gap: 10px;
+        font-family: 'Geist Mono', monospace; font-size: 10px; font-weight: 500;
+        color: var(--grey); letter-spacing: .18em;
+        text-transform: uppercase; margin-bottom: 14px;
+      }
+      .eyebrow-ln { flex: 1; height: 1px; background: var(--bdr); }
 
-  /* ── 2×2 Pillar Grid ── */
-  .pgrid {
-    display: grid; grid-template-columns: 1fr 1fr;
-    border: 1px solid var(--bdr); border-radius: 10px;
-    overflow: hidden; background: var(--bdr); gap: 1px;
-    margin-bottom: 1px;
-  }
-  .pcard {
-    background: var(--surf); padding: 26px 24px;
-    position: relative; transition: background .18s ease;
-  }
-  .pcard:hover { background: #fdfdfd; }
-  .pcard::before {
-    content: ''; position: absolute;
-    top: 26px; bottom: 26px; left: 0; width: 2px;
-    background: var(--purple); opacity: 0; transition: opacity .2s ease;
-  }
-  .pcard:hover::before { opacity: 1; }
-  .card-top {
-    display: flex; align-items: flex-start;
-    justify-content: space-between; margin-bottom: 14px;
-  }
-  .card-icon { font-size: 18px; line-height: 1; }
-  .badge {
-    font-family: 'Geist Mono', monospace;
-    font-size: 9px; font-weight: 500; letter-spacing: .12em;
-    color: var(--purple); background: var(--purp-l);
-    border: 1px solid var(--purp-b);
-    padding: 3px 8px; border-radius: 3px;
-  }
-  .pcard h3 {
-    font-size: 14px; font-weight: 600; color: var(--black);
-    letter-spacing: -.015em; margin-bottom: 4px; line-height: 1.3;
-  }
-  .obj { font-size: 12px; color: var(--grey); margin-bottom: 18px; line-height: 1.55; }
-  .fl {
-    font-family: 'Geist Mono', monospace; font-size: 9px; font-weight: 500;
-    letter-spacing: .15em; text-transform: uppercase;
-    color: var(--purple); margin-bottom: 8px;
-  }
-  .dlist { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
-  .drow  { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--black); }
-  .ddot  {
-    width: 4px; height: 4px; border-radius: 50%;
-    background: var(--purple); flex-shrink: 0; display: inline-block;
-  }
-  .sep  { height: 1px; background: var(--grey-l); margin: 12px 0; }
-  .ilist { display: flex; flex-direction: column; gap: 5px; }
-  .irow {
-    display: flex; align-items: flex-start; gap: 8px;
-    font-size: 11.5px; color: var(--grey); line-height: 1.5;
-  }
-  .iarr { font-size: 8px; margin-top: 5px; flex-shrink: 0; color: var(--purple); opacity: .7; }
+      /* ── 2×2 Pillar Grid ── */
+      .pgrid {
+        display: grid; grid-template-columns: 1fr 1fr;
+        border: 1px solid var(--bdr); border-radius: 10px;
+        overflow: hidden; background: var(--bdr); gap: 1px;
+        margin-bottom: 1px;
+      }
+      .pcard {
+        background: var(--surf); padding: 26px 24px;
+        position: relative; transition: background .18s ease;
+      }
+      .pcard:hover { background: #fdfdfd; }
+      .pcard::before {
+        content: ''; position: absolute;
+        top: 26px; bottom: 26px; left: 0; width: 2px;
+        background: var(--purple); opacity: 0; transition: opacity .2s ease;
+      }
+      .pcard:hover::before { opacity: 1; }
+      .card-top {
+        display: flex; align-items: flex-start;
+        justify-content: space-between; margin-bottom: 14px;
+      }
+      .card-icon { font-size: 18px; line-height: 1; }
+      .badge {
+        font-family: 'Geist Mono', monospace;
+        font-size: 9px; font-weight: 500; letter-spacing: .12em;
+        color: var(--purple); background: var(--purp-l);
+        border: 1px solid var(--purp-b);
+        padding: 3px 8px; border-radius: 3px;
+      }
+      .pcard h3 {
+        font-size: 14px; font-weight: 600; color: var(--black);
+        letter-spacing: -.015em; margin-bottom: 4px; line-height: 1.3;
+      }
+      .obj { font-size: 12px; color: var(--grey); margin-bottom: 18px; line-height: 1.55; }
+      .fl {
+        font-family: 'Geist Mono', monospace; font-size: 9px; font-weight: 500;
+        letter-spacing: .15em; text-transform: uppercase;
+        color: var(--purple); margin-bottom: 8px;
+      }
+      .dlist { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+      .drow  { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--black); }
+      .ddot  {
+        width: 4px; height: 4px; border-radius: 50%;
+        background: var(--purple); flex-shrink: 0; display: inline-block;
+      }
+      .sep  { height: 1px; background: var(--grey-l); margin: 12px 0; }
+      .ilist { display: flex; flex-direction: column; gap: 5px; }
+      .irow {
+        display: flex; align-items: flex-start; gap: 8px;
+        font-size: 11.5px; color: var(--grey); line-height: 1.5;
+      }
+      .iarr { font-size: 8px; margin-top: 5px; flex-shrink: 0; color: var(--purple); opacity: .7; }
 
-  /* ── Card 5 ── */
-  .c5wrap {
-    border: 1px solid var(--bdr); border-top: none;
-    border-radius: 0 0 10px 10px; overflow: hidden; margin-bottom: 32px;
-  }
-  .c5hd {
-    background: #f5f5f5; border-bottom: 1px solid var(--bdr);
-    padding: 16px 24px; display: flex;
-    align-items: center; justify-content: space-between;
-  }
-  .c5hd-l { display: flex; align-items: center; gap: 10px; }
-  .c5hd h3 { font-size: 13px; font-weight: 600; color: var(--black); margin: 0; }
-  .c5hd .c5sub { font-size: 11px; color: var(--grey); }
-  .c5body {
-    display: grid; grid-template-columns: 1fr 1fr 1fr;
-    background: var(--bdr); gap: 1px;
-  }
-  .c5col { background: var(--surf); padding: 20px 24px; }
+      /* ── Card 5 ── */
+      .c5wrap {
+        border: 1px solid var(--bdr); border-top: none;
+        border-radius: 0 0 10px 10px; overflow: hidden; margin-bottom: 32px;
+      }
+      .c5hd {
+        background: #f5f5f5; border-bottom: 1px solid var(--bdr);
+        padding: 16px 24px; display: flex;
+        align-items: center; justify-content: space-between;
+      }
+      .c5hd-l { display: flex; align-items: center; gap: 10px; }
+      .c5hd h3 { font-size: 13px; font-weight: 600; color: var(--black); margin: 0; }
+      .c5hd .c5sub { font-size: 11px; color: var(--grey); }
+      .c5body {
+        display: grid; grid-template-columns: 1fr 1fr 1fr;
+        background: var(--bdr); gap: 1px;
+      }
+      .c5col { background: var(--surf); padding: 20px 24px; }
 
-  /* ── Executive Summary ── */
-  .exec { border: 1px solid var(--bdr); border-radius: 10px; overflow: hidden; }
-  .exec-hd {
-    background: var(--black); padding: 22px 26px;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .exec-hd h2 {
-    font-size: 16px; font-weight: 600; color: var(--white);
-    letter-spacing: -.02em; margin: 0;
-  }
-  .exec-hd .exec-sub { font-size: 11.5px; color: #888; margin: 3px 0 0; }
-  .exec-tag {
-    font-family: 'Geist Mono', monospace; font-size: 9.5px;
-    letter-spacing: .12em; color: var(--purple);
-    background: rgba(156,87,137,.15); border: 1px solid rgba(156,87,137,.3);
-    padding: 4px 11px; border-radius: 100px; text-transform: uppercase;
-    white-space: nowrap;
-  }
-  .pillars {
-    display: grid; grid-template-columns: repeat(4,1fr);
-    background: var(--bdr); gap: 1px;
-    border-bottom: 1px solid var(--bdr);
-  }
-  .pillar {
-    background: var(--surf); padding: 18px 18px 16px; position: relative;
-  }
-  .pillar::after {
-    content: ''; position: absolute;
-    bottom: 0; left: 18px; right: 18px; height: 1px;
-    background: var(--purple); opacity: 0; transition: opacity .2s;
-  }
-  .pillar:hover::after { opacity: .4; }
-  .p-icon { font-size: 16px; margin-bottom: 8px; display: block; }
-  .pillar p { font-size: 12px; color: var(--black); font-weight: 500; line-height: 1.45; margin: 0; }
-  .flow-bar {
-    background: var(--surf); padding: 18px 24px;
-    display: flex; align-items: center; justify-content: center;
-    border-top: 1px solid var(--bdr);
-  }
-  .fn { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .fn-lbl { font-size: 12px; font-weight: 600; color: var(--black); letter-spacing: -.01em; }
-  .fn-lbl.hi { color: var(--purple); }
-  .fn-sub {
-    font-family: 'Geist Mono', monospace; font-size: 9px;
-    color: var(--grey); letter-spacing: .06em;
-  }
-  .fsep { display: flex; align-items: center; margin: 0 18px; }
-  .fsep-ln { width: 28px; height: 1px; background: var(--grey-l); }
-  .fsep-arr { font-size: 9px; color: var(--purple); opacity: .6; }
-</style>
-</head>
-<body>
+      /* ── Executive Summary ── */
+      .exec { border: 1px solid var(--bdr); border-radius: 10px; overflow: hidden; }
+      .exec-hd {
+        background: var(--black); padding: 22px 26px;
+        display: flex; align-items: center; justify-content: space-between;
+      }
+      .exec-hd h2 {
+        font-size: 16px; font-weight: 600; color: var(--white);
+        letter-spacing: -.02em; margin: 0;
+      }
+      .exec-hd .exec-sub { font-size: 11.5px; color: #888; margin: 3px 0 0; }
+      .exec-tag {
+        font-family: 'Geist Mono', monospace; font-size: 9.5px;
+        letter-spacing: .12em; color: var(--purple);
+        background: rgba(156,87,137,.15); border: 1px solid rgba(156,87,137,.3);
+        padding: 4px 11px; border-radius: 100px; text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .pillars {
+        display: grid; grid-template-columns: repeat(4,1fr);
+        background: var(--bdr); gap: 1px;
+        border-bottom: 1px solid var(--bdr);
+      }
+      .pillar {
+        background: var(--surf); padding: 18px 18px 16px; position: relative;
+      }
+      .pillar::after {
+        content: ''; position: absolute;
+        bottom: 0; left: 18px; right: 18px; height: 1px;
+        background: var(--purple); opacity: 0; transition: opacity .2s;
+      }
+      .pillar:hover::after { opacity: .4; }
+      .p-icon { font-size: 16px; margin-bottom: 8px; display: block; }
+      .pillar p { font-size: 12px; color: var(--black); font-weight: 500; line-height: 1.45; margin: 0; }
+      .flow-bar {
+        background: var(--surf); padding: 18px 24px;
+        display: flex; align-items: center; justify-content: center;
+        border-top: 1px solid var(--bdr);
+      }
+      .fn { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+      .fn-lbl { font-size: 12px; font-weight: 600; color: var(--black); letter-spacing: -.01em; }
+      .fn-lbl.hi { color: var(--purple); }
+      .fn-sub {
+        font-family: 'Geist Mono', monospace; font-size: 9px;
+        color: var(--grey); letter-spacing: .06em;
+      }
+      .fsep { display: flex; align-items: center; margin: 0 18px; }
+      .fsep-ln { width: 28px; height: 1px; background: var(--grey-l); }
+      .fsep-arr { font-size: 9px; color: var(--purple); opacity: .6; }
+    </style>
+    </head>
+    <body>
 
-  <!-- ── Page Header ── -->
-  <div class="hdr">
-    <div class="brand">
-      <div class="mark">MTX</div>
-      <div>
-        <p class="brand-title">Strategic Value Creation Framework</p>
-        <p class="brand-sub">Travel Analytics &amp; Procurement Intelligence</p>
-      </div>
-    </div>
-    <div class="hdr-right">
-      <span class="mod-tag">MODULE 08</span>
-      <span class="live-badge"><span class="live-dot"></span>5 Value Pillars</span>
-    </div>
-  </div>
-
-  <!-- ── Eyebrow ── -->
-  <div class="eyebrow"><span>Value Pillars</span><div class="eyebrow-ln"></div></div>
-
-  <!-- ── 2×2 Grid ── -->
-  <div class="pgrid">
-
-    <!-- 01 Financial -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">💰</span>
-        <span class="badge">01 · FINANCIAL</span>
-      </div>
-      <h3>Financial Optimization</h3>
-      <p class="obj">Mengurangi total travel spend dan meningkatkan efisiensi biaya operasional secara terukur.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Rate benchmarking antar hotel</div>
-        <div class="drow"><span class="ddot"></span>Price per night analysis</div>
-        <div class="drow"><span class="ddot"></span>Negotiation leverage berbasis volume room nights</div>
-        <div class="drow"><span class="ddot"></span>Last-minute booking cost impact</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Estimasi saving 5–15% dari negotiated rate</div>
-        <div class="irow"><span class="iarr">▶</span>Pengurangan overpricing hotel tidak terstandarisasi</div>
-        <div class="irow"><span class="iarr">▶</span>Kontrol budget lintas perusahaan</div>
-      </div>
-    </div>
-
-    <!-- 02 Operational -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">⚙️</span>
-        <span class="badge">02 · OPERATIONAL</span>
-      </div>
-      <h3>Operational Efficiency</h3>
-      <p class="obj">Meningkatkan kecepatan dan kualitas proses booking secara end-to-end.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Lead time monitoring</div>
-        <div class="drow"><span class="ddot"></span>Multi-booking behavior analysis</div>
-        <div class="drow"><span class="ddot"></span>Travel request pattern heatmap</div>
-        <div class="drow"><span class="ddot"></span>Automation &amp; canonical hotel mapping</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Mengurangi booking mendadak (≤2 hari)</div>
-        <div class="irow"><span class="iarr">▶</span>Mengurangi duplikasi nama hotel</div>
-        <div class="irow"><span class="iarr">▶</span>Meningkatkan data reliability untuk reporting</div>
-      </div>
-    </div>
-
-    <!-- 03 Procurement -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">🎯</span>
-        <span class="badge">03 · PROCUREMENT</span>
-      </div>
-      <h3>Strategic Procurement Intelligence</h3>
-      <p class="obj">Meningkatkan posisi tawar terhadap hotel dan vendor strategis.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Top 10 hotel concentration</div>
-        <div class="drow"><span class="ddot"></span>Volume aggregation per city</div>
-        <div class="drow"><span class="ddot"></span>Corporate usage clustering</div>
-        <div class="drow"><span class="ddot"></span>Canonical hotel normalization</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Centralized negotiation strategy</div>
-        <div class="irow"><span class="iarr">▶</span>Volume-based discount leverage</div>
-        <div class="irow"><span class="iarr">▶</span>Preferred hotel program optimization</div>
-      </div>
-    </div>
-
-    <!-- 04 Governance -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">🛡️</span>
-        <span class="badge">04 · GOVERNANCE</span>
-      </div>
-      <h3>Risk &amp; Governance Control</h3>
-      <p class="obj">Menjamin kontrol dan keamanan data travel perusahaan secara sistemik.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Role-based download restriction</div>
-        <div class="drow"><span class="ddot"></span>Admin-only data export</div>
-        <div class="drow"><span class="ddot"></span>Real-time monitoring dashboard</div>
-        <div class="drow"><span class="ddot"></span>2FA Google Authenticator (TOTP)</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Mencegah data leakage</div>
-        <div class="irow"><span class="iarr">▶</span>Meningkatkan compliance standar</div>
-        <div class="irow"><span class="iarr">▶</span>Governance berbasis sistem</div>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- ── Card 5 — Predictive ── -->
-  <div class="c5wrap">
-    <div class="c5hd">
-      <div class="c5hd-l">
-        <span style="font-size:17px;">🔮</span>
-        <div>
-          <h3>Predictive &amp; Future Intelligence</h3>
-          <span class="c5sub">Next Phase Development</span>
+      <!-- ── Page Header ── -->
+      <div class="hdr">
+        <div class="brand">
+          <div class="mark">MTX</div>
+          <div>
+            <p class="brand-title">Strategic Value Creation Framework</p>
+            <p class="brand-sub">Travel Analytics &amp; Procurement Intelligence</p>
+          </div>
+        </div>
+        <div class="hdr-right">
+          <span class="mod-tag">MODULE 08</span>
+          <span class="live-badge"><span class="live-dot"></span>5 Value Pillars</span>
         </div>
       </div>
-      <span class="badge">05 · PREDICTIVE</span>
-    </div>
-    <div class="c5body">
-      <div class="c5col">
-        <div class="fl">Potential Development</div>
-        <div class="dlist" style="margin-top:10px;">
-          <div class="drow"><span class="ddot"></span>LSTM-based demand forecasting</div>
-          <div class="drow"><span class="ddot"></span>Hotel price anomaly detection</div>
-          <div class="drow"><span class="ddot"></span>Traveler segmentation (KMeans)</div>
-          <div class="drow"><span class="ddot"></span>Automated negotiation simulator</div>
+
+      <!-- ── Eyebrow ── -->
+      <div class="eyebrow"><span>Value Pillars</span><div class="eyebrow-ln"></div></div>
+
+      <!-- ── 2×2 Grid ── -->
+      <div class="pgrid">
+
+        <!-- 01 Financial -->
+        <div class="pcard">
+          <div class="card-top">
+            <span class="card-icon">💰</span>
+            <span class="badge">01 · FINANCIAL</span>
+          </div>
+          <h3>Financial Optimization</h3>
+          <p class="obj">Mengurangi total travel spend dan meningkatkan efisiensi biaya operasional secara terukur.</p>
+          <div class="fl">Value Drivers</div>
+          <div class="dlist">
+            <div class="drow"><span class="ddot"></span>Rate benchmarking antar hotel</div>
+            <div class="drow"><span class="ddot"></span>Price per night analysis</div>
+            <div class="drow"><span class="ddot"></span>Negotiation leverage berbasis volume room nights</div>
+            <div class="drow"><span class="ddot"></span>Last-minute booking cost impact</div>
+          </div>
+          <div class="sep"></div>
+          <div class="fl">Business Impact</div>
+          <div class="ilist">
+            <div class="irow"><span class="iarr">▶</span>Estimasi saving 5–15% dari negotiated rate</div>
+            <div class="irow"><span class="iarr">▶</span>Pengurangan overpricing hotel tidak terstandarisasi</div>
+            <div class="irow"><span class="iarr">▶</span>Kontrol budget lintas perusahaan</div>
+          </div>
+        </div>
+
+        <!-- 02 Operational -->
+        <div class="pcard">
+          <div class="card-top">
+            <span class="card-icon">⚙️</span>
+            <span class="badge">02 · OPERATIONAL</span>
+          </div>
+          <h3>Operational Efficiency</h3>
+          <p class="obj">Meningkatkan kecepatan dan kualitas proses booking secara end-to-end.</p>
+          <div class="fl">Value Drivers</div>
+          <div class="dlist">
+            <div class="drow"><span class="ddot"></span>Lead time monitoring</div>
+            <div class="drow"><span class="ddot"></span>Multi-booking behavior analysis</div>
+            <div class="drow"><span class="ddot"></span>Travel request pattern heatmap</div>
+            <div class="drow"><span class="ddot"></span>Automation &amp; canonical hotel mapping</div>
+          </div>
+          <div class="sep"></div>
+          <div class="fl">Business Impact</div>
+          <div class="ilist">
+            <div class="irow"><span class="iarr">▶</span>Mengurangi booking mendadak (≤2 hari)</div>
+            <div class="irow"><span class="iarr">▶</span>Mengurangi duplikasi nama hotel</div>
+            <div class="irow"><span class="iarr">▶</span>Meningkatkan data reliability untuk reporting</div>
+          </div>
+        </div>
+
+        <!-- 03 Procurement -->
+        <div class="pcard">
+          <div class="card-top">
+            <span class="card-icon">🎯</span>
+            <span class="badge">03 · PROCUREMENT</span>
+          </div>
+          <h3>Strategic Procurement Intelligence</h3>
+          <p class="obj">Meningkatkan posisi tawar terhadap hotel dan vendor strategis.</p>
+          <div class="fl">Value Drivers</div>
+          <div class="dlist">
+            <div class="drow"><span class="ddot"></span>Top 10 hotel concentration</div>
+            <div class="drow"><span class="ddot"></span>Volume aggregation per city</div>
+            <div class="drow"><span class="ddot"></span>Corporate usage clustering</div>
+            <div class="drow"><span class="ddot"></span>Canonical hotel normalization</div>
+          </div>
+          <div class="sep"></div>
+          <div class="fl">Business Impact</div>
+          <div class="ilist">
+            <div class="irow"><span class="iarr">▶</span>Centralized negotiation strategy</div>
+            <div class="irow"><span class="iarr">▶</span>Volume-based discount leverage</div>
+            <div class="irow"><span class="iarr">▶</span>Preferred hotel program optimization</div>
+          </div>
+        </div>
+
+        <!-- 04 Governance -->
+        <div class="pcard">
+          <div class="card-top">
+            <span class="card-icon">🛡️</span>
+            <span class="badge">04 · GOVERNANCE</span>
+          </div>
+          <h3>Risk &amp; Governance Control</h3>
+          <p class="obj">Menjamin kontrol dan keamanan data travel perusahaan secara sistemik.</p>
+          <div class="fl">Value Drivers</div>
+          <div class="dlist">
+            <div class="drow"><span class="ddot"></span>Role-based download restriction</div>
+            <div class="drow"><span class="ddot"></span>Admin-only data export</div>
+            <div class="drow"><span class="ddot"></span>Real-time monitoring dashboard</div>
+            <div class="drow"><span class="ddot"></span>2FA Google Authenticator (TOTP)</div>
+          </div>
+          <div class="sep"></div>
+          <div class="fl">Business Impact</div>
+          <div class="ilist">
+            <div class="irow"><span class="iarr">▶</span>Mencegah data leakage</div>
+            <div class="irow"><span class="iarr">▶</span>Meningkatkan compliance standar</div>
+            <div class="irow"><span class="iarr">▶</span>Governance berbasis sistem</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ── Card 5 — Predictive ── -->
+      <div class="c5wrap">
+        <div class="c5hd">
+          <div class="c5hd-l">
+            <span style="font-size:17px;">🔮</span>
+            <div>
+              <h3>Predictive &amp; Future Intelligence</h3>
+              <span class="c5sub">Next Phase Development</span>
+            </div>
+          </div>
+          <span class="badge">05 · PREDICTIVE</span>
+        </div>
+        <div class="c5body">
+          <div class="c5col">
+            <div class="fl">Potential Development</div>
+            <div class="dlist" style="margin-top:10px;">
+              <div class="drow"><span class="ddot"></span>LSTM-based demand forecasting</div>
+              <div class="drow"><span class="ddot"></span>Hotel price anomaly detection</div>
+              <div class="drow"><span class="ddot"></span>Traveler segmentation (KMeans)</div>
+              <div class="drow"><span class="ddot"></span>Automated negotiation simulator</div>
+            </div>
+          </div>
+          <div class="c5col" style="border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;">
+            <div class="fl">Future Business Value</div>
+            <div class="ilist" style="margin-top:10px;">
+              <div class="irow"><span class="iarr">▶</span>Predictive budget planning yang akurat</div>
+              <div class="irow"><span class="iarr">▶</span>Early warning overpricing otomatis</div>
+              <div class="irow"><span class="iarr">▶</span>Smart hotel contract recommendation</div>
+            </div>
+          </div>
+          <div class="c5col">
+            <div class="fl">Technology Stack</div>
+            <div class="dlist" style="margin-top:10px;">
+              <div class="drow"><span class="ddot"></span>Deep Learning / LSTM</div>
+              <div class="drow"><span class="ddot"></span>Unsupervised Clustering</div>
+              <div class="drow"><span class="ddot"></span>Anomaly Detection Models</div>
+              <div class="drow"><span class="ddot"></span>Simulation Engine</div>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="c5col" style="border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;">
-        <div class="fl">Future Business Value</div>
-        <div class="ilist" style="margin-top:10px;">
-          <div class="irow"><span class="iarr">▶</span>Predictive budget planning yang akurat</div>
-          <div class="irow"><span class="iarr">▶</span>Early warning overpricing otomatis</div>
-          <div class="irow"><span class="iarr">▶</span>Smart hotel contract recommendation</div>
+
+      <!-- ── Executive Summary eyebrow ── -->
+      <div class="eyebrow" style="margin-top:4px;">
+        <span>Executive Summary</span><div class="eyebrow-ln"></div>
+      </div>
+
+      <!-- ── Executive Summary ── -->
+      <div class="exec">
+        <div class="exec-hd">
+          <div>
+            <h2>MTRAX Platform Overview</h2>
+            <p class="exec-sub">Lebih dari sekadar dashboard — sistem intelijen strategis untuk travel spend.</p>
+          </div>
+          <span class="exec-tag">Strategic Intelligence</span>
+        </div>
+
+        <div class="pillars">
+          <div class="pillar">
+            <span class="p-icon">🧠</span>
+            <p>Strategic Decision<br>Support System</p>
+          </div>
+          <div class="pillar" style="border-left:1px solid #e0e0e0;">
+            <span class="p-icon">⚡</span>
+            <p>Negotiation<br>Intelligence Engine</p>
+          </div>
+          <div class="pillar" style="border-left:1px solid #e0e0e0;">
+            <span class="p-icon">💡</span>
+            <p>Corporate Cost<br>Optimization Platform</p>
+          </div>
+          <div class="pillar" style="border-left:1px solid #e0e0e0;">
+            <span class="p-icon">🔐</span>
+            <p>Governance-Controlled<br>Analytics Ecosystem</p>
+          </div>
+        </div>
+
+        <div class="flow-bar">
+          <div class="fn">
+            <span class="fn-lbl">Insight</span>
+            <span class="fn-sub">Data → Analytics</span>
+          </div>
+          <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
+          <div class="fn">
+            <span class="fn-lbl">Strategy</span>
+            <span class="fn-sub">Pattern → Direction</span>
+          </div>
+          <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
+          <div class="fn">
+            <span class="fn-lbl">Negotiation Leverage</span>
+            <span class="fn-sub">Volume → Power</span>
+          </div>
+          <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
+          <div class="fn">
+            <span class="fn-lbl hi">Financial Impact</span>
+            <span class="fn-sub">Cost → Savings</span>
+          </div>
         </div>
       </div>
-      <div class="c5col">
-        <div class="fl">Technology Stack</div>
-        <div class="dlist" style="margin-top:10px;">
-          <div class="drow"><span class="ddot"></span>Deep Learning / LSTM</div>
-          <div class="drow"><span class="ddot"></span>Unsupervised Clustering</div>
-          <div class="drow"><span class="ddot"></span>Anomaly Detection Models</div>
-          <div class="drow"><span class="ddot"></span>Simulation Engine</div>
-        </div>
-      </div>
-    </div>
-  </div>
 
-  <!-- ── Executive Summary eyebrow ── -->
-  <div class="eyebrow" style="margin-top:4px;">
-    <span>Executive Summary</span><div class="eyebrow-ln"></div>
-  </div>
-
-  <!-- ── Executive Summary ── -->
-  <div class="exec">
-    <div class="exec-hd">
-      <div>
-        <h2>MTRAX Platform Overview</h2>
-        <p class="exec-sub">Lebih dari sekadar dashboard — sistem intelijen strategis untuk travel spend.</p>
-      </div>
-      <span class="exec-tag">Strategic Intelligence</span>
-    </div>
-
-    <div class="pillars">
-      <div class="pillar">
-        <span class="p-icon">🧠</span>
-        <p>Strategic Decision<br>Support System</p>
-      </div>
-      <div class="pillar" style="border-left:1px solid #e0e0e0;">
-        <span class="p-icon">⚡</span>
-        <p>Negotiation<br>Intelligence Engine</p>
-      </div>
-      <div class="pillar" style="border-left:1px solid #e0e0e0;">
-        <span class="p-icon">💡</span>
-        <p>Corporate Cost<br>Optimization Platform</p>
-      </div>
-      <div class="pillar" style="border-left:1px solid #e0e0e0;">
-        <span class="p-icon">🔐</span>
-        <p>Governance-Controlled<br>Analytics Ecosystem</p>
-      </div>
-    </div>
-
-    <div class="flow-bar">
-      <div class="fn">
-        <span class="fn-lbl">Insight</span>
-        <span class="fn-sub">Data → Analytics</span>
-      </div>
-      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-      <div class="fn">
-        <span class="fn-lbl">Strategy</span>
-        <span class="fn-sub">Pattern → Direction</span>
-      </div>
-      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-      <div class="fn">
-        <span class="fn-lbl">Negotiation Leverage</span>
-        <span class="fn-sub">Volume → Power</span>
-      </div>
-      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-      <div class="fn">
-        <span class="fn-lbl hi">Financial Impact</span>
-        <span class="fn-sub">Cost → Savings</span>
-      </div>
-    </div>
-  </div>
-
-</body>
-</html>
-""", height=1600, scrolling=True)
+    </body>
+    </html>
+    """, height=1600, scrolling=True)
 
 
         # ======================================
