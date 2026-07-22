@@ -2690,9 +2690,21 @@ def main_app():
             "Price Intelligence", "Sankey Flow", "Top Hotel/City", "Dendrogram",
             "Export", "Patra Jasa"
         ]
-        _locked_tab_labels = {"CRM", "Network", "Price Intelligence", "Dendrogram", "Patra Jasa"}
+        # Posisi (1-indexed, sesuai urutan _tab_labels_all) dari tab yang dikunci
+        # untuk akun ssc & dtm: CRM=4, Network=5, Price Intelligence=6,
+        # Dendrogram=9, Patra Jasa=11.
         if _tab_locked():
-            _tab_labels_all = [f"{t} (coming soon)" if t in _locked_tab_labels else t for t in _tab_labels_all]
+            st.markdown("""
+            <style>
+            div[data-baseweb="tab-list"] button:nth-child(4),
+            div[data-baseweb="tab-list"] button:nth-child(5),
+            div[data-baseweb="tab-list"] button:nth-child(6),
+            div[data-baseweb="tab-list"] button:nth-child(9),
+            div[data-baseweb="tab-list"] button:nth-child(11) {
+                display: none !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
         tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(_tab_labels_all)
 
                 # TAB 1: STRATEGIC VALUE CREATION
