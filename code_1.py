@@ -265,49 +265,44 @@ def _revoke_session_token(token):
     if token:
         _get_session_store().pop(token, None)
 
-def _set_session_cookie(token: str, reload_after: bool = False):
+def _set_session_cookie(token: str):
     """Tulis cookie sesi di browser lewat JS (Streamlit tidak punya API native untuk set cookie).
 
-    ── BUG FIX: penyebab logout otomatis saat refresh ─────────────────────
-    Sebelumnya, pemanggil (mis. _finish_login) menulis cookie lewat komponen ini
-    LALU langsung memanggil `st.rerun()` (dibantu `time.sleep(0.5)`). Ini race
-    condition: `st.rerun()` menghentikan script Python saat itu juga, sedangkan
-    browser butuh waktu untuk memuat iframe komponen & mengeksekusi <script> di
-    dalamnya. Di koneksi yang agak lambat (umum di deployment produksi), rerun
-    sering menang duluan sebelum cookie sempat tertulis — hasilnya cookie TIDAK
-    PERNAH benar-benar tersimpan, sehingga begitu halaman di-refresh, tidak ada
-    cookie untuk dipulihkan -> user selalu ter-logout otomatis.
+    ── CATATAN PERBAIKAN ───────────────────────────────────────────────────
+    Sempat dicoba memicu `window.parent.location.reload()` dari DALAM script
+    ini (persis setelah `document.cookie = ...`) supaya urutan cookie->reload
+    terjamin tanpa bergantung ke `st.rerun()`. Ternyata pendekatan itu TIDAK
+    reliable: iframe yang dipakai `components.html` tidak selalu diberi izin
+    untuk menavigasi/reload frame induknya oleh browser, sehingga reload bisa
+    gagal diam-diam atau menyebabkan reload terjadi SEBELUM cookie sempat
+    tersimpan — hasilnya user malah tidak pernah berhasil masuk ke dashboard.
 
-    Perbaikan: alih-alih mengandalkan `st.rerun()` (jalan di sisi Python dan
-    tidak menunggu JS selesai), reload halaman dipicu dari DALAM script JS yang
-    sama, PERSIS setelah baris `document.cookie = ...`. Karena kedua baris JS
-    itu dieksekusi berurutan secara sinkron oleh browser, reload dijamin baru
-    terjadi SETELAH cookie benar-benar tersimpan.
+    Jadi pendekatan dikembalikan ke cara yang terbukti reliable: cookie
+    ditulis di sini, lalu pemanggil (mis. _finish_login) memakai `st.rerun()`
+    untuk lanjut ke dashboard DALAM SESI YANG SAMA — ini tidak bergantung
+    sama sekali pada cookie/JS karena `st.session_state.authenticated` sudah
+    di-set duluan sebelum rerun. Cookie di sini murni untuk keperluan lain:
+    memulihkan sesi kalau nanti browser BENAR-BENAR di-refresh (F5). Supaya
+    itu tetap reliable, pemanggil perlu memberi jeda (time.sleep) yang cukup
+    sebelum memanggil st.rerun(), agar browser sempat memuat iframe & benar-
+    benar mengeksekusi baris document.cookie di dalamnya sebelum DOM diganti
+    oleh render hasil rerun.
     """
     import streamlit.components.v1 as _components
     max_age = int(SESSION_TIMEOUT)
-    reload_js = "window.parent.location.reload();" if reload_after else ""
     _components.html(
         f"""<script>
         document.cookie = "{_SESSION_COOKIE_NAME}={token}; max-age={max_age}; path=/; SameSite=Lax";
-        {reload_js}
         </script>""",
         height=0
     )
 
-def _clear_session_cookie(reload_after: bool = False):
-    """Hapus cookie sesi di browser (dipanggil saat logout / timeout).
-
-    Sama seperti `_set_session_cookie`, reload (jika diminta) dipicu dari dalam
-    script JS yang sama supaya urutan hapus-cookie -> reload terjamin, bukan
-    diserahkan ke race condition dengan `st.rerun()` di sisi Python.
-    """
+def _clear_session_cookie():
+    """Hapus cookie sesi di browser (dipanggil saat logout / timeout)."""
     import streamlit.components.v1 as _components
-    reload_js = "window.parent.location.reload();" if reload_after else ""
     _components.html(
         f"""<script>
         document.cookie = "{_SESSION_COOKIE_NAME}=; max-age=0; path=/; SameSite=Lax";
-        {reload_js}
         </script>""",
         height=0
     )
@@ -1462,16 +1457,17 @@ def _finish_login(username: str):
     # Simpan token sesi di cookie browser supaya login tetap bertahan saat halaman di-reload (F5)
     _token = _create_session_token(username, USERS[username]["role"])
     st.session_state._session_token = _token
+    _set_session_cookie(_token)
     st.success("✅ Login berhasil! Selamat datang.")
-    # ── BUG FIX: dulu di sini dipanggil `time.sleep(0.5); st.rerun()` setelah
-    # _set_session_cookie(). Itu race condition (lihat penjelasan di
-    # _set_session_cookie) yang membuat cookie sering GAGAL tersimpan sebelum
-    # rerun terjadi -> begitu browser di-refresh, cookie tidak ada -> otomatis
-    # logout. Sekarang reload dipicu DARI DALAM script JS yang sama dengan
-    # penulisan cookie (reload_after=True), jadi urutannya terjamin: cookie
-    # tersimpan dulu, baru halaman reload.
-    _set_session_cookie(_token, reload_after=True)
-    st.stop()
+    # PENTING: `st.session_state.authenticated` sudah True di atas, jadi
+    # `st.rerun()` di bawah ini SUDAH CUKUP untuk langsung masuk ke dashboard
+    # dalam sesi yang sama — tidak bergantung pada cookie/JS sama sekali.
+    # Jeda diberi lebih panjang (1 detik, sebelumnya 0.5 detik) hanya supaya
+    # browser sempat memuat iframe & benar-benar menulis cookie SEBELUM
+    # DOM diganti oleh hasil rerun — ini yang membuat sesi tetap bertahan
+    # kalau nanti user benar-benar me-refresh browser (F5).
+    time.sleep(1)
+    st.rerun()
 
 
 # ======================================
@@ -2444,13 +2440,11 @@ def main_app():
         # Logout
         if st.button("Logout", use_container_width=True, type="primary"):
             _revoke_session_token(st.session_state.get("_session_token"))
+            _clear_session_cookie()
+            time.sleep(0.5)
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
-            # ── BUG FIX: sama seperti di _finish_login, reload dipicu dari
-            # dalam script JS yang menghapus cookie (reload_after=True) supaya
-            # tidak race dengan st.rerun() di sisi Python.
-            _clear_session_cookie(reload_after=True)
-            st.stop()
+            st.rerun()
 
     # ======================================
     # MAIN CONTENT
