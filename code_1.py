@@ -265,23 +265,49 @@ def _revoke_session_token(token):
     if token:
         _get_session_store().pop(token, None)
 
-def _set_session_cookie(token: str):
-    """Tulis cookie sesi di browser lewat JS (Streamlit tidak punya API native untuk set cookie)."""
+def _set_session_cookie(token: str, reload_after: bool = False):
+    """Tulis cookie sesi di browser lewat JS (Streamlit tidak punya API native untuk set cookie).
+
+    ── BUG FIX: penyebab logout otomatis saat refresh ─────────────────────
+    Sebelumnya, pemanggil (mis. _finish_login) menulis cookie lewat komponen ini
+    LALU langsung memanggil `st.rerun()` (dibantu `time.sleep(0.5)`). Ini race
+    condition: `st.rerun()` menghentikan script Python saat itu juga, sedangkan
+    browser butuh waktu untuk memuat iframe komponen & mengeksekusi <script> di
+    dalamnya. Di koneksi yang agak lambat (umum di deployment produksi), rerun
+    sering menang duluan sebelum cookie sempat tertulis — hasilnya cookie TIDAK
+    PERNAH benar-benar tersimpan, sehingga begitu halaman di-refresh, tidak ada
+    cookie untuk dipulihkan -> user selalu ter-logout otomatis.
+
+    Perbaikan: alih-alih mengandalkan `st.rerun()` (jalan di sisi Python dan
+    tidak menunggu JS selesai), reload halaman dipicu dari DALAM script JS yang
+    sama, PERSIS setelah baris `document.cookie = ...`. Karena kedua baris JS
+    itu dieksekusi berurutan secara sinkron oleh browser, reload dijamin baru
+    terjadi SETELAH cookie benar-benar tersimpan.
+    """
     import streamlit.components.v1 as _components
     max_age = int(SESSION_TIMEOUT)
+    reload_js = "window.parent.location.reload();" if reload_after else ""
     _components.html(
         f"""<script>
         document.cookie = "{_SESSION_COOKIE_NAME}={token}; max-age={max_age}; path=/; SameSite=Lax";
+        {reload_js}
         </script>""",
         height=0
     )
 
-def _clear_session_cookie():
-    """Hapus cookie sesi di browser (dipanggil saat logout / timeout)."""
+def _clear_session_cookie(reload_after: bool = False):
+    """Hapus cookie sesi di browser (dipanggil saat logout / timeout).
+
+    Sama seperti `_set_session_cookie`, reload (jika diminta) dipicu dari dalam
+    script JS yang sama supaya urutan hapus-cookie -> reload terjamin, bukan
+    diserahkan ke race condition dengan `st.rerun()` di sisi Python.
+    """
     import streamlit.components.v1 as _components
+    reload_js = "window.parent.location.reload();" if reload_after else ""
     _components.html(
         f"""<script>
         document.cookie = "{_SESSION_COOKIE_NAME}=; max-age=0; path=/; SameSite=Lax";
+        {reload_js}
         </script>""",
         height=0
     )
@@ -689,25 +715,6 @@ USERS = {
 }
 
 # ======================================
-# ======================================
-# TAB ACCESS RESTRICTION (ssc & dtm)
-# ======================================
-RESTRICTED_TAB_USERS = {"ssc", "dtm"}
-
-def _tab_locked():
-    """True jika user saat ini (ssc/dtm) tidak diizinkan mengakses tab tertentu."""
-    return st.session_state.get("username") in RESTRICTED_TAB_USERS
-
-def _render_coming_soon(tab_label):
-    st.markdown(f"""
-    <div style='background:#f4faff;border:2px dashed #1BA0E2;border-radius:10px;
-                padding:60px 20px;text-align:center;color:#0D7FCC;margin:20px 0;'>
-        <div style='font-size:2.2em;margin-bottom:10px;'>🚧</div>
-        <div style='font-size:1.15em;font-weight:700;'>{tab_label} — Coming Soon</div>
-        <div style='font-size:0.85em;color:#888;margin-top:6px;'>Fitur ini belum tersedia untuk akun Anda saat ini.</div>
-    </div>
-    """, unsafe_allow_html=True)
-
 # BMKG FUNCTIONS
 # ======================================
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1455,10 +1462,16 @@ def _finish_login(username: str):
     # Simpan token sesi di cookie browser supaya login tetap bertahan saat halaman di-reload (F5)
     _token = _create_session_token(username, USERS[username]["role"])
     st.session_state._session_token = _token
-    _set_session_cookie(_token)
     st.success("✅ Login berhasil! Selamat datang.")
-    time.sleep(0.5)
-    st.rerun()
+    # ── BUG FIX: dulu di sini dipanggil `time.sleep(0.5); st.rerun()` setelah
+    # _set_session_cookie(). Itu race condition (lihat penjelasan di
+    # _set_session_cookie) yang membuat cookie sering GAGAL tersimpan sebelum
+    # rerun terjadi -> begitu browser di-refresh, cookie tidak ada -> otomatis
+    # logout. Sekarang reload dipicu DARI DALAM script JS yang sama dengan
+    # penulisan cookie (reload_after=True), jadi urutannya terjamin: cookie
+    # tersimpan dulu, baru halaman reload.
+    _set_session_cookie(_token, reload_after=True)
+    st.stop()
 
 
 # ======================================
@@ -1877,6 +1890,15 @@ def main_app():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+
+    # ── BUG FIX: sliding expiry di server (_validate_session_token) memperpanjang
+    # masa berlaku token, tapi cookie di BROWSER tetap memakai max-age lama sejak
+    # login pertama. Kalau tidak disegarkan, cookie browser akan tetap kedaluwarsa
+    # sesuai waktu login awal walau token server masih valid -> user bisa
+    # ter-logout otomatis meski masih aktif memakai aplikasi. Segarkan cookie
+    # (tanpa reload) setiap kali main_app dimuat, selama masih ada token sesi.
+    if st.session_state.get("_session_token"):
+        _set_session_cookie(st.session_state._session_token)
 
     # Custom CSS - MTRAX Theme v2 (Blue/Grey Palette)
     st.markdown("""
@@ -2299,11 +2321,15 @@ def main_app():
         """, unsafe_allow_html=True)
 
         # ── 2FA Status Badge di Sidebar ──────────────────────────────
-        totp_secrets  = _load_totp_secrets()
         _uname_side   = st.session_state.get("username", "")
         _enrolled     = st.session_state.totp_enrolled.get(_uname_side, False)
+        # BUG FIX: secret TOTP bersifat shared milik 'admin' (lihat _load_totp_secrets),
+        # bukan per-username. Sebelumnya kode di sini mengecek
+        # st.secrets["totp"][_uname_side] — hampir selalu False untuk user selain
+        # 'admin' walau 2FA sebenarnya sudah aktif lewat secret bersama, sehingga
+        # badge salah menampilkan "Setup Required" padahal 2FA sudah aktif.
         try:
-            _from_toml = bool(st.secrets["totp"][_uname_side])
+            _from_toml = bool(st.secrets["totp"]["admin"])
         except Exception:
             _from_toml = False
         _2fa_active = _enrolled or _from_toml
@@ -2418,11 +2444,13 @@ def main_app():
         # Logout
         if st.button("Logout", use_container_width=True, type="primary"):
             _revoke_session_token(st.session_state.get("_session_token"))
-            _clear_session_cookie()
-            time.sleep(0.3)
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
-            st.rerun()
+            # ── BUG FIX: sama seperti di _finish_login, reload dipicu dari
+            # dalam script JS yang menghapus cookie (reload_after=True) supaya
+            # tidak race dengan st.rerun() di sisi Python.
+            _clear_session_cookie(reload_after=True)
+            st.stop()
 
     # ======================================
     # MAIN CONTENT
@@ -2685,465 +2713,453 @@ def main_app():
         # ======================================
 
         # Tabs
-        _tab_labels_all = [
-            "Value Creation", "Dashboard", "Explorer", "CRM", "Network",
-            "Price Intelligence", "Sankey Flow", "Top Hotel/City", "Dendrogram",
-            "Export", "Patra Jasa"
-        ]
-        # Posisi (1-indexed, sesuai urutan _tab_labels_all) dari tab yang dikunci
-        # untuk akun ssc & dtm: CRM=4, Network=5, Price Intelligence=6,
-        # Dendrogram=9, Patra Jasa=11.
-        if _tab_locked():
-            st.markdown("""
-            <style>
-            div[data-baseweb="tab-list"] button:nth-child(1),
-            div[data-baseweb="tab-list"] button:nth-child(4),
-            div[data-baseweb="tab-list"] button:nth-child(5),
-            div[data-baseweb="tab-list"] button:nth-child(6),
-            div[data-baseweb="tab-list"] button:nth-child(9),
-            div[data-baseweb="tab-list"] button:nth-child(11) {
-                display: none !important;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(_tab_labels_all)
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+            "Value Creation",
+            "Dashboard",
+            "Explorer",
+            "CRM",
+            "Network",
+            "Price Intelligence",
+            "Sankey Flow",
+            "Top Hotel/City",
+            "Dendrogram",
+            "Export",
+            "Patra Jasa"
+        ])
 
                 # TAB 1: STRATEGIC VALUE CREATION
         # ======================================
         with tab1:
-            if _tab_locked():
-                _render_coming_soon('Value Creation')
-            else:
 
-                import streamlit.components.v1 as components
+            import streamlit.components.v1 as components
 
-                components.html("""
-    <!DOCTYPE html>
-    <html lang="id">
-    <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <style>
-      *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+            components.html("""
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-      body {
-        font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
-        font-size: 14px;
-        line-height: 1.6;
-        background: #fafafa;
-        color: #1a1a1a;
-        padding: 8px 4px 40px;
-        -webkit-font-smoothing: antialiased;
-      }
+  body {
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    background: #fafafa;
+    color: #1a1a1a;
+    padding: 8px 4px 40px;
+    -webkit-font-smoothing: antialiased;
+  }
 
-      :root {
-        --purple : #1BA0E2;
-        --purp-l : rgba(156,87,137,0.08);
-        --purp-b : rgba(156,87,137,0.22);
-        --black  : #1a1a1a;
-        --grey   : #888888;
-        --grey-l : #e0e0e0;
-        --white  : #fafafa;
-        --surf   : #ffffff;
-        --bdr    : #e0e0e0;
-      }
+  :root {
+    --purple : #1BA0E2;
+    --purp-l : rgba(156,87,137,0.08);
+    --purp-b : rgba(156,87,137,0.22);
+    --black  : #1a1a1a;
+    --grey   : #888888;
+    --grey-l : #e0e0e0;
+    --white  : #fafafa;
+    --surf   : #ffffff;
+    --bdr    : #e0e0e0;
+  }
 
-      /* ── Page Header ── */
-      .hdr {
-        display: flex; align-items: center; justify-content: space-between;
-        padding-bottom: 18px; border-bottom: 1px solid var(--bdr);
-        margin-bottom: 28px;
-      }
-      .brand { display: flex; align-items: center; gap: 12px; }
-      .mark {
-        width: 34px; height: 34px; background: var(--purple);
-        border-radius: 6px; display: inline-flex;
-        align-items: center; justify-content: center;
-        font-family: 'Geist Mono', monospace;
-        font-size: 11px; font-weight: 600; color: #fff; letter-spacing: .04em;
-        flex-shrink: 0;
-      }
-      .brand-title {
-        font-size: 17px; font-weight: 600; color: var(--black);
-        letter-spacing: -.02em; line-height: 1.2; margin: 0;
-      }
-      .brand-sub { font-size: 12px; color: var(--grey); margin: 2px 0 0; }
-      .hdr-right { display: flex; align-items: center; gap: 8px; }
-      .mod-tag {
-        font-family: 'Geist Mono', monospace; font-size: 10px;
-        color: var(--grey); background: var(--grey-l);
-        padding: 4px 10px; border-radius: 4px; letter-spacing: .08em;
-      }
-      .live-badge {
-        display: inline-flex; align-items: center; gap: 6px;
-        border: 1px solid var(--bdr); border-radius: 100px;
-        padding: 4px 12px; font-size: 11px; color: var(--grey);
-        background: var(--surf);
-      }
-      .live-dot {
-        width: 6px; height: 6px; border-radius: 50%;
-        background: var(--purple); display: inline-block;
-        animation: blink 2.4s ease infinite;
-      }
-      @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+  /* ── Page Header ── */
+  .hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 18px; border-bottom: 1px solid var(--bdr);
+    margin-bottom: 28px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .mark {
+    width: 34px; height: 34px; background: var(--purple);
+    border-radius: 6px; display: inline-flex;
+    align-items: center; justify-content: center;
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px; font-weight: 600; color: #fff; letter-spacing: .04em;
+    flex-shrink: 0;
+  }
+  .brand-title {
+    font-size: 17px; font-weight: 600; color: var(--black);
+    letter-spacing: -.02em; line-height: 1.2; margin: 0;
+  }
+  .brand-sub { font-size: 12px; color: var(--grey); margin: 2px 0 0; }
+  .hdr-right { display: flex; align-items: center; gap: 8px; }
+  .mod-tag {
+    font-family: 'Geist Mono', monospace; font-size: 10px;
+    color: var(--grey); background: var(--grey-l);
+    padding: 4px 10px; border-radius: 4px; letter-spacing: .08em;
+  }
+  .live-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--bdr); border-radius: 100px;
+    padding: 4px 12px; font-size: 11px; color: var(--grey);
+    background: var(--surf);
+  }
+  .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--purple); display: inline-block;
+    animation: blink 2.4s ease infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-      /* ── Eyebrow ── */
-      .eyebrow {
-        display: flex; align-items: center; gap: 10px;
-        font-family: 'Geist Mono', monospace; font-size: 10px; font-weight: 500;
-        color: var(--grey); letter-spacing: .18em;
-        text-transform: uppercase; margin-bottom: 14px;
-      }
-      .eyebrow-ln { flex: 1; height: 1px; background: var(--bdr); }
+  /* ── Eyebrow ── */
+  .eyebrow {
+    display: flex; align-items: center; gap: 10px;
+    font-family: 'Geist Mono', monospace; font-size: 10px; font-weight: 500;
+    color: var(--grey); letter-spacing: .18em;
+    text-transform: uppercase; margin-bottom: 14px;
+  }
+  .eyebrow-ln { flex: 1; height: 1px; background: var(--bdr); }
 
-      /* ── 2×2 Pillar Grid ── */
-      .pgrid {
-        display: grid; grid-template-columns: 1fr 1fr;
-        border: 1px solid var(--bdr); border-radius: 10px;
-        overflow: hidden; background: var(--bdr); gap: 1px;
-        margin-bottom: 1px;
-      }
-      .pcard {
-        background: var(--surf); padding: 26px 24px;
-        position: relative; transition: background .18s ease;
-      }
-      .pcard:hover { background: #fdfdfd; }
-      .pcard::before {
-        content: ''; position: absolute;
-        top: 26px; bottom: 26px; left: 0; width: 2px;
-        background: var(--purple); opacity: 0; transition: opacity .2s ease;
-      }
-      .pcard:hover::before { opacity: 1; }
-      .card-top {
-        display: flex; align-items: flex-start;
-        justify-content: space-between; margin-bottom: 14px;
-      }
-      .card-icon { font-size: 18px; line-height: 1; }
-      .badge {
-        font-family: 'Geist Mono', monospace;
-        font-size: 9px; font-weight: 500; letter-spacing: .12em;
-        color: var(--purple); background: var(--purp-l);
-        border: 1px solid var(--purp-b);
-        padding: 3px 8px; border-radius: 3px;
-      }
-      .pcard h3 {
-        font-size: 14px; font-weight: 600; color: var(--black);
-        letter-spacing: -.015em; margin-bottom: 4px; line-height: 1.3;
-      }
-      .obj { font-size: 12px; color: var(--grey); margin-bottom: 18px; line-height: 1.55; }
-      .fl {
-        font-family: 'Geist Mono', monospace; font-size: 9px; font-weight: 500;
-        letter-spacing: .15em; text-transform: uppercase;
-        color: var(--purple); margin-bottom: 8px;
-      }
-      .dlist { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
-      .drow  { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--black); }
-      .ddot  {
-        width: 4px; height: 4px; border-radius: 50%;
-        background: var(--purple); flex-shrink: 0; display: inline-block;
-      }
-      .sep  { height: 1px; background: var(--grey-l); margin: 12px 0; }
-      .ilist { display: flex; flex-direction: column; gap: 5px; }
-      .irow {
-        display: flex; align-items: flex-start; gap: 8px;
-        font-size: 11.5px; color: var(--grey); line-height: 1.5;
-      }
-      .iarr { font-size: 8px; margin-top: 5px; flex-shrink: 0; color: var(--purple); opacity: .7; }
+  /* ── 2×2 Pillar Grid ── */
+  .pgrid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--bdr); border-radius: 10px;
+    overflow: hidden; background: var(--bdr); gap: 1px;
+    margin-bottom: 1px;
+  }
+  .pcard {
+    background: var(--surf); padding: 26px 24px;
+    position: relative; transition: background .18s ease;
+  }
+  .pcard:hover { background: #fdfdfd; }
+  .pcard::before {
+    content: ''; position: absolute;
+    top: 26px; bottom: 26px; left: 0; width: 2px;
+    background: var(--purple); opacity: 0; transition: opacity .2s ease;
+  }
+  .pcard:hover::before { opacity: 1; }
+  .card-top {
+    display: flex; align-items: flex-start;
+    justify-content: space-between; margin-bottom: 14px;
+  }
+  .card-icon { font-size: 18px; line-height: 1; }
+  .badge {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px; font-weight: 500; letter-spacing: .12em;
+    color: var(--purple); background: var(--purp-l);
+    border: 1px solid var(--purp-b);
+    padding: 3px 8px; border-radius: 3px;
+  }
+  .pcard h3 {
+    font-size: 14px; font-weight: 600; color: var(--black);
+    letter-spacing: -.015em; margin-bottom: 4px; line-height: 1.3;
+  }
+  .obj { font-size: 12px; color: var(--grey); margin-bottom: 18px; line-height: 1.55; }
+  .fl {
+    font-family: 'Geist Mono', monospace; font-size: 9px; font-weight: 500;
+    letter-spacing: .15em; text-transform: uppercase;
+    color: var(--purple); margin-bottom: 8px;
+  }
+  .dlist { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+  .drow  { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--black); }
+  .ddot  {
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--purple); flex-shrink: 0; display: inline-block;
+  }
+  .sep  { height: 1px; background: var(--grey-l); margin: 12px 0; }
+  .ilist { display: flex; flex-direction: column; gap: 5px; }
+  .irow {
+    display: flex; align-items: flex-start; gap: 8px;
+    font-size: 11.5px; color: var(--grey); line-height: 1.5;
+  }
+  .iarr { font-size: 8px; margin-top: 5px; flex-shrink: 0; color: var(--purple); opacity: .7; }
 
-      /* ── Card 5 ── */
-      .c5wrap {
-        border: 1px solid var(--bdr); border-top: none;
-        border-radius: 0 0 10px 10px; overflow: hidden; margin-bottom: 32px;
-      }
-      .c5hd {
-        background: #f5f5f5; border-bottom: 1px solid var(--bdr);
-        padding: 16px 24px; display: flex;
-        align-items: center; justify-content: space-between;
-      }
-      .c5hd-l { display: flex; align-items: center; gap: 10px; }
-      .c5hd h3 { font-size: 13px; font-weight: 600; color: var(--black); margin: 0; }
-      .c5hd .c5sub { font-size: 11px; color: var(--grey); }
-      .c5body {
-        display: grid; grid-template-columns: 1fr 1fr 1fr;
-        background: var(--bdr); gap: 1px;
-      }
-      .c5col { background: var(--surf); padding: 20px 24px; }
+  /* ── Card 5 ── */
+  .c5wrap {
+    border: 1px solid var(--bdr); border-top: none;
+    border-radius: 0 0 10px 10px; overflow: hidden; margin-bottom: 32px;
+  }
+  .c5hd {
+    background: #f5f5f5; border-bottom: 1px solid var(--bdr);
+    padding: 16px 24px; display: flex;
+    align-items: center; justify-content: space-between;
+  }
+  .c5hd-l { display: flex; align-items: center; gap: 10px; }
+  .c5hd h3 { font-size: 13px; font-weight: 600; color: var(--black); margin: 0; }
+  .c5hd .c5sub { font-size: 11px; color: var(--grey); }
+  .c5body {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    background: var(--bdr); gap: 1px;
+  }
+  .c5col { background: var(--surf); padding: 20px 24px; }
 
-      /* ── Executive Summary ── */
-      .exec { border: 1px solid var(--bdr); border-radius: 10px; overflow: hidden; }
-      .exec-hd {
-        background: var(--black); padding: 22px 26px;
-        display: flex; align-items: center; justify-content: space-between;
-      }
-      .exec-hd h2 {
-        font-size: 16px; font-weight: 600; color: var(--white);
-        letter-spacing: -.02em; margin: 0;
-      }
-      .exec-hd .exec-sub { font-size: 11.5px; color: #888; margin: 3px 0 0; }
-      .exec-tag {
-        font-family: 'Geist Mono', monospace; font-size: 9.5px;
-        letter-spacing: .12em; color: var(--purple);
-        background: rgba(156,87,137,.15); border: 1px solid rgba(156,87,137,.3);
-        padding: 4px 11px; border-radius: 100px; text-transform: uppercase;
-        white-space: nowrap;
-      }
-      .pillars {
-        display: grid; grid-template-columns: repeat(4,1fr);
-        background: var(--bdr); gap: 1px;
-        border-bottom: 1px solid var(--bdr);
-      }
-      .pillar {
-        background: var(--surf); padding: 18px 18px 16px; position: relative;
-      }
-      .pillar::after {
-        content: ''; position: absolute;
-        bottom: 0; left: 18px; right: 18px; height: 1px;
-        background: var(--purple); opacity: 0; transition: opacity .2s;
-      }
-      .pillar:hover::after { opacity: .4; }
-      .p-icon { font-size: 16px; margin-bottom: 8px; display: block; }
-      .pillar p { font-size: 12px; color: var(--black); font-weight: 500; line-height: 1.45; margin: 0; }
-      .flow-bar {
-        background: var(--surf); padding: 18px 24px;
-        display: flex; align-items: center; justify-content: center;
-        border-top: 1px solid var(--bdr);
-      }
-      .fn { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-      .fn-lbl { font-size: 12px; font-weight: 600; color: var(--black); letter-spacing: -.01em; }
-      .fn-lbl.hi { color: var(--purple); }
-      .fn-sub {
-        font-family: 'Geist Mono', monospace; font-size: 9px;
-        color: var(--grey); letter-spacing: .06em;
-      }
-      .fsep { display: flex; align-items: center; margin: 0 18px; }
-      .fsep-ln { width: 28px; height: 1px; background: var(--grey-l); }
-      .fsep-arr { font-size: 9px; color: var(--purple); opacity: .6; }
-    </style>
-    </head>
-    <body>
+  /* ── Executive Summary ── */
+  .exec { border: 1px solid var(--bdr); border-radius: 10px; overflow: hidden; }
+  .exec-hd {
+    background: var(--black); padding: 22px 26px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .exec-hd h2 {
+    font-size: 16px; font-weight: 600; color: var(--white);
+    letter-spacing: -.02em; margin: 0;
+  }
+  .exec-hd .exec-sub { font-size: 11.5px; color: #888; margin: 3px 0 0; }
+  .exec-tag {
+    font-family: 'Geist Mono', monospace; font-size: 9.5px;
+    letter-spacing: .12em; color: var(--purple);
+    background: rgba(156,87,137,.15); border: 1px solid rgba(156,87,137,.3);
+    padding: 4px 11px; border-radius: 100px; text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .pillars {
+    display: grid; grid-template-columns: repeat(4,1fr);
+    background: var(--bdr); gap: 1px;
+    border-bottom: 1px solid var(--bdr);
+  }
+  .pillar {
+    background: var(--surf); padding: 18px 18px 16px; position: relative;
+  }
+  .pillar::after {
+    content: ''; position: absolute;
+    bottom: 0; left: 18px; right: 18px; height: 1px;
+    background: var(--purple); opacity: 0; transition: opacity .2s;
+  }
+  .pillar:hover::after { opacity: .4; }
+  .p-icon { font-size: 16px; margin-bottom: 8px; display: block; }
+  .pillar p { font-size: 12px; color: var(--black); font-weight: 500; line-height: 1.45; margin: 0; }
+  .flow-bar {
+    background: var(--surf); padding: 18px 24px;
+    display: flex; align-items: center; justify-content: center;
+    border-top: 1px solid var(--bdr);
+  }
+  .fn { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .fn-lbl { font-size: 12px; font-weight: 600; color: var(--black); letter-spacing: -.01em; }
+  .fn-lbl.hi { color: var(--purple); }
+  .fn-sub {
+    font-family: 'Geist Mono', monospace; font-size: 9px;
+    color: var(--grey); letter-spacing: .06em;
+  }
+  .fsep { display: flex; align-items: center; margin: 0 18px; }
+  .fsep-ln { width: 28px; height: 1px; background: var(--grey-l); }
+  .fsep-arr { font-size: 9px; color: var(--purple); opacity: .6; }
+</style>
+</head>
+<body>
 
-      <!-- ── Page Header ── -->
-      <div class="hdr">
-        <div class="brand">
-          <div class="mark">MTX</div>
-          <div>
-            <p class="brand-title">Strategic Value Creation Framework</p>
-            <p class="brand-sub">Travel Analytics &amp; Procurement Intelligence</p>
-          </div>
-        </div>
-        <div class="hdr-right">
-          <span class="mod-tag">MODULE 08</span>
-          <span class="live-badge"><span class="live-dot"></span>5 Value Pillars</span>
+  <!-- ── Page Header ── -->
+  <div class="hdr">
+    <div class="brand">
+      <div class="mark">MTX</div>
+      <div>
+        <p class="brand-title">Strategic Value Creation Framework</p>
+        <p class="brand-sub">Travel Analytics &amp; Procurement Intelligence</p>
+      </div>
+    </div>
+    <div class="hdr-right">
+      <span class="mod-tag">MODULE 08</span>
+      <span class="live-badge"><span class="live-dot"></span>5 Value Pillars</span>
+    </div>
+  </div>
+
+  <!-- ── Eyebrow ── -->
+  <div class="eyebrow"><span>Value Pillars</span><div class="eyebrow-ln"></div></div>
+
+  <!-- ── 2×2 Grid ── -->
+  <div class="pgrid">
+
+    <!-- 01 Financial -->
+    <div class="pcard">
+      <div class="card-top">
+        <span class="card-icon">💰</span>
+        <span class="badge">01 · FINANCIAL</span>
+      </div>
+      <h3>Financial Optimization</h3>
+      <p class="obj">Mengurangi total travel spend dan meningkatkan efisiensi biaya operasional secara terukur.</p>
+      <div class="fl">Value Drivers</div>
+      <div class="dlist">
+        <div class="drow"><span class="ddot"></span>Rate benchmarking antar hotel</div>
+        <div class="drow"><span class="ddot"></span>Price per night analysis</div>
+        <div class="drow"><span class="ddot"></span>Negotiation leverage berbasis volume room nights</div>
+        <div class="drow"><span class="ddot"></span>Last-minute booking cost impact</div>
+      </div>
+      <div class="sep"></div>
+      <div class="fl">Business Impact</div>
+      <div class="ilist">
+        <div class="irow"><span class="iarr">▶</span>Estimasi saving 5–15% dari negotiated rate</div>
+        <div class="irow"><span class="iarr">▶</span>Pengurangan overpricing hotel tidak terstandarisasi</div>
+        <div class="irow"><span class="iarr">▶</span>Kontrol budget lintas perusahaan</div>
+      </div>
+    </div>
+
+    <!-- 02 Operational -->
+    <div class="pcard">
+      <div class="card-top">
+        <span class="card-icon">⚙️</span>
+        <span class="badge">02 · OPERATIONAL</span>
+      </div>
+      <h3>Operational Efficiency</h3>
+      <p class="obj">Meningkatkan kecepatan dan kualitas proses booking secara end-to-end.</p>
+      <div class="fl">Value Drivers</div>
+      <div class="dlist">
+        <div class="drow"><span class="ddot"></span>Lead time monitoring</div>
+        <div class="drow"><span class="ddot"></span>Multi-booking behavior analysis</div>
+        <div class="drow"><span class="ddot"></span>Travel request pattern heatmap</div>
+        <div class="drow"><span class="ddot"></span>Automation &amp; canonical hotel mapping</div>
+      </div>
+      <div class="sep"></div>
+      <div class="fl">Business Impact</div>
+      <div class="ilist">
+        <div class="irow"><span class="iarr">▶</span>Mengurangi booking mendadak (≤2 hari)</div>
+        <div class="irow"><span class="iarr">▶</span>Mengurangi duplikasi nama hotel</div>
+        <div class="irow"><span class="iarr">▶</span>Meningkatkan data reliability untuk reporting</div>
+      </div>
+    </div>
+
+    <!-- 03 Procurement -->
+    <div class="pcard">
+      <div class="card-top">
+        <span class="card-icon">🎯</span>
+        <span class="badge">03 · PROCUREMENT</span>
+      </div>
+      <h3>Strategic Procurement Intelligence</h3>
+      <p class="obj">Meningkatkan posisi tawar terhadap hotel dan vendor strategis.</p>
+      <div class="fl">Value Drivers</div>
+      <div class="dlist">
+        <div class="drow"><span class="ddot"></span>Top 10 hotel concentration</div>
+        <div class="drow"><span class="ddot"></span>Volume aggregation per city</div>
+        <div class="drow"><span class="ddot"></span>Corporate usage clustering</div>
+        <div class="drow"><span class="ddot"></span>Canonical hotel normalization</div>
+      </div>
+      <div class="sep"></div>
+      <div class="fl">Business Impact</div>
+      <div class="ilist">
+        <div class="irow"><span class="iarr">▶</span>Centralized negotiation strategy</div>
+        <div class="irow"><span class="iarr">▶</span>Volume-based discount leverage</div>
+        <div class="irow"><span class="iarr">▶</span>Preferred hotel program optimization</div>
+      </div>
+    </div>
+
+    <!-- 04 Governance -->
+    <div class="pcard">
+      <div class="card-top">
+        <span class="card-icon">🛡️</span>
+        <span class="badge">04 · GOVERNANCE</span>
+      </div>
+      <h3>Risk &amp; Governance Control</h3>
+      <p class="obj">Menjamin kontrol dan keamanan data travel perusahaan secara sistemik.</p>
+      <div class="fl">Value Drivers</div>
+      <div class="dlist">
+        <div class="drow"><span class="ddot"></span>Role-based download restriction</div>
+        <div class="drow"><span class="ddot"></span>Admin-only data export</div>
+        <div class="drow"><span class="ddot"></span>Real-time monitoring dashboard</div>
+        <div class="drow"><span class="ddot"></span>2FA Google Authenticator (TOTP)</div>
+      </div>
+      <div class="sep"></div>
+      <div class="fl">Business Impact</div>
+      <div class="ilist">
+        <div class="irow"><span class="iarr">▶</span>Mencegah data leakage</div>
+        <div class="irow"><span class="iarr">▶</span>Meningkatkan compliance standar</div>
+        <div class="irow"><span class="iarr">▶</span>Governance berbasis sistem</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Card 5 — Predictive ── -->
+  <div class="c5wrap">
+    <div class="c5hd">
+      <div class="c5hd-l">
+        <span style="font-size:17px;">🔮</span>
+        <div>
+          <h3>Predictive &amp; Future Intelligence</h3>
+          <span class="c5sub">Next Phase Development</span>
         </div>
       </div>
-
-      <!-- ── Eyebrow ── -->
-      <div class="eyebrow"><span>Value Pillars</span><div class="eyebrow-ln"></div></div>
-
-      <!-- ── 2×2 Grid ── -->
-      <div class="pgrid">
-
-        <!-- 01 Financial -->
-        <div class="pcard">
-          <div class="card-top">
-            <span class="card-icon">💰</span>
-            <span class="badge">01 · FINANCIAL</span>
-          </div>
-          <h3>Financial Optimization</h3>
-          <p class="obj">Mengurangi total travel spend dan meningkatkan efisiensi biaya operasional secara terukur.</p>
-          <div class="fl">Value Drivers</div>
-          <div class="dlist">
-            <div class="drow"><span class="ddot"></span>Rate benchmarking antar hotel</div>
-            <div class="drow"><span class="ddot"></span>Price per night analysis</div>
-            <div class="drow"><span class="ddot"></span>Negotiation leverage berbasis volume room nights</div>
-            <div class="drow"><span class="ddot"></span>Last-minute booking cost impact</div>
-          </div>
-          <div class="sep"></div>
-          <div class="fl">Business Impact</div>
-          <div class="ilist">
-            <div class="irow"><span class="iarr">▶</span>Estimasi saving 5–15% dari negotiated rate</div>
-            <div class="irow"><span class="iarr">▶</span>Pengurangan overpricing hotel tidak terstandarisasi</div>
-            <div class="irow"><span class="iarr">▶</span>Kontrol budget lintas perusahaan</div>
-          </div>
-        </div>
-
-        <!-- 02 Operational -->
-        <div class="pcard">
-          <div class="card-top">
-            <span class="card-icon">⚙️</span>
-            <span class="badge">02 · OPERATIONAL</span>
-          </div>
-          <h3>Operational Efficiency</h3>
-          <p class="obj">Meningkatkan kecepatan dan kualitas proses booking secara end-to-end.</p>
-          <div class="fl">Value Drivers</div>
-          <div class="dlist">
-            <div class="drow"><span class="ddot"></span>Lead time monitoring</div>
-            <div class="drow"><span class="ddot"></span>Multi-booking behavior analysis</div>
-            <div class="drow"><span class="ddot"></span>Travel request pattern heatmap</div>
-            <div class="drow"><span class="ddot"></span>Automation &amp; canonical hotel mapping</div>
-          </div>
-          <div class="sep"></div>
-          <div class="fl">Business Impact</div>
-          <div class="ilist">
-            <div class="irow"><span class="iarr">▶</span>Mengurangi booking mendadak (≤2 hari)</div>
-            <div class="irow"><span class="iarr">▶</span>Mengurangi duplikasi nama hotel</div>
-            <div class="irow"><span class="iarr">▶</span>Meningkatkan data reliability untuk reporting</div>
-          </div>
-        </div>
-
-        <!-- 03 Procurement -->
-        <div class="pcard">
-          <div class="card-top">
-            <span class="card-icon">🎯</span>
-            <span class="badge">03 · PROCUREMENT</span>
-          </div>
-          <h3>Strategic Procurement Intelligence</h3>
-          <p class="obj">Meningkatkan posisi tawar terhadap hotel dan vendor strategis.</p>
-          <div class="fl">Value Drivers</div>
-          <div class="dlist">
-            <div class="drow"><span class="ddot"></span>Top 10 hotel concentration</div>
-            <div class="drow"><span class="ddot"></span>Volume aggregation per city</div>
-            <div class="drow"><span class="ddot"></span>Corporate usage clustering</div>
-            <div class="drow"><span class="ddot"></span>Canonical hotel normalization</div>
-          </div>
-          <div class="sep"></div>
-          <div class="fl">Business Impact</div>
-          <div class="ilist">
-            <div class="irow"><span class="iarr">▶</span>Centralized negotiation strategy</div>
-            <div class="irow"><span class="iarr">▶</span>Volume-based discount leverage</div>
-            <div class="irow"><span class="iarr">▶</span>Preferred hotel program optimization</div>
-          </div>
-        </div>
-
-        <!-- 04 Governance -->
-        <div class="pcard">
-          <div class="card-top">
-            <span class="card-icon">🛡️</span>
-            <span class="badge">04 · GOVERNANCE</span>
-          </div>
-          <h3>Risk &amp; Governance Control</h3>
-          <p class="obj">Menjamin kontrol dan keamanan data travel perusahaan secara sistemik.</p>
-          <div class="fl">Value Drivers</div>
-          <div class="dlist">
-            <div class="drow"><span class="ddot"></span>Role-based download restriction</div>
-            <div class="drow"><span class="ddot"></span>Admin-only data export</div>
-            <div class="drow"><span class="ddot"></span>Real-time monitoring dashboard</div>
-            <div class="drow"><span class="ddot"></span>2FA Google Authenticator (TOTP)</div>
-          </div>
-          <div class="sep"></div>
-          <div class="fl">Business Impact</div>
-          <div class="ilist">
-            <div class="irow"><span class="iarr">▶</span>Mencegah data leakage</div>
-            <div class="irow"><span class="iarr">▶</span>Meningkatkan compliance standar</div>
-            <div class="irow"><span class="iarr">▶</span>Governance berbasis sistem</div>
-          </div>
-        </div>
-
-      </div>
-
-      <!-- ── Card 5 — Predictive ── -->
-      <div class="c5wrap">
-        <div class="c5hd">
-          <div class="c5hd-l">
-            <span style="font-size:17px;">🔮</span>
-            <div>
-              <h3>Predictive &amp; Future Intelligence</h3>
-              <span class="c5sub">Next Phase Development</span>
-            </div>
-          </div>
-          <span class="badge">05 · PREDICTIVE</span>
-        </div>
-        <div class="c5body">
-          <div class="c5col">
-            <div class="fl">Potential Development</div>
-            <div class="dlist" style="margin-top:10px;">
-              <div class="drow"><span class="ddot"></span>LSTM-based demand forecasting</div>
-              <div class="drow"><span class="ddot"></span>Hotel price anomaly detection</div>
-              <div class="drow"><span class="ddot"></span>Traveler segmentation (KMeans)</div>
-              <div class="drow"><span class="ddot"></span>Automated negotiation simulator</div>
-            </div>
-          </div>
-          <div class="c5col" style="border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;">
-            <div class="fl">Future Business Value</div>
-            <div class="ilist" style="margin-top:10px;">
-              <div class="irow"><span class="iarr">▶</span>Predictive budget planning yang akurat</div>
-              <div class="irow"><span class="iarr">▶</span>Early warning overpricing otomatis</div>
-              <div class="irow"><span class="iarr">▶</span>Smart hotel contract recommendation</div>
-            </div>
-          </div>
-          <div class="c5col">
-            <div class="fl">Technology Stack</div>
-            <div class="dlist" style="margin-top:10px;">
-              <div class="drow"><span class="ddot"></span>Deep Learning / LSTM</div>
-              <div class="drow"><span class="ddot"></span>Unsupervised Clustering</div>
-              <div class="drow"><span class="ddot"></span>Anomaly Detection Models</div>
-              <div class="drow"><span class="ddot"></span>Simulation Engine</div>
-            </div>
-          </div>
+      <span class="badge">05 · PREDICTIVE</span>
+    </div>
+    <div class="c5body">
+      <div class="c5col">
+        <div class="fl">Potential Development</div>
+        <div class="dlist" style="margin-top:10px;">
+          <div class="drow"><span class="ddot"></span>LSTM-based demand forecasting</div>
+          <div class="drow"><span class="ddot"></span>Hotel price anomaly detection</div>
+          <div class="drow"><span class="ddot"></span>Traveler segmentation (KMeans)</div>
+          <div class="drow"><span class="ddot"></span>Automated negotiation simulator</div>
         </div>
       </div>
-
-      <!-- ── Executive Summary eyebrow ── -->
-      <div class="eyebrow" style="margin-top:4px;">
-        <span>Executive Summary</span><div class="eyebrow-ln"></div>
-      </div>
-
-      <!-- ── Executive Summary ── -->
-      <div class="exec">
-        <div class="exec-hd">
-          <div>
-            <h2>MTRAX Platform Overview</h2>
-            <p class="exec-sub">Lebih dari sekadar dashboard — sistem intelijen strategis untuk travel spend.</p>
-          </div>
-          <span class="exec-tag">Strategic Intelligence</span>
-        </div>
-
-        <div class="pillars">
-          <div class="pillar">
-            <span class="p-icon">🧠</span>
-            <p>Strategic Decision<br>Support System</p>
-          </div>
-          <div class="pillar" style="border-left:1px solid #e0e0e0;">
-            <span class="p-icon">⚡</span>
-            <p>Negotiation<br>Intelligence Engine</p>
-          </div>
-          <div class="pillar" style="border-left:1px solid #e0e0e0;">
-            <span class="p-icon">💡</span>
-            <p>Corporate Cost<br>Optimization Platform</p>
-          </div>
-          <div class="pillar" style="border-left:1px solid #e0e0e0;">
-            <span class="p-icon">🔐</span>
-            <p>Governance-Controlled<br>Analytics Ecosystem</p>
-          </div>
-        </div>
-
-        <div class="flow-bar">
-          <div class="fn">
-            <span class="fn-lbl">Insight</span>
-            <span class="fn-sub">Data → Analytics</span>
-          </div>
-          <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-          <div class="fn">
-            <span class="fn-lbl">Strategy</span>
-            <span class="fn-sub">Pattern → Direction</span>
-          </div>
-          <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-          <div class="fn">
-            <span class="fn-lbl">Negotiation Leverage</span>
-            <span class="fn-sub">Volume → Power</span>
-          </div>
-          <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-          <div class="fn">
-            <span class="fn-lbl hi">Financial Impact</span>
-            <span class="fn-sub">Cost → Savings</span>
-          </div>
+      <div class="c5col" style="border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;">
+        <div class="fl">Future Business Value</div>
+        <div class="ilist" style="margin-top:10px;">
+          <div class="irow"><span class="iarr">▶</span>Predictive budget planning yang akurat</div>
+          <div class="irow"><span class="iarr">▶</span>Early warning overpricing otomatis</div>
+          <div class="irow"><span class="iarr">▶</span>Smart hotel contract recommendation</div>
         </div>
       </div>
+      <div class="c5col">
+        <div class="fl">Technology Stack</div>
+        <div class="dlist" style="margin-top:10px;">
+          <div class="drow"><span class="ddot"></span>Deep Learning / LSTM</div>
+          <div class="drow"><span class="ddot"></span>Unsupervised Clustering</div>
+          <div class="drow"><span class="ddot"></span>Anomaly Detection Models</div>
+          <div class="drow"><span class="ddot"></span>Simulation Engine</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-    </body>
-    </html>
-    """, height=1600, scrolling=True)
+  <!-- ── Executive Summary eyebrow ── -->
+  <div class="eyebrow" style="margin-top:4px;">
+    <span>Executive Summary</span><div class="eyebrow-ln"></div>
+  </div>
+
+  <!-- ── Executive Summary ── -->
+  <div class="exec">
+    <div class="exec-hd">
+      <div>
+        <h2>MTRAX Platform Overview</h2>
+        <p class="exec-sub">Lebih dari sekadar dashboard — sistem intelijen strategis untuk travel spend.</p>
+      </div>
+      <span class="exec-tag">Strategic Intelligence</span>
+    </div>
+
+    <div class="pillars">
+      <div class="pillar">
+        <span class="p-icon">🧠</span>
+        <p>Strategic Decision<br>Support System</p>
+      </div>
+      <div class="pillar" style="border-left:1px solid #e0e0e0;">
+        <span class="p-icon">⚡</span>
+        <p>Negotiation<br>Intelligence Engine</p>
+      </div>
+      <div class="pillar" style="border-left:1px solid #e0e0e0;">
+        <span class="p-icon">💡</span>
+        <p>Corporate Cost<br>Optimization Platform</p>
+      </div>
+      <div class="pillar" style="border-left:1px solid #e0e0e0;">
+        <span class="p-icon">🔐</span>
+        <p>Governance-Controlled<br>Analytics Ecosystem</p>
+      </div>
+    </div>
+
+    <div class="flow-bar">
+      <div class="fn">
+        <span class="fn-lbl">Insight</span>
+        <span class="fn-sub">Data → Analytics</span>
+      </div>
+      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
+      <div class="fn">
+        <span class="fn-lbl">Strategy</span>
+        <span class="fn-sub">Pattern → Direction</span>
+      </div>
+      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
+      <div class="fn">
+        <span class="fn-lbl">Negotiation Leverage</span>
+        <span class="fn-sub">Volume → Power</span>
+      </div>
+      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
+      <div class="fn">
+        <span class="fn-lbl hi">Financial Impact</span>
+        <span class="fn-sub">Cost → Savings</span>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
+""", height=1600, scrolling=True)
 
 
         # ======================================
@@ -3209,15 +3225,22 @@ def main_app():
                 </style>
                 """, unsafe_allow_html=True)
 
-#                selected_companies = st.multiselect(
-#                    "Filter Overview berdasarkan Nama Perusahaan",
-#                    options=company_list,
-#                    default=[],
-#                    placeholder="Semua perusahaan (pilih untuk filter spesifik)…"
-#                )
+                # BUG FIX: widget multiselect ini sebelumnya di-comment-out, sehingga
+                # baris `if selected_companies:` di bawah diam-diam memakai variabel
+                # `selected_companies` milik filter TAB 1 (key="gf_company") alih-alih
+                # filter miliknya sendiri. Akibatnya, dropdown filter perusahaan khusus
+                # Tab 2 (Dashboard) tidak pernah muncul, dan Tab 2 selalu ikut ter-filter
+                # oleh pilihan perusahaan dari Tab 1 tanpa bisa diatur independen di sini.
+                selected_companies_ov = st.multiselect(
+                    "Filter Overview berdasarkan Nama Perusahaan",
+                    options=company_list,
+                    default=[],
+                    placeholder="Semua perusahaan (pilih untuk filter spesifik)…",
+                    key="ov_company_tab2"
+                )
 
-                if selected_companies:
-                    df_overview = df_all[df_all[company_col].isin(selected_companies)]
+                if selected_companies_ov:
+                    df_overview = df_all[df_all[company_col].isin(selected_companies_ov)]
                 else:
                     df_overview = df_all.copy()
             else:
@@ -3941,359 +3964,353 @@ def main_app():
         # TAB 3: ANALYTICS — CRM
         # ======================================
         with tab4:
-            if _tab_locked():
-                _render_coming_soon('CRM')
+
+            st.markdown("<div class='section-title'>CRM Analytics</div>", unsafe_allow_html=True)
+
+            df_crm = df_all.copy()
+
+            required_cols = ["Employee Id", "Travel Request Number", "Issue Time"]
+            if not all(col in df_crm.columns for col in required_cols):
+                st.warning("Data belum cukup untuk analisa CRM")
             else:
+                df_crm["Issue Time"] = pd.to_datetime(df_crm["Issue Time"], errors="coerce", dayfirst=True)
+                df_crm = df_crm.dropna(subset=["Employee Id", "Issue Time"])
 
-                st.markdown("<div class='section-title'>CRM Analytics</div>", unsafe_allow_html=True)
-
-                df_crm = df_all.copy()
-
-                required_cols = ["Employee Id", "Travel Request Number", "Issue Time"]
-                if not all(col in df_crm.columns for col in required_cols):
-                    st.warning("Data belum cukup untuk analisa CRM")
-                else:
-                    df_crm["Issue Time"] = pd.to_datetime(df_crm["Issue Time"], errors="coerce", dayfirst=True)
-                    df_crm = df_crm.dropna(subset=["Employee Id", "Issue Time"])
-
-                    traveler_stats = (
-                        df_crm
-                        .groupby("Employee Id")
-                        .agg(
-                            total_tr=("Travel Request Number", "nunique"),
-                            total_booking=("Travel Request Number", "count"),
-                            last_booking=("Issue Time", "max"),
-                            first_booking=("Issue Time", "min")
-                        )
-                        .reset_index()
+                traveler_stats = (
+                    df_crm
+                    .groupby("Employee Id")
+                    .agg(
+                        total_tr=("Travel Request Number", "nunique"),
+                        total_booking=("Travel Request Number", "count"),
+                        last_booking=("Issue Time", "max"),
+                        first_booking=("Issue Time", "min")
                     )
+                    .reset_index()
+                )
 
-                    total_travelers = len(traveler_stats)
-                    repeat_travelers = (traveler_stats["total_tr"] > 1).sum()
-                    repeat_rate = repeat_travelers / total_travelers * 100
-                    avg_booking = traveler_stats["total_booking"].mean()
+                total_travelers = len(traveler_stats)
+                repeat_travelers = (traveler_stats["total_tr"] > 1).sum()
+                repeat_rate = repeat_travelers / total_travelers * 100
+                avg_booking = traveler_stats["total_booking"].mean()
 
-                    col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3, col4 = st.columns(4)
 
-                    col1.metric("Active Travelers", f"{total_travelers:,}")
-                    col2.metric("Repeat Traveler Rate", f"{repeat_rate:.1f}%")
-                    col3.metric("Avg Booking / Traveler", f"{avg_booking:.1f}")
-                    col4.metric("Repeat Travelers", f"{repeat_travelers:,}")
+                col1.metric("Active Travelers", f"{total_travelers:,}")
+                col2.metric("Repeat Traveler Rate", f"{repeat_rate:.1f}%")
+                col3.metric("Avg Booking / Traveler", f"{avg_booking:.1f}")
+                col4.metric("Repeat Travelers", f"{repeat_travelers:,}")
 
-                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
         with tab4:
-            if _tab_locked():
-                pass
+            st.markdown("<div class='section-title'>Employee Booking Cohort Analysis</div>", unsafe_allow_html=True)
+
+            cohort_df = build_employee_cohort(df_all)
+
+            if cohort_df.empty:
+                st.warning("Data tidak cukup untuk Cohort Analysis (butuh Employee Id & Issue Time).")
             else:
-                st.markdown("<div class='section-title'>Employee Booking Cohort Analysis</div>", unsafe_allow_html=True)
-
-                cohort_df = build_employee_cohort(df_all)
-
-                if cohort_df.empty:
-                    st.warning("Data tidak cukup untuk Cohort Analysis (butuh Employee Id & Issue Time).")
+                cohort_pct = cohort_df.copy()
+                if 0 in cohort_pct.columns:
+                    base = cohort_pct[0].replace(0, np.nan)
+                    cohort_pct = cohort_pct.div(base, axis=0) * 100
                 else:
-                    cohort_pct = cohort_df.copy()
-                    if 0 in cohort_pct.columns:
-                        base = cohort_pct[0].replace(0, np.nan)
-                        cohort_pct = cohort_pct.div(base, axis=0) * 100
-                    else:
-                        base = cohort_pct.iloc[:, 0].replace(0, np.nan)
-                        cohort_pct = cohort_pct.div(base, axis=0) * 100
+                    base = cohort_pct.iloc[:, 0].replace(0, np.nan)
+                    cohort_pct = cohort_pct.div(base, axis=0) * 100
 
-                    cohort_pct = cohort_pct.round(1)
+                cohort_pct = cohort_pct.round(1)
 
-                    text_matrix = cohort_pct.map(
-                        lambda v: f"{v:.1f}%" if not np.isnan(v) and v > 0 else ""
+                text_matrix = cohort_pct.map(
+                    lambda v: f"{v:.1f}%" if not np.isnan(v) and v > 0 else ""
+                )
+
+                fig = px.imshow(
+                    cohort_pct,
+                    text_auto=False,
+                    aspect="auto",
+                    color_continuous_scale=["#ffffff", "#e0c7d8", "#1BA0E2"],
+                    zmin=0, zmax=100
+                )
+
+                fig.update_traces(
+                    text=text_matrix.values,
+                    texttemplate="%{text}",
+                    textfont=dict(size=10)
+                )
+
+                fig.update_layout(
+                    title=dict(
+                        text="Employee Booking Cohort Heatmap  "
+                             "<span style='color:#6a8fa0;font-size:11px;'>"
+                             "Retensi relatif terhadap bulan pertama booking (Bulan ke-0 = 100%)"
+                             "</span>",
+                        font=dict(size=13, color="#2a1a2a"),
+                        x=0, xanchor="left"
+                    ),
+                    xaxis_title="Bulan ke-n sejak booking pertama",
+                    yaxis_title="Cohort (Bulan Pertama Booking)",
+                    coloraxis_colorbar=dict(
+                        title=dict(text="%", font=dict(size=10, color="#6a8fa0")),
+                        ticksuffix="%",
+                        tickfont=dict(size=9, color="#6a8fa0"),
+                        len=0.8
+                    ),
+                    height=max(400, len(cohort_pct) * 36 + 120),
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    margin=dict(l=60, r=40, t=70, b=60),
+                    font=dict(size=11, color="#2a1a2a")
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+                output = BytesIO()
+                cohort_df.reset_index().to_excel(output, index=False, sheet_name="Employee Cohort")
+                output.seek(0)
+
+                if st.session_state.get('role') == 'Admin':
+                    st.download_button(
+                        label="⬇️ Download Data",
+                        data=output,
+                        file_name="employee_booking_cohort.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_employee_cohort")
+                else:
+                    st.markdown("""
+                    <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
+                    border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;
+                    display:flex;align-items:center;gap:8px;'>
+                        <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
+                    </div>""", unsafe_allow_html=True)
+
+                with st.expander("📖 Panduan Membaca Cohort Heatmap", expanded=False):
+                    _cohort_narasi = (
+                        "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:4px;'>"
+                        "<div style='background:#f0f8ff;border-radius:9px;padding:14px 16px;border:1px solid #b8d9f0;'>"
+                        "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>&#128269; Apa itu Cohort Heatmap?</div>"
+                        "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.7;'>Cohort Heatmap mengelompokkan karyawan berdasarkan <b>bulan pertama kali mereka melakukan booking</b> (cohort). Nilai pada setiap sel adalah <b>persentase retensi</b>.</div></div>"
+                        "<div style='background:#f0f8ff;border-radius:9px;padding:14px 16px;border:1px solid #b8d9f0;'>"
+                        "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>&#127919; Kegunaan Analisis Ini</div>"
+                        "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.8;'>&#8226; <b>Pantau loyalitas traveler</b><br>&#8226; <b>Deteksi penurunan aktivitas</b><br>&#8226; <b>Evaluasi kebijakan travel</b><br>&#8226; <b>Benchmark antar periode</b></div></div>"
+                        "<div style='background:#f0f8ff;border-radius:9px;padding:14px 16px;border:1px solid #b8d9f0;'>"
+                        "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>&#128202; Cara Membaca</div>"
+                        "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.8;'>&#8226; <b>Kolom 0</b> = bulan pertama &#8594; selalu <b>100%</b><br>&#8226; <b>Warna gelap</b> = retensi tinggi &#9989;<br>&#8226; <b>Warna terang</b> = retensi rendah &#9888;&#65039;</div></div>"
+                        "</div>"
                     )
+                    st.markdown(_cohort_narasi, unsafe_allow_html=True)
 
-                    fig = px.imshow(
-                        cohort_pct,
-                        text_auto=False,
-                        aspect="auto",
-                        color_continuous_scale=["#ffffff", "#e0c7d8", "#1BA0E2"],
-                        zmin=0, zmax=100
-                    )
+                today = df_crm["Issue Time"].max()
 
-                    fig.update_traces(
-                        text=text_matrix.values,
-                        texttemplate="%{text}",
-                        textfont=dict(size=10)
-                    )
+                traveler_stats["Recency (Days)"] = (today - traveler_stats["last_booking"]).dt.days
 
-                    fig.update_layout(
-                        title=dict(
-                            text="Employee Booking Cohort Heatmap  "
-                                 "<span style='color:#6a8fa0;font-size:11px;'>"
-                                 "Retensi relatif terhadap bulan pertama booking (Bulan ke-0 = 100%)"
-                                 "</span>",
-                            font=dict(size=13, color="#2a1a2a"),
-                            x=0, xanchor="left"
-                        ),
-                        xaxis_title="Bulan ke-n sejak booking pertama",
-                        yaxis_title="Cohort (Bulan Pertama Booking)",
-                        coloraxis_colorbar=dict(
-                            title=dict(text="%", font=dict(size=10, color="#6a8fa0")),
-                            ticksuffix="%",
-                            tickfont=dict(size=9, color="#6a8fa0"),
-                            len=0.8
-                        ),
-                        height=max(400, len(cohort_pct) * 36 + 120),
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=60, r=40, t=70, b=60),
-                        font=dict(size=11, color="#2a1a2a")
-                    )
+                if "Invoice Amount" in df_crm.columns:
+                    spend = (df_crm.groupby("Employee Id")["Invoice Amount"].sum().reset_index(name="Total Spend"))
+                    traveler_stats = traveler_stats.merge(spend, on="Employee Id", how="left")
+                else:
+                    traveler_stats["Total Spend"] = 0
 
-                    st.plotly_chart(fig, use_container_width=True)
+                def segment(row):
+                    if row["total_tr"] >= 10: return "High Value"
+                    elif row["total_tr"] >= 3: return "Medium Value"
+                    else: return "Low Value"
 
-                    output = BytesIO()
-                    cohort_df.reset_index().to_excel(output, index=False, sheet_name="Employee Cohort")
-                    output.seek(0)
+                traveler_stats["Segment"] = traveler_stats.apply(segment, axis=1)
 
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(
-                            label="⬇️ Download Data",
-                            data=output,
-                            file_name="employee_booking_cohort.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_employee_cohort")
-                    else:
-                        st.markdown("""
-                        <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
-                        border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;
-                        display:flex;align-items:center;gap:8px;'>
-                            <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
-                        </div>""", unsafe_allow_html=True)
+                st.markdown("<div class='section-title'>Top Valuable Travelers</div>", unsafe_allow_html=True)
 
-                    with st.expander("📖 Panduan Membaca Cohort Heatmap", expanded=False):
-                        _cohort_narasi = (
-                            "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:4px;'>"
-                            "<div style='background:#f0f8ff;border-radius:9px;padding:14px 16px;border:1px solid #b8d9f0;'>"
-                            "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>&#128269; Apa itu Cohort Heatmap?</div>"
-                            "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.7;'>Cohort Heatmap mengelompokkan karyawan berdasarkan <b>bulan pertama kali mereka melakukan booking</b> (cohort). Nilai pada setiap sel adalah <b>persentase retensi</b>.</div></div>"
-                            "<div style='background:#f0f8ff;border-radius:9px;padding:14px 16px;border:1px solid #b8d9f0;'>"
-                            "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>&#127919; Kegunaan Analisis Ini</div>"
-                            "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.8;'>&#8226; <b>Pantau loyalitas traveler</b><br>&#8226; <b>Deteksi penurunan aktivitas</b><br>&#8226; <b>Evaluasi kebijakan travel</b><br>&#8226; <b>Benchmark antar periode</b></div></div>"
-                            "<div style='background:#f0f8ff;border-radius:9px;padding:14px 16px;border:1px solid #b8d9f0;'>"
-                            "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>&#128202; Cara Membaca</div>"
-                            "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.8;'>&#8226; <b>Kolom 0</b> = bulan pertama &#8594; selalu <b>100%</b><br>&#8226; <b>Warna gelap</b> = retensi tinggi &#9989;<br>&#8226; <b>Warna terang</b> = retensi rendah &#9888;&#65039;</div></div>"
-                            "</div>"
+                top_travelers = traveler_stats.sort_values(by=["total_tr", "Total Spend"], ascending=False).head(10)
+                display_cols = ["Employee Id", "total_tr", "total_booking", "Total Spend", "Segment"]
+                numeric_cols = ["total_tr", "total_booking", "Total Spend"]
+
+                st.dataframe(
+                    top_travelers[display_cols]
+                        .style
+                        .format({"Total Spend": lambda x: f"Rp{x:,.0f}" if pd.notnull(x) else "Rp 0"})
+                        .set_properties(subset=numeric_cols, **{"text-align": "right"}),
+                    use_container_width=True
+                )
+
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                if True:  # (sebelumnya "with tab4:" redundan — sudah berada di dalam tab4, cukup dihilangkan tanpa mengubah indentasi di bawahnya)
+                    st.markdown("### Behavioral Persona Clustering")
+
+                    df_behavior = df_all.copy()
+                    selected_data = pd.DataFrame()       # default agar aman jika kolom tidak lengkap
+                    selected_cluster = None              # default — dipakai di blok radar chart di bawah
+                    employee_features = pd.DataFrame()   # default — dipakai di blok radar/insight di bawah
+                    feature_cols = []                    # default — dipakai di blok radar/insight di bawah
+
+                    required_cols = ["Travel Request Number","Employee Id","Issue Time","Check in Date","Check out Date","Number of Rooms Night"]
+
+                    if all(col in df_behavior.columns for col in required_cols):
+
+                        # PERBAIKAN PERFORMA: pipeline clustering (parsing tanggal, groupby,
+                        # scaling, fit KMeans) dipindah ke fungsi ber-cache — hasilnya sama
+                        # persis berapa pun kali dropdown Employee Id di bawah ini diganti,
+                        # jadi tidak perlu dihitung ulang setiap kali (sebelumnya inilah yang
+                        # membuat mengganti Employee Id terasa memicu render ulang seluruh halaman).
+                        _df_behavior_slim = df_behavior[required_cols].copy()
+                        employee_features, feature_cols = build_employee_persona_clusters(_df_behavior_slim)
+
+                        # PERBAIKAN: dropdown Employee Id diganti free-text search sesuai permintaan —
+                        # user mengetik (sebagian/seluruh) Employee Id, bukan memilih dari daftar dropdown.
+                        _emp_search = st.text_input(
+                            "🔍 Cari Employee Id",
+                            value="",
+                            placeholder="Ketik Employee ID (boleh sebagian)...",
+                            key="persona_employee_search"
                         )
-                        st.markdown(_cohort_narasi, unsafe_allow_html=True)
 
-                    today = df_crm["Issue Time"].max()
+                        selected_data = pd.DataFrame()
 
-                    traveler_stats["Recency (Days)"] = (today - traveler_stats["last_booking"]).dt.days
+                        if not _emp_search.strip():
+                            st.info("ℹ️ Ketik Employee ID di atas untuk melihat profil persona-nya.")
+                        else:
+                            _emp_matches = employee_features[
+                                employee_features["Employee Id"].astype(str)
+                                .str.contains(_emp_search.strip(), case=False, na=False, regex=False)
+                            ]
 
-                    if "Invoice Amount" in df_crm.columns:
-                        spend = (df_crm.groupby("Employee Id")["Invoice Amount"].sum().reset_index(name="Total Spend"))
-                        traveler_stats = traveler_stats.merge(spend, on="Employee Id", how="left")
-                    else:
-                        traveler_stats["Total Spend"] = 0
-
-                    def segment(row):
-                        if row["total_tr"] >= 10: return "High Value"
-                        elif row["total_tr"] >= 3: return "Medium Value"
-                        else: return "Low Value"
-
-                    traveler_stats["Segment"] = traveler_stats.apply(segment, axis=1)
-
-                    st.markdown("<div class='section-title'>Top Valuable Travelers</div>", unsafe_allow_html=True)
-
-                    top_travelers = traveler_stats.sort_values(by=["total_tr", "Total Spend"], ascending=False).head(10)
-                    display_cols = ["Employee Id", "total_tr", "total_booking", "Total Spend", "Segment"]
-                    numeric_cols = ["total_tr", "total_booking", "Total Spend"]
-
-                    st.dataframe(
-                        top_travelers[display_cols]
-                            .style
-                            .format({"Total Spend": lambda x: f"Rp{x:,.0f}" if pd.notnull(x) else "Rp 0"})
-                            .set_properties(subset=numeric_cols, **{"text-align": "right"}),
-                        use_container_width=True
-                    )
-
-                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                    if True:  # (sebelumnya "with tab4:" redundan — sudah berada di dalam tab4, cukup dihilangkan tanpa mengubah indentasi di bawahnya)
-                        st.markdown("### Behavioral Persona Clustering")
-
-                        df_behavior = df_all.copy()
-                        selected_data = pd.DataFrame()       # default agar aman jika kolom tidak lengkap
-                        selected_cluster = None              # default — dipakai di blok radar chart di bawah
-                        employee_features = pd.DataFrame()   # default — dipakai di blok radar/insight di bawah
-                        feature_cols = []                    # default — dipakai di blok radar/insight di bawah
-
-                        required_cols = ["Travel Request Number","Employee Id","Issue Time","Check in Date","Check out Date","Number of Rooms Night"]
-
-                        if all(col in df_behavior.columns for col in required_cols):
-
-                            # PERBAIKAN PERFORMA: pipeline clustering (parsing tanggal, groupby,
-                            # scaling, fit KMeans) dipindah ke fungsi ber-cache — hasilnya sama
-                            # persis berapa pun kali dropdown Employee Id di bawah ini diganti,
-                            # jadi tidak perlu dihitung ulang setiap kali (sebelumnya inilah yang
-                            # membuat mengganti Employee Id terasa memicu render ulang seluruh halaman).
-                            _df_behavior_slim = df_behavior[required_cols].copy()
-                            employee_features, feature_cols = build_employee_persona_clusters(_df_behavior_slim)
-
-                            # PERBAIKAN: dropdown Employee Id diganti free-text search sesuai permintaan —
-                            # user mengetik (sebagian/seluruh) Employee Id, bukan memilih dari daftar dropdown.
-                            _emp_search = st.text_input(
-                                "🔍 Cari Employee Id",
-                                value="",
-                                placeholder="Ketik Employee ID (boleh sebagian)...",
-                                key="persona_employee_search"
-                            )
-
-                            selected_data = pd.DataFrame()
-
-                            if not _emp_search.strip():
-                                st.info("ℹ️ Ketik Employee ID di atas untuk melihat profil persona-nya.")
+                            if _emp_matches.empty:
+                                st.warning(f"⚠️ Employee Id yang mengandung \"{_emp_search.strip()}\" tidak ditemukan.")
+                            elif len(_emp_matches) == 1:
+                                selected_data = _emp_matches
+                                selected_employee = selected_data["Employee Id"].values[0]
+                                selected_cluster = selected_data["Cluster"].values[0]
+                                selected_persona = selected_data["Persona"].values[0]
+                                st.success(f"Employee Id: {selected_employee} — Persona: {selected_persona}")
                             else:
-                                _emp_matches = employee_features[
-                                    employee_features["Employee Id"].astype(str)
-                                    .str.contains(_emp_search.strip(), case=False, na=False, regex=False)
-                                ]
+                                st.info(
+                                    f"🔎 Ditemukan {len(_emp_matches)} Employee Id yang cocok — "
+                                    f"perjelas ketikan Anda untuk mempersempit ke satu hasil."
+                                )
+                                _preview_cols = [c for c in ["Employee Id", "Persona", "Booking_Frequency"] if c in _emp_matches.columns]
+                                st.dataframe(
+                                    _emp_matches[_preview_cols].head(15),
+                                    use_container_width=True, hide_index=True
+                                )
+                                if len(_emp_matches) > 15:
+                                    st.caption(f"Menampilkan 15 dari {len(_emp_matches)} hasil.")
 
-                                if _emp_matches.empty:
-                                    st.warning(f"⚠️ Employee Id yang mengandung \"{_emp_search.strip()}\" tidak ditemukan.")
-                                elif len(_emp_matches) == 1:
-                                    selected_data = _emp_matches
-                                    selected_employee = selected_data["Employee Id"].values[0]
-                                    selected_cluster = selected_data["Cluster"].values[0]
-                                    selected_persona = selected_data["Persona"].values[0]
-                                    st.success(f"Employee Id: {selected_employee} — Persona: {selected_persona}")
-                                else:
-                                    st.info(
-                                        f"🔎 Ditemukan {len(_emp_matches)} Employee Id yang cocok — "
-                                        f"perjelas ketikan Anda untuk mempersempit ke satu hasil."
-                                    )
-                                    _preview_cols = [c for c in ["Employee Id", "Persona", "Booking_Frequency"] if c in _emp_matches.columns]
-                                    st.dataframe(
-                                        _emp_matches[_preview_cols].head(15),
-                                        use_container_width=True, hide_index=True
-                                    )
-                                    if len(_emp_matches) > 15:
-                                        st.caption(f"Menampilkan 15 dari {len(_emp_matches)} hasil.")
+                if not selected_data.empty:
+                    st.markdown("""
+                    <style>
+                    .metric-card{background:white;padding:20px 16px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.08);text-align:center;transition:all 0.3s ease;margin-bottom:12px;border:1px solid #f0f0f0;border-top:3px solid #1BA0E2;}
+                    .metric-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(156,87,137,0.12);}
+                    .metric-value{font-size:32px;font-weight:700;margin:8px 0;color:#1BA0E2;}
+                    .metric-label{font-size:11px;color:#888888;text-transform:uppercase;letter-spacing:1px;font-weight:500;}
+                    .insight-card{background:white;border-radius:6px;padding:16px;margin-bottom:10px;border-left:4px solid;box-shadow:0 1px 4px rgba(0,0,0,0.05);font-size:14px;line-height:1.6;}
+                    .insight-success{border-left-color:#10b981;background:linear-gradient(to right,#ecfdf5,white);}
+                    .insight-warning{border-left-color:#f59e0b;background:linear-gradient(to right,#fffbeb,white);}
+                    .insight-info{border-left-color:#1BA0E2;background:linear-gradient(to right,#f8f4f7,white);}
+                    .insight-error{border-left-color:#ef4444;background:linear-gradient(to right,#fef2f2,white);}
+                    .persona-badge{background:linear-gradient(135deg,#1BA0E2 0%,#75caf0 100%);padding:24px;border-radius:8px;text-align:center;color:white;font-size:19px;font-weight:600;box-shadow:0 4px 16px rgba(156,87,137,0.2);margin:15px 0;}
+                    .section-header{font-size:18px;font-weight:600;color:#1a1a1a;margin:30px 0 18px 0;padding-bottom:8px;border-bottom:2px solid #1BA0E2;}
+                    .progress-container{background:#f0f0f0;height:6px;border-radius:3px;overflow:hidden;margin-top:6px;}
+                    .progress-bar{height:100%;border-radius:3px;transition:width 0.4s ease;}
+                    .breakdown-card{background:white;padding:12px 14px;border-radius:6px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04);border:1px solid #f0f0f0;}
+                    </style>
+                    """, unsafe_allow_html=True)
 
-                    if not selected_data.empty:
-                        st.markdown("""
-                        <style>
-                        .metric-card{background:white;padding:20px 16px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.08);text-align:center;transition:all 0.3s ease;margin-bottom:12px;border:1px solid #f0f0f0;border-top:3px solid #1BA0E2;}
-                        .metric-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(156,87,137,0.12);}
-                        .metric-value{font-size:32px;font-weight:700;margin:8px 0;color:#1BA0E2;}
-                        .metric-label{font-size:11px;color:#888888;text-transform:uppercase;letter-spacing:1px;font-weight:500;}
-                        .insight-card{background:white;border-radius:6px;padding:16px;margin-bottom:10px;border-left:4px solid;box-shadow:0 1px 4px rgba(0,0,0,0.05);font-size:14px;line-height:1.6;}
-                        .insight-success{border-left-color:#10b981;background:linear-gradient(to right,#ecfdf5,white);}
-                        .insight-warning{border-left-color:#f59e0b;background:linear-gradient(to right,#fffbeb,white);}
-                        .insight-info{border-left-color:#1BA0E2;background:linear-gradient(to right,#f8f4f7,white);}
-                        .insight-error{border-left-color:#ef4444;background:linear-gradient(to right,#fef2f2,white);}
-                        .persona-badge{background:linear-gradient(135deg,#1BA0E2 0%,#75caf0 100%);padding:24px;border-radius:8px;text-align:center;color:white;font-size:19px;font-weight:600;box-shadow:0 4px 16px rgba(156,87,137,0.2);margin:15px 0;}
-                        .section-header{font-size:18px;font-weight:600;color:#1a1a1a;margin:30px 0 18px 0;padding-bottom:8px;border-bottom:2px solid #1BA0E2;}
-                        .progress-container{background:#f0f0f0;height:6px;border-radius:3px;overflow:hidden;margin-top:6px;}
-                        .progress-bar{height:100%;border-radius:3px;transition:width 0.4s ease;}
-                        .breakdown-card{background:white;padding:12px 14px;border-radius:6px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04);border:1px solid #f0f0f0;}
-                        </style>
-                        """, unsafe_allow_html=True)
+                    col1, col2 = st.columns([1, 1.4], gap="large")
 
-                        col1, col2 = st.columns([1, 1.4], gap="large")
+                    with col1:
+                        st.markdown('<div class="section-header">📊 Behavioral Overview</div>', unsafe_allow_html=True)
+                        bf = selected_data["Booking_Frequency"].values[0]
+                        lead = selected_data["Avg_Lead_Time"].values[0]
+                        lf = selected_data["Last_Minute_Ratio"].values[0]
+                        weekend = selected_data["Weekend_Ratio"].values[0]
+                        stay = selected_data["Avg_Stay"].values[0]
 
-                        with col1:
-                            st.markdown('<div class="section-header">📊 Behavioral Overview</div>', unsafe_allow_html=True)
-                            bf = selected_data["Booking_Frequency"].values[0]
-                            lead = selected_data["Avg_Lead_Time"].values[0]
-                            lf = selected_data["Last_Minute_Ratio"].values[0]
-                            weekend = selected_data["Weekend_Ratio"].values[0]
-                            stay = selected_data["Avg_Stay"].values[0]
+                        st.markdown('<div class="section-header">Key Performance Indicators</div>', unsafe_allow_html=True)
+                        m1, m2 = st.columns(2)
+                        with m1:
+                            st.markdown(f'<div class="metric-card"><div class="metric-label">Booking Frequency</div><div class="metric-value">{round(bf,1)}</div></div>', unsafe_allow_html=True)
+                        with m2:
+                            st.markdown(f'<div class="metric-card"><div class="metric-label">Lead Time (Days)</div><div class="metric-value">{round(lead,1)}</div></div>', unsafe_allow_html=True)
+                        m3, m4 = st.columns(2)
+                        with m3:
+                            st.markdown(f'<div class="metric-card"><div class="metric-label">Last Minute Ratio</div><div class="metric-value">{round(lf*100,1)}%</div></div>', unsafe_allow_html=True)
+                        with m4:
+                            st.markdown(f'<div class="metric-card"><div class="metric-label">Weekend Ratio</div><div class="metric-value">{round(weekend*100,1)}%</div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="metric-card"><div class="metric-label">Average Stay Duration</div><div class="metric-value">{round(stay,1)} <span style="font-size:18px;font-weight:500;">nights</span></div></div>', unsafe_allow_html=True)
 
-                            st.markdown('<div class="section-header">Key Performance Indicators</div>', unsafe_allow_html=True)
-                            m1, m2 = st.columns(2)
-                            with m1:
-                                st.markdown(f'<div class="metric-card"><div class="metric-label">Booking Frequency</div><div class="metric-value">{round(bf,1)}</div></div>', unsafe_allow_html=True)
-                            with m2:
-                                st.markdown(f'<div class="metric-card"><div class="metric-label">Lead Time (Days)</div><div class="metric-value">{round(lead,1)}</div></div>', unsafe_allow_html=True)
-                            m3, m4 = st.columns(2)
-                            with m3:
-                                st.markdown(f'<div class="metric-card"><div class="metric-label">Last Minute Ratio</div><div class="metric-value">{round(lf*100,1)}%</div></div>', unsafe_allow_html=True)
-                            with m4:
-                                st.markdown(f'<div class="metric-card"><div class="metric-label">Weekend Ratio</div><div class="metric-value">{round(weekend*100,1)}%</div></div>', unsafe_allow_html=True)
-                            st.markdown(f'<div class="metric-card"><div class="metric-label">Average Stay Duration</div><div class="metric-value">{round(stay,1)} <span style="font-size:18px;font-weight:500;">nights</span></div></div>', unsafe_allow_html=True)
+                    with col2:
+                        st.markdown('<div class="section-header">🎯 Behavioral Radar Profile</div>', unsafe_allow_html=True)
 
-                        with col2:
-                            st.markdown('<div class="section-header">🎯 Behavioral Radar Profile</div>', unsafe_allow_html=True)
+                        from sklearn.preprocessing import MinMaxScaler
+                        cluster_profile = employee_features.groupby("Cluster")[feature_cols].mean()
+                        minmax_scaler = MinMaxScaler()
+                        cluster_scaled = minmax_scaler.fit_transform(cluster_profile)
 
-                            from sklearn.preprocessing import MinMaxScaler
-                            cluster_profile = employee_features.groupby("Cluster")[feature_cols].mean()
-                            minmax_scaler = MinMaxScaler()
-                            cluster_scaled = minmax_scaler.fit_transform(cluster_profile)
+                        profile_row = cluster_scaled[selected_cluster]
+                        radar_values = list(profile_row) + [profile_row[0]]
+                        radar_labels = feature_cols + [feature_cols[0]]
 
-                            profile_row = cluster_scaled[selected_cluster]
-                            radar_values = list(profile_row) + [profile_row[0]]
-                            radar_labels = feature_cols + [feature_cols[0]]
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatterpolar(r=radar_values, theta=radar_labels, fill='toself',
+                            line=dict(width=4, color="#1BA0E2"), fillcolor="rgba(156,87,137,0.25)", name='Profile'))
+                        fig.add_trace(go.Scatterpolar(r=[0.5]*len(radar_labels), theta=radar_labels,
+                            line=dict(width=2, color="rgba(138,77,120,0.4)", dash='dash'), name='Benchmark'))
 
-                            fig = go.Figure()
-                            fig.add_trace(go.Scatterpolar(r=radar_values, theta=radar_labels, fill='toself',
-                                line=dict(width=4, color="#1BA0E2"), fillcolor="rgba(156,87,137,0.25)", name='Profile'))
-                            fig.add_trace(go.Scatterpolar(r=[0.5]*len(radar_labels), theta=radar_labels,
-                                line=dict(width=2, color="rgba(138,77,120,0.4)", dash='dash'), name='Benchmark'))
+                        fig.update_layout(
+                            polar=dict(radialaxis=dict(visible=True, range=[0,1])),
+                            showlegend=True, height=580,
+                            margin=dict(l=50,r=50,t=50,b=50),
+                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
 
-                            fig.update_layout(
-                                polar=dict(radialaxis=dict(visible=True, range=[0,1])),
-                                showlegend=True, height=580,
-                                margin=dict(l=50,r=50,t=50,b=50),
-                                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
+                if not selected_data.empty:
+                    col1, col2 = st.columns([1, 1.4], gap="large")
 
-                    if not selected_data.empty:
-                        col1, col2 = st.columns([1, 1.4], gap="large")
+                    with col1:
+                        st.markdown('<div class="section-header">💡 Behavioral Insights</div>', unsafe_allow_html=True)
+                        if lf > 0.5:
+                            st.markdown('<div class="insight-card insight-error"><strong>⚠️ Reactive Traveler</strong><br>High last-minute booking ratio detected.</div>', unsafe_allow_html=True)
+                        elif lead > 7:
+                            st.markdown('<div class="insight-card insight-success"><strong>✅ Strategic Planner</strong><br>Excellent advance planning.</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown('<div class="insight-card insight-info"><strong>ℹ️ Balanced Approach</strong><br>Shows balanced booking behavior.</div>', unsafe_allow_html=True)
 
-                        with col1:
-                            st.markdown('<div class="section-header">💡 Behavioral Insights</div>', unsafe_allow_html=True)
-                            if lf > 0.5:
-                                st.markdown('<div class="insight-card insight-error"><strong>⚠️ Reactive Traveler</strong><br>High last-minute booking ratio detected.</div>', unsafe_allow_html=True)
-                            elif lead > 7:
-                                st.markdown('<div class="insight-card insight-success"><strong>✅ Strategic Planner</strong><br>Excellent advance planning.</div>', unsafe_allow_html=True)
-                            else:
-                                st.markdown('<div class="insight-card insight-info"><strong>ℹ️ Balanced Approach</strong><br>Shows balanced booking behavior.</div>', unsafe_allow_html=True)
+                        avg_bf = employee_features["Booking_Frequency"].mean()
+                        if bf > avg_bf:
+                            intensity_pct = ((bf - avg_bf) / avg_bf * 100)
+                            st.markdown(f'<div class="insight-card insight-warning"><strong>📊 High Activity</strong><br>Travel intensity <strong>{round(intensity_pct,1)}%</strong> above peer average.</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown('<div class="insight-card insight-success"><strong>📊 Normal Activity</strong><br>Travel intensity aligns with baseline.</div>', unsafe_allow_html=True)
 
-                            avg_bf = employee_features["Booking_Frequency"].mean()
-                            if bf > avg_bf:
-                                intensity_pct = ((bf - avg_bf) / avg_bf * 100)
-                                st.markdown(f'<div class="insight-card insight-warning"><strong>📊 High Activity</strong><br>Travel intensity <strong>{round(intensity_pct,1)}%</strong> above peer average.</div>', unsafe_allow_html=True)
-                            else:
-                                st.markdown('<div class="insight-card insight-success"><strong>📊 Normal Activity</strong><br>Travel intensity aligns with baseline.</div>', unsafe_allow_html=True)
+                        if weekend > 0.4:
+                            st.markdown('<div class="insight-card insight-info"><strong>🌅 Weekend Preference</strong><br>Strong weekend tendency.</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown('<div class="insight-card insight-info"><strong>💼 Weekday Focus</strong><br>Primarily weekday travel.</div>', unsafe_allow_html=True)
 
-                            if weekend > 0.4:
-                                st.markdown('<div class="insight-card insight-info"><strong>🌅 Weekend Preference</strong><br>Strong weekend tendency.</div>', unsafe_allow_html=True)
-                            else:
-                                st.markdown('<div class="insight-card insight-info"><strong>💼 Weekday Focus</strong><br>Primarily weekday travel.</div>', unsafe_allow_html=True)
+                        avg_stay_val = employee_features["Avg_Stay"].mean()
+                        if stay > avg_stay_val:
+                            st.markdown(f'<div class="insight-card insight-warning"><strong>🏨 Extended Stays</strong><br><strong>{round(stay-avg_stay_val,1)}</strong> nights above average.</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown('<div class="insight-card insight-success"><strong>🏨 Quick Visits</strong><br>Efficient short trips.</div>', unsafe_allow_html=True)
 
-                            avg_stay_val = employee_features["Avg_Stay"].mean()
-                            if stay > avg_stay_val:
-                                st.markdown(f'<div class="insight-card insight-warning"><strong>🏨 Extended Stays</strong><br><strong>{round(stay-avg_stay_val,1)}</strong> nights above average.</div>', unsafe_allow_html=True)
-                            else:
-                                st.markdown('<div class="insight-card insight-success"><strong>🏨 Quick Visits</strong><br>Efficient short trips.</div>', unsafe_allow_html=True)
-
-                        with col2:
-                            st.markdown('<div class="section-header">📋 Metric Breakdown</div>', unsafe_allow_html=True)
-                            for i, feature in enumerate(feature_cols):
-                                score = profile_row[i]
-                                if score > 0.7: status, status_icon, color = "High", "🔴", "#1BA0E2"
-                                elif score > 0.4: status, status_icon, color = "Medium", "🟡", "#75caf0"
-                                else: status, status_icon, color = "Low", "🟢", "#e7c3d9"
-                                progress_width = int(score * 100)
-                                st.markdown(f"""
-                                <div class="breakdown-card">
-                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                                        <strong style="color:#1a1a1a;font-size:13px;">{feature.replace("_"," ")}</strong>
-                                        <span style="color:#888;font-weight:500;font-size:11px;margin:0 10px;">{score:.2f}</span>
-                                        <span style="color:{color};font-weight:600;font-size:11px;">{status_icon} {status}</span>
-                                    </div>
-                                    <div class="progress-container">
-                                        <div class="progress-bar" style="background:{color};width:{progress_width}%;"></div>
-                                    </div>
-                                </div>""", unsafe_allow_html=True)
+                    with col2:
+                        st.markdown('<div class="section-header">📋 Metric Breakdown</div>', unsafe_allow_html=True)
+                        for i, feature in enumerate(feature_cols):
+                            score = profile_row[i]
+                            if score > 0.7: status, status_icon, color = "High", "🔴", "#1BA0E2"
+                            elif score > 0.4: status, status_icon, color = "Medium", "🟡", "#75caf0"
+                            else: status, status_icon, color = "Low", "🟢", "#e7c3d9"
+                            progress_width = int(score * 100)
+                            st.markdown(f"""
+                            <div class="breakdown-card">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                                    <strong style="color:#1a1a1a;font-size:13px;">{feature.replace("_"," ")}</strong>
+                                    <span style="color:#888;font-weight:500;font-size:11px;margin:0 10px;">{score:.2f}</span>
+                                    <span style="color:{color};font-weight:600;font-size:11px;">{status_icon} {status}</span>
+                                </div>
+                                <div class="progress-container">
+                                    <div class="progress-bar" style="background:{color};width:{progress_width}%;"></div>
+                                </div>
+                            </div>""", unsafe_allow_html=True)
 
         # ======================================
         # TAB 5: SOCIAL NETWORK ANALYSIS
@@ -4302,416 +4319,413 @@ def main_app():
         # TAB 5: SOCIAL NETWORK ANALYSIS — MTRAX Blue Theme
         # ======================================
         with tab5:
-            if _tab_locked():
-                _render_coming_soon('Network')
-            else:
 
-                # ── Header Banner ──────────────────────────────────────────────
-                st.markdown("""
-                <style>
-                .sna-header {
-                    background: linear-gradient(135deg, #062440 0%, #0D7FCC 55%, #1BA0E2 100%);
-                    border-radius: 14px;
-                    padding: 30px 36px;
-                    margin-bottom: 24px;
-                    position: relative;
-                    overflow: hidden;
-                    box-shadow: 0 8px 32px rgba(13,127,204,0.28);
-                }
-                .sna-header::before {
-                    content: '';
-                    position: absolute; top: -60px; right: -60px;
-                    width: 260px; height: 260px; border-radius: 50%;
-                    background: rgba(255,255,255,0.05);
-                }
-                .sna-header::after {
-                    content: '';
-                    position: absolute; bottom: -40px; left: 30%;
-                    width: 180px; height: 180px; border-radius: 50%;
-                    background: rgba(226,248,113,0.07);
-                }
-                .sna-header-inner {
-                    display: flex; align-items: center; gap: 16px;
-                    position: relative; z-index: 1;
-                }
-                .sna-icon-wrap {
-                    width: 52px; height: 52px; border-radius: 12px;
-                    background: rgba(255,255,255,0.14);
-                    border: 1px solid rgba(255,255,255,0.22);
-                    display: flex; align-items: center; justify-content: center;
-                    font-size: 1.6em; flex-shrink: 0;
-                }
-                .sna-title { color: #fff; font-size: 1.45em; font-weight: 700; margin: 0; }
-                .sna-sub { color: rgba(255,255,255,0.60); font-size: 0.82em; margin-top: 4px; }
-                .sna-pill {
-                    margin-left: auto;
-                    display: inline-flex; align-items: center; gap: 7px;
-                    background: rgba(255,255,255,0.12);
-                    border: 1px solid rgba(255,255,255,0.22);
-                    border-radius: 100px; padding: 6px 16px;
-                    font-size: 0.72em; font-weight: 600;
-                    color: rgba(255,255,255,0.85); letter-spacing: 0.06em;
-                }
-                .sna-pill-dot {
-                    width: 6px; height: 6px; border-radius: 50%;
-                    background: #e2f871;
-                    box-shadow: 0 0 6px #e2f871;
-                    animation: sna-blink 2s ease infinite;
-                }
-                @keyframes sna-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+            # ── Header Banner ──────────────────────────────────────────────
+            st.markdown("""
+            <style>
+            .sna-header {
+                background: linear-gradient(135deg, #062440 0%, #0D7FCC 55%, #1BA0E2 100%);
+                border-radius: 14px;
+                padding: 30px 36px;
+                margin-bottom: 24px;
+                position: relative;
+                overflow: hidden;
+                box-shadow: 0 8px 32px rgba(13,127,204,0.28);
+            }
+            .sna-header::before {
+                content: '';
+                position: absolute; top: -60px; right: -60px;
+                width: 260px; height: 260px; border-radius: 50%;
+                background: rgba(255,255,255,0.05);
+            }
+            .sna-header::after {
+                content: '';
+                position: absolute; bottom: -40px; left: 30%;
+                width: 180px; height: 180px; border-radius: 50%;
+                background: rgba(226,248,113,0.07);
+            }
+            .sna-header-inner {
+                display: flex; align-items: center; gap: 16px;
+                position: relative; z-index: 1;
+            }
+            .sna-icon-wrap {
+                width: 52px; height: 52px; border-radius: 12px;
+                background: rgba(255,255,255,0.14);
+                border: 1px solid rgba(255,255,255,0.22);
+                display: flex; align-items: center; justify-content: center;
+                font-size: 1.6em; flex-shrink: 0;
+            }
+            .sna-title { color: #fff; font-size: 1.45em; font-weight: 700; margin: 0; }
+            .sna-sub { color: rgba(255,255,255,0.60); font-size: 0.82em; margin-top: 4px; }
+            .sna-pill {
+                margin-left: auto;
+                display: inline-flex; align-items: center; gap: 7px;
+                background: rgba(255,255,255,0.12);
+                border: 1px solid rgba(255,255,255,0.22);
+                border-radius: 100px; padding: 6px 16px;
+                font-size: 0.72em; font-weight: 600;
+                color: rgba(255,255,255,0.85); letter-spacing: 0.06em;
+            }
+            .sna-pill-dot {
+                width: 6px; height: 6px; border-radius: 50%;
+                background: #e2f871;
+                box-shadow: 0 0 6px #e2f871;
+                animation: sna-blink 2s ease infinite;
+            }
+            @keyframes sna-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-                .sna-stat {
-                    background: #fff;
-                    border-radius: 12px;
-                    padding: 20px 18px 16px;
-                    border-top: 3px solid var(--sna-accent, #1BA0E2);
-                    box-shadow: 0 2px 12px rgba(13,127,204,0.08);
-                    text-align: center;
-                    transition: transform .18s ease, box-shadow .18s ease;
-                    margin-bottom: 16px;
-                }
-                .sna-stat:hover {
-                    transform: translateY(-3px);
-                    box-shadow: 0 6px 20px rgba(13,127,204,0.16);
-                }
-                .sna-stat-icon { font-size: 1.5em; margin-bottom: 8px; display: block; }
-                .sna-stat-label {
-                    font-size: 0.68em; font-weight: 600; color: #8a9aaa;
-                    text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 6px;
-                }
-                .sna-stat-value { font-size: 1.45em; font-weight: 700; }
+            .sna-stat {
+                background: #fff;
+                border-radius: 12px;
+                padding: 20px 18px 16px;
+                border-top: 3px solid var(--sna-accent, #1BA0E2);
+                box-shadow: 0 2px 12px rgba(13,127,204,0.08);
+                text-align: center;
+                transition: transform .18s ease, box-shadow .18s ease;
+                margin-bottom: 16px;
+            }
+            .sna-stat:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 6px 20px rgba(13,127,204,0.16);
+            }
+            .sna-stat-icon { font-size: 1.5em; margin-bottom: 8px; display: block; }
+            .sna-stat-label {
+                font-size: 0.68em; font-weight: 600; color: #8a9aaa;
+                text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 6px;
+            }
+            .sna-stat-value { font-size: 1.45em; font-weight: 700; }
 
-                .sna-filter-bar {
-                    background: #f0f8ff;
-                    border: 1px solid #cce4f4;
-                    border-left: 4px solid #1BA0E2;
-                    border-radius: 8px;
-                    padding: 12px 18px 8px;
-                    margin-bottom: 14px;
-                }
-                .sna-filter-label {
-                    font-size: 0.70em; font-weight: 700;
-                    color: #1BA0E2; text-transform: uppercase;
-                    letter-spacing: 0.10em; margin-bottom: 2px;
-                }
+            .sna-filter-bar {
+                background: #f0f8ff;
+                border: 1px solid #cce4f4;
+                border-left: 4px solid #1BA0E2;
+                border-radius: 8px;
+                padding: 12px 18px 8px;
+                margin-bottom: 14px;
+            }
+            .sna-filter-label {
+                font-size: 0.70em; font-weight: 700;
+                color: #1BA0E2; text-transform: uppercase;
+                letter-spacing: 0.10em; margin-bottom: 2px;
+            }
 
-                .sna-rank-head {
-                    background: linear-gradient(135deg, #f0f8ff 0%, #ffffff 100%);
-                    border-radius: 10px; padding: 14px 18px 4px;
-                    border-left: 3px solid #1BA0E2; margin-bottom: 8px;
-                    box-shadow: 0 1px 6px rgba(13,127,204,0.07);
-                }
-                .sna-rank-title {
-                    font-size: 0.78em; font-weight: 700; color: #1BA0E2;
-                    text-transform: uppercase; letter-spacing: 0.07em;
-                }
-                .sna-rank-head-hotel {
-                    background: linear-gradient(135deg, #eef3fb 0%, #ffffff 100%);
-                    border-radius: 10px; padding: 14px 18px 4px;
-                    border-left: 3px solid #0D7FCC; margin-bottom: 8px;
-                    box-shadow: 0 1px 6px rgba(13,127,204,0.07);
-                }
-                .sna-rank-title-hotel {
-                    font-size: 0.78em; font-weight: 700; color: #0D7FCC;
-                    text-transform: uppercase; letter-spacing: 0.07em;
-                }
-                .sna-empty-warn {
-                    background: #f0f8ff; border: 1px solid #cce4f4;
-                    border-left: 4px solid #1BA0E2; border-radius: 8px;
-                    padding: 16px 20px; font-size: 0.88em; color: #0D7FCC;
-                }
-                </style>
+            .sna-rank-head {
+                background: linear-gradient(135deg, #f0f8ff 0%, #ffffff 100%);
+                border-radius: 10px; padding: 14px 18px 4px;
+                border-left: 3px solid #1BA0E2; margin-bottom: 8px;
+                box-shadow: 0 1px 6px rgba(13,127,204,0.07);
+            }
+            .sna-rank-title {
+                font-size: 0.78em; font-weight: 700; color: #1BA0E2;
+                text-transform: uppercase; letter-spacing: 0.07em;
+            }
+            .sna-rank-head-hotel {
+                background: linear-gradient(135deg, #eef3fb 0%, #ffffff 100%);
+                border-radius: 10px; padding: 14px 18px 4px;
+                border-left: 3px solid #0D7FCC; margin-bottom: 8px;
+                box-shadow: 0 1px 6px rgba(13,127,204,0.07);
+            }
+            .sna-rank-title-hotel {
+                font-size: 0.78em; font-weight: 700; color: #0D7FCC;
+                text-transform: uppercase; letter-spacing: 0.07em;
+            }
+            .sna-empty-warn {
+                background: #f0f8ff; border: 1px solid #cce4f4;
+                border-left: 4px solid #1BA0E2; border-radius: 8px;
+                padding: 16px 20px; font-size: 0.88em; color: #0D7FCC;
+            }
+            </style>
 
-                <div class="sna-header">
-                    <div class="sna-header-inner">
-                        <div class="sna-icon-wrap">🕸️</div>
-                        <div>
-                            <div class="sna-title">Social Network Analysis</div>
-                            <div class="sna-sub">Employee ↔ Hotel Interaction Network · Centrality &amp; Dependency Mapping</div>
-                        </div>
-                        <div class="sna-pill">
-                            <span class="sna-pill-dot"></span>NETWORK GRAPH
-                        </div>
+            <div class="sna-header">
+                <div class="sna-header-inner">
+                    <div class="sna-icon-wrap">🕸️</div>
+                    <div>
+                        <div class="sna-title">Social Network Analysis</div>
+                        <div class="sna-sub">Employee ↔ Hotel Interaction Network · Centrality &amp; Dependency Mapping</div>
+                    </div>
+                    <div class="sna-pill">
+                        <span class="sna-pill-dot"></span>NETWORK GRAPH
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
+            </div>
+            """, unsafe_allow_html=True)
 
-                required_cols = ["Employee Id", "Hotel Name"]
+            required_cols = ["Employee Id", "Hotel Name"]
 
-                if all(col in df_all.columns for col in required_cols):
+            if all(col in df_all.columns for col in required_cols):
 
-                    df_sna = (df_all.dropna(subset=required_cols)
-                              .groupby(required_cols).size().reset_index(name="weight"))
+                df_sna = (df_all.dropna(subset=required_cols)
+                          .groupby(required_cols).size().reset_index(name="weight"))
 
-                    total_emp_count = df_sna["Employee Id"].nunique()
-                    total_htl_count = df_sna["Hotel Name"].nunique()
-                    total_edges     = len(df_sna)
-                    avg_connections = df_sna.groupby("Employee Id")["weight"].sum().mean()
+                total_emp_count = df_sna["Employee Id"].nunique()
+                total_htl_count = df_sna["Hotel Name"].nunique()
+                total_edges     = len(df_sna)
+                avg_connections = df_sna.groupby("Employee Id")["weight"].sum().mean()
 
-                    stat_cols = st.columns(4)
-                    stat_data = [
-                        ("👤", "Total Employees",    f"{total_emp_count:,}",   "#1BA0E2"),
-                        ("🏨", "Total Hotels",       f"{total_htl_count:,}",   "#1494C6"),
-                        ("🔗", "Total Interactions", f"{total_edges:,}",        "#0D7FCC"),
-                        ("📊", "Avg Trips / Emp",    f"{avg_connections:.1f}", "#062440"),
-                    ]
-                    for col, (icon, label, val, color) in zip(stat_cols, stat_data):
-                        with col:
-                            st.markdown(f"""
-                            <div class="sna-stat" style="--sna-accent:{color};">
-                                <span class="sna-stat-icon">{icon}</span>
-                                <div class="sna-stat-label">{label}</div>
-                                <div class="sna-stat-value" style="color:{color};">{val}</div>
-                            </div>""", unsafe_allow_html=True)
-
-                    st.markdown("""
-                    <div class="sna-filter-bar">
-                        <div class="sna-filter-label">⚙ Network Parameters</div>
-                    </div>""", unsafe_allow_html=True)
-
-                    fcol1, fcol2, fcol3 = st.columns([2, 2, 1])
-                    with fcol1:
-                        top_emp = st.slider("👤 Top Employees", 5, min(100, total_emp_count), min(50, total_emp_count))
-                    with fcol2:
-                        top_htl = st.slider("🏨 Top Hotels", 5, min(50, total_htl_count), min(15, total_htl_count))
-                    with fcol3:
-                        layout_algo = st.selectbox("📐 Layout", ["Spring", "Kamada-Kawai", "Circular"])
-
-                    top_employees = (df_sna.groupby("Employee Id")["weight"].sum()
-                                     .sort_values(ascending=False).head(top_emp).index)
-                    top_hotels = (df_sna.groupby("Hotel Name")["weight"].sum()
-                                  .sort_values(ascending=False).head(top_htl).index)
-                    df_filtered_sna = df_sna[
-                        df_sna["Employee Id"].isin(top_employees) &
-                        df_sna["Hotel Name"].isin(top_hotels)
-                    ]
-
-                    G = nx.Graph()
-                    for _, row in df_filtered_sna.iterrows():
-                        G.add_edge(row["Employee Id"], row["Hotel Name"], weight=row["weight"])
-
-                    seed = 42
-                    if layout_algo == "Spring":
-                        pos = nx.spring_layout(G, seed=seed, k=0.7)
-                    elif layout_algo == "Kamada-Kawai":
-                        try:
-                            pos = nx.kamada_kawai_layout(G)
-                        except:
-                            pos = nx.spring_layout(G, seed=seed)
-                    else:
-                        pos = nx.circular_layout(G)
-
-                    degree      = dict(G.degree())
-                    betweenness = nx.betweenness_centrality(G)
-                    max_weight  = max((G[u][v]["weight"] for u, v in G.edges()), default=1)
-                    max_degree  = max(degree.values(), default=1)
-
-                    # Edge traces — blue tones
-                    edge_traces = []
-                    for u, v in G.edges():
-                        x0, y0 = pos[u]; x1, y1 = pos[v]
-                        w = G[u][v]["weight"]
-                        opacity = 0.12 + 0.55 * (w / max_weight)
-                        width   = 0.5  + 3.0  * (w / max_weight)
-                        edge_traces.append(go.Scatter(
-                            x=[x0, x1, None], y=[y0, y1, None], mode="lines",
-                            line=dict(width=width, color=f"rgba(27,160,226,{opacity:.2f})"),
-                            hoverinfo="none", showlegend=False
-                        ))
-
-                    # Employee nodes — blue gradient
-                    emp_x, emp_y, emp_text, emp_size, emp_mc = [], [], [], [], []
-                    for node in G.nodes():
-                        if node not in top_employees:
-                            continue
-                        x, y = pos[node]
-                        deg  = degree[node]
-                        bet  = betweenness.get(node, 0)
-                        size = 14 + (deg / max_degree) * 30
-                        total_trips    = df_filtered_sna[df_filtered_sna["Employee Id"] == node]["weight"].sum()
-                        hotels_visited = df_filtered_sna[df_filtered_sna["Employee Id"] == node]["Hotel Name"].nunique()
-                        emp_x.append(x); emp_y.append(y)
-                        emp_size.append(size); emp_mc.append(deg)
-                        emp_text.append(
-                            f"<b>👤 {node}</b><br>"
-                            f"Hotel Connections: <b>{deg}</b><br>"
-                            f"Total Stays: <b>{int(total_trips):,}</b><br>"
-                            f"Unique Hotels: <b>{hotels_visited}</b><br>"
-                            f"Betweenness: <b>{bet:.3f}</b>"
-                        )
-
-                    employee_trace = go.Scatter(
-                        x=emp_x, y=emp_y, mode="markers", name="Employee",
-                        hoverinfo="text", text=emp_text,
-                        marker=dict(
-                            size=emp_size, color=emp_mc,
-                            colorscale=[
-                                [0.0, "#cce4f4"],
-                                [0.4, "#1BA0E2"],
-                                [0.7, "#1494C6"],
-                                [1.0, "#062440"]
-                            ],
-                            showscale=True,
-                            colorbar=dict(
-                                title=dict(text="Degree<br>(Employee)",
-                                           font=dict(size=10, color="#6a8fa0")),
-                                thickness=10, len=0.45, y=0.75, x=1.01,
-                                tickfont=dict(size=9, color="#6a8fa0")
-                            ),
-                            line=dict(width=2, color="white"),
-                            symbol="circle"
-                        )
-                    )
-
-                    # Hotel nodes — lime accent + dark blue
-                    htl_x, htl_y, htl_text, htl_size, htl_mc = [], [], [], [], []
-                    for node in G.nodes():
-                        if node not in top_hotels:
-                            continue
-                        x, y = pos[node]
-                        deg  = degree[node]
-                        bet  = betweenness.get(node, 0)
-                        size = 18 + (deg / max_degree) * 28
-                        total_stays = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["weight"].sum()
-                        unique_emps = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["Employee Id"].nunique()
-                        htl_x.append(x); htl_y.append(y)
-                        htl_size.append(size); htl_mc.append(deg)
-                        htl_text.append(
-                            f"<b>🏨 {node}</b><br>"
-                            f"Employee Connections: <b>{deg}</b><br>"
-                            f"Total Stays: <b>{int(total_stays):,}</b><br>"
-                            f"Unique Travelers: <b>{unique_emps}</b><br>"
-                            f"Betweenness: <b>{bet:.3f}</b>"
-                        )
-
-                    hotel_trace = go.Scatter(
-                        x=htl_x, y=htl_y, mode="markers", name="Hotel",
-                        hoverinfo="text", text=htl_text,
-                        marker=dict(
-                            size=htl_size, color=htl_mc,
-                            colorscale=[
-                                [0.0, "#d8f0b0"],
-                                [0.3, "#98ea16"],
-                                [0.6, "#0D7FCC"],
-                                [1.0, "#062440"]
-                            ],
-                            showscale=True,
-                            colorbar=dict(
-                                title=dict(text="Degree<br>(Hotel)",
-                                           font=dict(size=10, color="#6a8fa0")),
-                                thickness=10, len=0.45, y=0.28, x=1.01,
-                                tickfont=dict(size=9, color="#6a8fa0")
-                            ),
-                            line=dict(width=2, color="white"),
-                            symbol="diamond"
-                        )
-                    )
-
-                    fig = go.Figure(
-                        data=edge_traces + [employee_trace, hotel_trace],
-                        layout=go.Layout(
-                            title=dict(
-                                text=(
-                                    f"<b>Employee ↔ Hotel Network</b>"
-                                    f"<span style='font-size:11px;color:#8a9aaa;'>"
-                                    f"  ·  Top {top_emp} Employees"
-                                    f"  ·  Top {top_htl} Hotels"
-                                    f"  ·  {layout_algo} Layout</span>"
-                                ),
-                                font=dict(size=15, color="#1a2a3a"),
-                                x=0.0, xanchor="left"
-                            ),
-                            showlegend=True,
-                            legend=dict(
-                                bgcolor="rgba(240,248,255,0.95)",
-                                bordercolor="#cce4f4", borderwidth=1,
-                                font=dict(size=11, color="#1a2a3a")
-                            ),
-                            hovermode="closest",
-                            margin=dict(b=60, l=10, r=90, t=70),
-                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                            plot_bgcolor="#f0f8ff",
-                            paper_bgcolor="white",
-                            height=660
-                        )
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-                    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-
-                    # ── Rank Tables ─────────────────────────────────────────────
-                    rank_col1, rank_col2 = st.columns(2)
-
-                    emp_rank = []
-                    for node in top_employees:
-                        if node not in G.nodes():
-                            continue
-                        deg = degree.get(node, 0)
-                        bet = betweenness.get(node, 0)
-                        total_stays = df_filtered_sna[df_filtered_sna["Employee Id"] == node]["weight"].sum()
-                        emp_rank.append({
-                            "Employee ID": str(node),
-                            "Connections": deg,
-                            "Total Stays": int(total_stays),
-                            "Centrality":  round(bet, 4)
-                        })
-                    emp_rank_df = (pd.DataFrame(emp_rank)
-                                   .sort_values("Connections", ascending=False)
-                                   .head(10).reset_index(drop=True))
-                    emp_rank_df.index = emp_rank_df.index + 1
-                    emp_rank_df.index.name = "Rank"
-
-                    htl_rank = []
-                    for node in top_hotels:
-                        if node not in G.nodes():
-                            continue
-                        deg = degree.get(node, 0)
-                        bet = betweenness.get(node, 0)
-                        total_stays = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["weight"].sum()
-                        unique_emps = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["Employee Id"].nunique()
-                        htl_rank.append({
-                            "Hotel Name":  str(node),
-                            "Travelers":   deg,
-                            "Total Stays": int(total_stays),
-                            "Centrality":  round(bet, 4)
-                        })
-                    htl_rank_df = (pd.DataFrame(htl_rank)
-                                   .sort_values("Travelers", ascending=False)
-                                   .head(10).reset_index(drop=True))
-                    htl_rank_df.index = htl_rank_df.index + 1
-                    htl_rank_df.index.name = "Rank"
-
-                    with rank_col1:
-                        st.markdown("""
-                        <div class="sna-rank-head">
-                            <div class="sna-rank-title">👤 Top Employees by Connectivity</div>
+                stat_cols = st.columns(4)
+                stat_data = [
+                    ("👤", "Total Employees",    f"{total_emp_count:,}",   "#1BA0E2"),
+                    ("🏨", "Total Hotels",       f"{total_htl_count:,}",   "#1494C6"),
+                    ("🔗", "Total Interactions", f"{total_edges:,}",        "#0D7FCC"),
+                    ("📊", "Avg Trips / Emp",    f"{avg_connections:.1f}", "#062440"),
+                ]
+                for col, (icon, label, val, color) in zip(stat_cols, stat_data):
+                    with col:
+                        st.markdown(f"""
+                        <div class="sna-stat" style="--sna-accent:{color};">
+                            <span class="sna-stat-icon">{icon}</span>
+                            <div class="sna-stat-label">{label}</div>
+                            <div class="sna-stat-value" style="color:{color};">{val}</div>
                         </div>""", unsafe_allow_html=True)
-                        st.dataframe(
-                            emp_rank_df.style.background_gradient(
-                                subset=["Connections", "Total Stays"], cmap="Blues"
-                            ),
-                            use_container_width=True
-                        )
 
-                    with rank_col2:
-                        st.markdown("""
-                        <div class="sna-rank-head-hotel">
-                            <div class="sna-rank-title-hotel">🏨 Top Hotels by Dependency Risk</div>
-                        </div>""", unsafe_allow_html=True)
-                        st.dataframe(
-                            htl_rank_df.style.background_gradient(
-                                subset=["Travelers", "Total Stays"], cmap="PuBu"
-                            ),
-                            use_container_width=True
-                        )
+                st.markdown("""
+                <div class="sna-filter-bar">
+                    <div class="sna-filter-label">⚙ Network Parameters</div>
+                </div>""", unsafe_allow_html=True)
 
+                fcol1, fcol2, fcol3 = st.columns([2, 2, 1])
+                with fcol1:
+                    top_emp = st.slider("👤 Top Employees", 5, min(100, total_emp_count), min(50, total_emp_count))
+                with fcol2:
+                    top_htl = st.slider("🏨 Top Hotels", 5, min(50, total_htl_count), min(15, total_htl_count))
+                with fcol3:
+                    layout_algo = st.selectbox("📐 Layout", ["Spring", "Kamada-Kawai", "Circular"])
+
+                top_employees = (df_sna.groupby("Employee Id")["weight"].sum()
+                                 .sort_values(ascending=False).head(top_emp).index)
+                top_hotels = (df_sna.groupby("Hotel Name")["weight"].sum()
+                              .sort_values(ascending=False).head(top_htl).index)
+                df_filtered_sna = df_sna[
+                    df_sna["Employee Id"].isin(top_employees) &
+                    df_sna["Hotel Name"].isin(top_hotels)
+                ]
+
+                G = nx.Graph()
+                for _, row in df_filtered_sna.iterrows():
+                    G.add_edge(row["Employee Id"], row["Hotel Name"], weight=row["weight"])
+
+                seed = 42
+                if layout_algo == "Spring":
+                    pos = nx.spring_layout(G, seed=seed, k=0.7)
+                elif layout_algo == "Kamada-Kawai":
+                    try:
+                        pos = nx.kamada_kawai_layout(G)
+                    except:
+                        pos = nx.spring_layout(G, seed=seed)
                 else:
+                    pos = nx.circular_layout(G)
+
+                degree      = dict(G.degree())
+                betweenness = nx.betweenness_centrality(G)
+                max_weight  = max((G[u][v]["weight"] for u, v in G.edges()), default=1)
+                max_degree  = max(degree.values(), default=1)
+
+                # Edge traces — blue tones
+                edge_traces = []
+                for u, v in G.edges():
+                    x0, y0 = pos[u]; x1, y1 = pos[v]
+                    w = G[u][v]["weight"]
+                    opacity = 0.12 + 0.55 * (w / max_weight)
+                    width   = 0.5  + 3.0  * (w / max_weight)
+                    edge_traces.append(go.Scatter(
+                        x=[x0, x1, None], y=[y0, y1, None], mode="lines",
+                        line=dict(width=width, color=f"rgba(27,160,226,{opacity:.2f})"),
+                        hoverinfo="none", showlegend=False
+                    ))
+
+                # Employee nodes — blue gradient
+                emp_x, emp_y, emp_text, emp_size, emp_mc = [], [], [], [], []
+                for node in G.nodes():
+                    if node not in top_employees:
+                        continue
+                    x, y = pos[node]
+                    deg  = degree[node]
+                    bet  = betweenness.get(node, 0)
+                    size = 14 + (deg / max_degree) * 30
+                    total_trips    = df_filtered_sna[df_filtered_sna["Employee Id"] == node]["weight"].sum()
+                    hotels_visited = df_filtered_sna[df_filtered_sna["Employee Id"] == node]["Hotel Name"].nunique()
+                    emp_x.append(x); emp_y.append(y)
+                    emp_size.append(size); emp_mc.append(deg)
+                    emp_text.append(
+                        f"<b>👤 {node}</b><br>"
+                        f"Hotel Connections: <b>{deg}</b><br>"
+                        f"Total Stays: <b>{int(total_trips):,}</b><br>"
+                        f"Unique Hotels: <b>{hotels_visited}</b><br>"
+                        f"Betweenness: <b>{bet:.3f}</b>"
+                    )
+
+                employee_trace = go.Scatter(
+                    x=emp_x, y=emp_y, mode="markers", name="Employee",
+                    hoverinfo="text", text=emp_text,
+                    marker=dict(
+                        size=emp_size, color=emp_mc,
+                        colorscale=[
+                            [0.0, "#cce4f4"],
+                            [0.4, "#1BA0E2"],
+                            [0.7, "#1494C6"],
+                            [1.0, "#062440"]
+                        ],
+                        showscale=True,
+                        colorbar=dict(
+                            title=dict(text="Degree<br>(Employee)",
+                                       font=dict(size=10, color="#6a8fa0")),
+                            thickness=10, len=0.45, y=0.75, x=1.01,
+                            tickfont=dict(size=9, color="#6a8fa0")
+                        ),
+                        line=dict(width=2, color="white"),
+                        symbol="circle"
+                    )
+                )
+
+                # Hotel nodes — lime accent + dark blue
+                htl_x, htl_y, htl_text, htl_size, htl_mc = [], [], [], [], []
+                for node in G.nodes():
+                    if node not in top_hotels:
+                        continue
+                    x, y = pos[node]
+                    deg  = degree[node]
+                    bet  = betweenness.get(node, 0)
+                    size = 18 + (deg / max_degree) * 28
+                    total_stays = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["weight"].sum()
+                    unique_emps = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["Employee Id"].nunique()
+                    htl_x.append(x); htl_y.append(y)
+                    htl_size.append(size); htl_mc.append(deg)
+                    htl_text.append(
+                        f"<b>🏨 {node}</b><br>"
+                        f"Employee Connections: <b>{deg}</b><br>"
+                        f"Total Stays: <b>{int(total_stays):,}</b><br>"
+                        f"Unique Travelers: <b>{unique_emps}</b><br>"
+                        f"Betweenness: <b>{bet:.3f}</b>"
+                    )
+
+                hotel_trace = go.Scatter(
+                    x=htl_x, y=htl_y, mode="markers", name="Hotel",
+                    hoverinfo="text", text=htl_text,
+                    marker=dict(
+                        size=htl_size, color=htl_mc,
+                        colorscale=[
+                            [0.0, "#d8f0b0"],
+                            [0.3, "#98ea16"],
+                            [0.6, "#0D7FCC"],
+                            [1.0, "#062440"]
+                        ],
+                        showscale=True,
+                        colorbar=dict(
+                            title=dict(text="Degree<br>(Hotel)",
+                                       font=dict(size=10, color="#6a8fa0")),
+                            thickness=10, len=0.45, y=0.28, x=1.01,
+                            tickfont=dict(size=9, color="#6a8fa0")
+                        ),
+                        line=dict(width=2, color="white"),
+                        symbol="diamond"
+                    )
+                )
+
+                fig = go.Figure(
+                    data=edge_traces + [employee_trace, hotel_trace],
+                    layout=go.Layout(
+                        title=dict(
+                            text=(
+                                f"<b>Employee ↔ Hotel Network</b>"
+                                f"<span style='font-size:11px;color:#8a9aaa;'>"
+                                f"  ·  Top {top_emp} Employees"
+                                f"  ·  Top {top_htl} Hotels"
+                                f"  ·  {layout_algo} Layout</span>"
+                            ),
+                            font=dict(size=15, color="#1a2a3a"),
+                            x=0.0, xanchor="left"
+                        ),
+                        showlegend=True,
+                        legend=dict(
+                            bgcolor="rgba(240,248,255,0.95)",
+                            bordercolor="#cce4f4", borderwidth=1,
+                            font=dict(size=11, color="#1a2a3a")
+                        ),
+                        hovermode="closest",
+                        margin=dict(b=60, l=10, r=90, t=70),
+                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        plot_bgcolor="#f0f8ff",
+                        paper_bgcolor="white",
+                        height=660
+                    )
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+                # ── Rank Tables ─────────────────────────────────────────────
+                rank_col1, rank_col2 = st.columns(2)
+
+                emp_rank = []
+                for node in top_employees:
+                    if node not in G.nodes():
+                        continue
+                    deg = degree.get(node, 0)
+                    bet = betweenness.get(node, 0)
+                    total_stays = df_filtered_sna[df_filtered_sna["Employee Id"] == node]["weight"].sum()
+                    emp_rank.append({
+                        "Employee ID": str(node),
+                        "Connections": deg,
+                        "Total Stays": int(total_stays),
+                        "Centrality":  round(bet, 4)
+                    })
+                emp_rank_df = (pd.DataFrame(emp_rank)
+                               .sort_values("Connections", ascending=False)
+                               .head(10).reset_index(drop=True))
+                emp_rank_df.index = emp_rank_df.index + 1
+                emp_rank_df.index.name = "Rank"
+
+                htl_rank = []
+                for node in top_hotels:
+                    if node not in G.nodes():
+                        continue
+                    deg = degree.get(node, 0)
+                    bet = betweenness.get(node, 0)
+                    total_stays = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["weight"].sum()
+                    unique_emps = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["Employee Id"].nunique()
+                    htl_rank.append({
+                        "Hotel Name":  str(node),
+                        "Travelers":   deg,
+                        "Total Stays": int(total_stays),
+                        "Centrality":  round(bet, 4)
+                    })
+                htl_rank_df = (pd.DataFrame(htl_rank)
+                               .sort_values("Travelers", ascending=False)
+                               .head(10).reset_index(drop=True))
+                htl_rank_df.index = htl_rank_df.index + 1
+                htl_rank_df.index.name = "Rank"
+
+                with rank_col1:
                     st.markdown("""
-                    <div class="sna-empty-warn">
-                        ⚠️ Kolom <strong>Employee Id</strong> atau
-                        <strong>Hotel Name</strong> tidak tersedia dalam dataset.
+                    <div class="sna-rank-head">
+                        <div class="sna-rank-title">👤 Top Employees by Connectivity</div>
                     </div>""", unsafe_allow_html=True)
+                    st.dataframe(
+                        emp_rank_df.style.background_gradient(
+                            subset=["Connections", "Total Stays"], cmap="Blues"
+                        ),
+                        use_container_width=True
+                    )
+
+                with rank_col2:
+                    st.markdown("""
+                    <div class="sna-rank-head-hotel">
+                        <div class="sna-rank-title-hotel">🏨 Top Hotels by Dependency Risk</div>
+                    </div>""", unsafe_allow_html=True)
+                    st.dataframe(
+                        htl_rank_df.style.background_gradient(
+                            subset=["Travelers", "Total Stays"], cmap="PuBu"
+                        ),
+                        use_container_width=True
+                    )
+
+            else:
+                st.markdown("""
+                <div class="sna-empty-warn">
+                    ⚠️ Kolom <strong>Employee Id</strong> atau
+                    <strong>Hotel Name</strong> tidak tersedia dalam dataset.
+                </div>""", unsafe_allow_html=True)
 
         # ======================================
         # TAB 6: PRICE INTELLIGENCE — Global Filters
@@ -5367,10 +5381,7 @@ def main_app():
             # ======================================
             # TAB 7: SANKEY FLOW — MTRAX Blue Theme
             # ======================================
-            if _tab_locked():
-                _render_coming_soon('Price Intelligence')
-            else:
-                _render_tab6()
+            _render_tab6()
         with tab7:
 
             st.markdown("""
@@ -6231,601 +6242,598 @@ def main_app():
             # ======================================
             _render_tab8()
         with tab9:
-            if _tab_locked():
-                _render_coming_soon('Dendrogram')
-            else:
-                from plotly.subplots import make_subplots as _make_subplots
-                from scipy.cluster.hierarchy import linkage as sk_linkage, dendrogram as scipy_dendrogram, fcluster
-                from sklearn.preprocessing import normalize as sk_normalize
+            from plotly.subplots import make_subplots as _make_subplots
+            from scipy.cluster.hierarchy import linkage as sk_linkage, dendrogram as scipy_dendrogram, fcluster
+            from sklearn.preprocessing import normalize as sk_normalize
 
-                # ── CSS ─────────────────────────────────────────────────────────
-                st.markdown("""
-                <style>
-                :root {
-                    --dnd-blue:      #1BA0E2;
-                    --dnd-blue-mid:  #1494C6;
-                    --dnd-blue-dark: #0D7FCC;
-                    --dnd-navy:      #062440;
-                    --dnd-lime:      #e2f871;
-                    --dnd-lime-v:    #98ea16;
-                    --dnd-bg:        #f0f8ff;
-                    --dnd-border:    #cce4f4;
-                    --dnd-surface:   #ffffff;
-                    --dnd-muted:     #6a8fa0;
-                    --dnd-text:      #1a2a3a;
-                }
+            # ── CSS ─────────────────────────────────────────────────────────
+            st.markdown("""
+            <style>
+            :root {
+                --dnd-blue:      #1BA0E2;
+                --dnd-blue-mid:  #1494C6;
+                --dnd-blue-dark: #0D7FCC;
+                --dnd-navy:      #062440;
+                --dnd-lime:      #e2f871;
+                --dnd-lime-v:    #98ea16;
+                --dnd-bg:        #f0f8ff;
+                --dnd-border:    #cce4f4;
+                --dnd-surface:   #ffffff;
+                --dnd-muted:     #6a8fa0;
+                --dnd-text:      #1a2a3a;
+            }
 
-                /* ════════════ HEADER ════════════ */
-                .dnd-header {
-                    background: linear-gradient(135deg, #062440 0%, #0D7FCC 52%, #1BA0E2 100%);
-                    border-radius: 14px;
-                    padding: 28px 36px;
-                    margin-bottom: 24px;
-                    position: relative;
-                    overflow: hidden;
-                    box-shadow: 0 8px 32px rgba(13,127,204,0.28);
-                }
-                .dnd-header::before {
-                    content: '';
-                    position: absolute; top: -70px; right: -50px;
-                    width: 240px; height: 240px; border-radius: 50%;
-                    background: rgba(255,255,255,0.05); pointer-events: none;
-                }
-                .dnd-header::after {
-                    content: '';
-                    position: absolute; bottom: -50px; left: 28%;
-                    width: 200px; height: 200px; border-radius: 50%;
-                    background: rgba(226,248,113,0.08); pointer-events: none;
-                }
-                .dnd-header-inner {
-                    display: flex; align-items: center; gap: 18px;
-                    position: relative; z-index: 1;
-                }
-                .dnd-header-icon {
-                    width: 54px; height: 54px; border-radius: 13px;
-                    background: rgba(255,255,255,0.14);
-                    border: 1px solid rgba(255,255,255,0.24);
-                    display: flex; align-items: center; justify-content: center;
-                    font-size: 1.7em; flex-shrink: 0;
-                }
-                .dnd-header-body  { flex: 1; }
-                .dnd-header-title { color: #fff; font-size: 1.45em; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
-                .dnd-header-sub   { color: rgba(255,255,255,0.58); font-size: 0.82em; margin-top: 4px; }
-                .dnd-header-badge {
-                    display: inline-flex; align-items: center; gap: 7px;
-                    background: rgba(255,255,255,0.12);
-                    border: 1px solid rgba(255,255,255,0.22);
-                    border-radius: 100px; padding: 6px 16px;
-                    font-size: 0.72em; font-weight: 600;
-                    color: rgba(255,255,255,0.88); letter-spacing: 0.06em;
-                    white-space: nowrap;
-                }
-                .dnd-badge-dot {
-                    width: 6px; height: 6px; border-radius: 50%;
-                    background: var(--dnd-lime);
-                    box-shadow: 0 0 6px var(--dnd-lime);
-                    animation: dnd-blink 2s ease infinite;
-                }
-                @keyframes dnd-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+            /* ════════════ HEADER ════════════ */
+            .dnd-header {
+                background: linear-gradient(135deg, #062440 0%, #0D7FCC 52%, #1BA0E2 100%);
+                border-radius: 14px;
+                padding: 28px 36px;
+                margin-bottom: 24px;
+                position: relative;
+                overflow: hidden;
+                box-shadow: 0 8px 32px rgba(13,127,204,0.28);
+            }
+            .dnd-header::before {
+                content: '';
+                position: absolute; top: -70px; right: -50px;
+                width: 240px; height: 240px; border-radius: 50%;
+                background: rgba(255,255,255,0.05); pointer-events: none;
+            }
+            .dnd-header::after {
+                content: '';
+                position: absolute; bottom: -50px; left: 28%;
+                width: 200px; height: 200px; border-radius: 50%;
+                background: rgba(226,248,113,0.08); pointer-events: none;
+            }
+            .dnd-header-inner {
+                display: flex; align-items: center; gap: 18px;
+                position: relative; z-index: 1;
+            }
+            .dnd-header-icon {
+                width: 54px; height: 54px; border-radius: 13px;
+                background: rgba(255,255,255,0.14);
+                border: 1px solid rgba(255,255,255,0.24);
+                display: flex; align-items: center; justify-content: center;
+                font-size: 1.7em; flex-shrink: 0;
+            }
+            .dnd-header-body  { flex: 1; }
+            .dnd-header-title { color: #fff; font-size: 1.45em; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+            .dnd-header-sub   { color: rgba(255,255,255,0.58); font-size: 0.82em; margin-top: 4px; }
+            .dnd-header-badge {
+                display: inline-flex; align-items: center; gap: 7px;
+                background: rgba(255,255,255,0.12);
+                border: 1px solid rgba(255,255,255,0.22);
+                border-radius: 100px; padding: 6px 16px;
+                font-size: 0.72em; font-weight: 600;
+                color: rgba(255,255,255,0.88); letter-spacing: 0.06em;
+                white-space: nowrap;
+            }
+            .dnd-badge-dot {
+                width: 6px; height: 6px; border-radius: 50%;
+                background: var(--dnd-lime);
+                box-shadow: 0 0 6px var(--dnd-lime);
+                animation: dnd-blink 2s ease infinite;
+            }
+            @keyframes dnd-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-                /* ════════════ SECTION DIVIDER ════════════ */
-                .dnd-divider {
-                    display: flex; align-items: center; gap: 14px;
-                    margin: 26px 0 18px;
-                    font-size: 0.69em; font-weight: 700;
-                    color: var(--dnd-muted); letter-spacing: 0.14em;
-                    text-transform: uppercase;
-                }
-                .dnd-divider::before,
-                .dnd-divider::after { content: ''; flex: 1; height: 1px; background: var(--dnd-border); }
+            /* ════════════ SECTION DIVIDER ════════════ */
+            .dnd-divider {
+                display: flex; align-items: center; gap: 14px;
+                margin: 26px 0 18px;
+                font-size: 0.69em; font-weight: 700;
+                color: var(--dnd-muted); letter-spacing: 0.14em;
+                text-transform: uppercase;
+            }
+            .dnd-divider::before,
+            .dnd-divider::after { content: ''; flex: 1; height: 1px; background: var(--dnd-border); }
 
-                /* ════════════ FILTER PANEL ════════════ */
-                .dnd-filter-panel {
-                    background: var(--dnd-surface);
-                    border: 1px solid var(--dnd-border);
-                    border-left: 4px solid var(--dnd-blue);
-                    border-radius: 10px;
-                    padding: 16px 20px 12px;
-                    margin-bottom: 20px;
-                    box-shadow: 0 2px 10px rgba(13,127,204,0.07);
-                }
-                .dnd-filter-label {
-                    font-size: 0.69em; font-weight: 700;
-                    color: var(--dnd-blue); text-transform: uppercase;
-                    letter-spacing: 0.12em; margin-bottom: 10px;
-                    display: flex; align-items: center; gap: 8px;
-                }
-                .dnd-filter-tag {
-                    background: var(--dnd-bg); border: 1px solid var(--dnd-border);
-                    color: var(--dnd-blue); border-radius: 20px;
-                    padding: 2px 10px; font-size: 0.85em; font-weight: 600;
-                }
+            /* ════════════ FILTER PANEL ════════════ */
+            .dnd-filter-panel {
+                background: var(--dnd-surface);
+                border: 1px solid var(--dnd-border);
+                border-left: 4px solid var(--dnd-blue);
+                border-radius: 10px;
+                padding: 16px 20px 12px;
+                margin-bottom: 20px;
+                box-shadow: 0 2px 10px rgba(13,127,204,0.07);
+            }
+            .dnd-filter-label {
+                font-size: 0.69em; font-weight: 700;
+                color: var(--dnd-blue); text-transform: uppercase;
+                letter-spacing: 0.12em; margin-bottom: 10px;
+                display: flex; align-items: center; gap: 8px;
+            }
+            .dnd-filter-tag {
+                background: var(--dnd-bg); border: 1px solid var(--dnd-border);
+                color: var(--dnd-blue); border-radius: 20px;
+                padding: 2px 10px; font-size: 0.85em; font-weight: 600;
+            }
 
-                /* ════════════ KPI CARDS ════════════ */
-                .dnd-kpi-grid {
-                    display: grid; grid-template-columns: repeat(4,1fr);
-                    gap: 14px; margin-bottom: 20px;
-                }
-                .dnd-kpi {
-                    background: var(--dnd-surface);
-                    border-radius: 10px; padding: 18px 16px 14px;
-                    border-top: 3px solid var(--dnd-color, #1BA0E2);
-                    box-shadow: 0 2px 10px rgba(13,127,204,0.08);
-                    transition: transform .18s ease, box-shadow .18s ease;
-                }
-                .dnd-kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(13,127,204,0.15); }
-                .dnd-kpi-label {
-                    font-size: 0.67em; font-weight: 600; color: var(--dnd-muted);
-                    text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 8px;
-                }
-                .dnd-kpi-value { font-size: 1.35em; font-weight: 700; color: var(--dnd-color, #1BA0E2); line-height: 1.2; }
-                .dnd-kpi-sub   { font-size: 0.72em; color: var(--dnd-muted); margin-top: 4px; }
+            /* ════════════ KPI CARDS ════════════ */
+            .dnd-kpi-grid {
+                display: grid; grid-template-columns: repeat(4,1fr);
+                gap: 14px; margin-bottom: 20px;
+            }
+            .dnd-kpi {
+                background: var(--dnd-surface);
+                border-radius: 10px; padding: 18px 16px 14px;
+                border-top: 3px solid var(--dnd-color, #1BA0E2);
+                box-shadow: 0 2px 10px rgba(13,127,204,0.08);
+                transition: transform .18s ease, box-shadow .18s ease;
+            }
+            .dnd-kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(13,127,204,0.15); }
+            .dnd-kpi-label {
+                font-size: 0.67em; font-weight: 600; color: var(--dnd-muted);
+                text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 8px;
+            }
+            .dnd-kpi-value { font-size: 1.35em; font-weight: 700; color: var(--dnd-color, #1BA0E2); line-height: 1.2; }
+            .dnd-kpi-sub   { font-size: 0.72em; color: var(--dnd-muted); margin-top: 4px; }
 
-                /* ════════════ CLUSTER CARDS ════════════ */
-                .dnd-cluster-grid {
-                    display: grid; grid-template-columns: repeat(4,1fr);
-                    gap: 14px; margin-top: 8px;
-                }
-                .dnd-cluster-card {
-                    background: var(--dnd-surface);
-                    border-radius: 12px; padding: 18px 18px 16px;
-                    border-top: 4px solid var(--cl-color, #1BA0E2);
-                    box-shadow: 0 2px 12px rgba(13,127,204,0.08);
-                    transition: transform .18s ease, box-shadow .18s ease;
-                    position: relative; overflow: hidden;
-                }
-                .dnd-cluster-card::before {
-                    content: '';
-                    position: absolute; top: -20px; right: -20px;
-                    width: 80px; height: 80px; border-radius: 50%;
-                    background: var(--cl-color, #1BA0E2);
-                    opacity: 0.06;
-                }
-                .dnd-cluster-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(13,127,204,0.14); }
+            /* ════════════ CLUSTER CARDS ════════════ */
+            .dnd-cluster-grid {
+                display: grid; grid-template-columns: repeat(4,1fr);
+                gap: 14px; margin-top: 8px;
+            }
+            .dnd-cluster-card {
+                background: var(--dnd-surface);
+                border-radius: 12px; padding: 18px 18px 16px;
+                border-top: 4px solid var(--cl-color, #1BA0E2);
+                box-shadow: 0 2px 12px rgba(13,127,204,0.08);
+                transition: transform .18s ease, box-shadow .18s ease;
+                position: relative; overflow: hidden;
+            }
+            .dnd-cluster-card::before {
+                content: '';
+                position: absolute; top: -20px; right: -20px;
+                width: 80px; height: 80px; border-radius: 50%;
+                background: var(--cl-color, #1BA0E2);
+                opacity: 0.06;
+            }
+            .dnd-cluster-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(13,127,204,0.14); }
 
-                .dnd-cluster-head {
-                    display: flex; justify-content: space-between;
-                    align-items: center; margin-bottom: 12px;
-                }
-                .dnd-cluster-name {
-                    font-weight: 700; font-size: 0.92em;
-                    color: var(--cl-color, #1BA0E2);
-                }
-                .dnd-cluster-count {
-                    background: color-mix(in srgb, var(--cl-color, #1BA0E2) 12%, white);
-                    color: var(--cl-color, #1BA0E2);
-                    border: 1px solid color-mix(in srgb, var(--cl-color, #1BA0E2) 25%, white);
-                    border-radius: 100px; padding: 2px 10px;
-                    font-size: 0.70em; font-weight: 700;
-                }
-                .dnd-cluster-members {
-                    font-size: 0.74em; color: #4a5a6a;
-                    line-height: 1.6; margin-bottom: 14px;
-                    min-height: 48px;
-                }
-                .dnd-cluster-stat {
-                    background: var(--dnd-bg);
-                    border-radius: 8px; padding: 10px 12px;
-                    border-left: 3px solid var(--cl-color, #1BA0E2);
-                }
-                .dnd-cluster-stat-value {
-                    font-size: 1.0em; font-weight: 700;
-                    color: var(--cl-color, #1BA0E2); line-height: 1.2;
-                }
-                .dnd-cluster-stat-label {
-                    font-size: 0.68em; font-weight: 600;
-                    color: var(--dnd-muted); margin-top: 2px;
-                }
+            .dnd-cluster-head {
+                display: flex; justify-content: space-between;
+                align-items: center; margin-bottom: 12px;
+            }
+            .dnd-cluster-name {
+                font-weight: 700; font-size: 0.92em;
+                color: var(--cl-color, #1BA0E2);
+            }
+            .dnd-cluster-count {
+                background: color-mix(in srgb, var(--cl-color, #1BA0E2) 12%, white);
+                color: var(--cl-color, #1BA0E2);
+                border: 1px solid color-mix(in srgb, var(--cl-color, #1BA0E2) 25%, white);
+                border-radius: 100px; padding: 2px 10px;
+                font-size: 0.70em; font-weight: 700;
+            }
+            .dnd-cluster-members {
+                font-size: 0.74em; color: #4a5a6a;
+                line-height: 1.6; margin-bottom: 14px;
+                min-height: 48px;
+            }
+            .dnd-cluster-stat {
+                background: var(--dnd-bg);
+                border-radius: 8px; padding: 10px 12px;
+                border-left: 3px solid var(--cl-color, #1BA0E2);
+            }
+            .dnd-cluster-stat-value {
+                font-size: 1.0em; font-weight: 700;
+                color: var(--cl-color, #1BA0E2); line-height: 1.2;
+            }
+            .dnd-cluster-stat-label {
+                font-size: 0.68em; font-weight: 600;
+                color: var(--dnd-muted); margin-top: 2px;
+            }
 
-                /* ════════════ INSIGHT BOX ════════════ */
-                .dnd-insight {
-                    background: var(--dnd-bg);
-                    border: 1px solid var(--dnd-border);
-                    border-left: 4px solid var(--dnd-blue);
-                    border-radius: 8px; padding: 14px 18px;
-                    font-size: 0.84em; color: #2a3a4a; line-height: 1.65;
-                    margin-top: 4px;
-                }
-                .dnd-insight strong { color: var(--dnd-navy); }
-                .dnd-insight em     { color: var(--dnd-blue); font-style: normal; font-weight: 600; }
-                </style>
+            /* ════════════ INSIGHT BOX ════════════ */
+            .dnd-insight {
+                background: var(--dnd-bg);
+                border: 1px solid var(--dnd-border);
+                border-left: 4px solid var(--dnd-blue);
+                border-radius: 8px; padding: 14px 18px;
+                font-size: 0.84em; color: #2a3a4a; line-height: 1.65;
+                margin-top: 4px;
+            }
+            .dnd-insight strong { color: var(--dnd-navy); }
+            .dnd-insight em     { color: var(--dnd-blue); font-style: normal; font-weight: 600; }
+            </style>
 
-                <!-- ── Header ── -->
-                <div class="dnd-header">
-                    <div class="dnd-header-inner">
-                        <div class="dnd-header-icon">🌿</div>
-                        <div class="dnd-header-body">
-                            <div class="dnd-header-title">Hierarchical Clustering — Dendrogram</div>
-                            <div class="dnd-header-sub">Segmentasi pola perjalanan berbasis kemiripan · Ward / Complete / Average / Single linkage</div>
-                        </div>
-                        <div class="dnd-header-badge">
-                            <span class="dnd-badge-dot"></span>CLUSTERING
-                        </div>
+            <!-- ── Header ── -->
+            <div class="dnd-header">
+                <div class="dnd-header-inner">
+                    <div class="dnd-header-icon">🌿</div>
+                    <div class="dnd-header-body">
+                        <div class="dnd-header-title">Hierarchical Clustering — Dendrogram</div>
+                        <div class="dnd-header-sub">Segmentasi pola perjalanan berbasis kemiripan · Ward / Complete / Average / Single linkage</div>
+                    </div>
+                    <div class="dnd-header-badge">
+                        <span class="dnd-badge-dot"></span>CLUSTERING
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
+            </div>
+            """, unsafe_allow_html=True)
 
-                # ── Filter Panel ────────────────────────────────────────────────
-                st.markdown("""
-                <div class="dnd-filter-panel">
-                    <div class="dnd-filter-label">
-                        ⚙ Parameter Clustering
-                        <span class="dnd-filter-tag">Semua perubahan langsung memperbarui chart</span>
-                    </div>
+            # ── Filter Panel ────────────────────────────────────────────────
+            st.markdown("""
+            <div class="dnd-filter-panel">
+                <div class="dnd-filter-label">
+                    ⚙ Parameter Clustering
+                    <span class="dnd-filter-tag">Semua perubahan langsung memperbarui chart</span>
                 </div>
-                """, unsafe_allow_html=True)
+            </div>
+            """, unsafe_allow_html=True)
 
-                dend_r1 = st.columns([2, 2, 2, 2])
-                with dend_r1[0]:
-                    dend_entity = st.selectbox(
-                        "🎯 Entitas", ["Hotel", "Perusahaan", "Kota"], key="dend_entity",
-                        help="Pilih entitas yang akan dikelompokkan"
-                    )
-                with dend_r1[1]:
-                    dend_metric_col = st.selectbox(
-                        "📐 Metric",
-                        ["Invoice Amount", "Number of Rooms Night", "Travel Request Number"],
-                        key="dend_metric",
-                        help="Metric yang digunakan sebagai dasar clustering"
-                    )
-                with dend_r1[2]:
-                    dend_method = st.selectbox(
-                        "🔗 Linkage",
-                        ["ward", "complete", "average", "single"],
-                        key="dend_method",
-                        help="Algoritma penggabungan klaster"
-                    )
-                with dend_r1[3]:
-                    dend_top_n = st.selectbox(
-                        "🔢 Top N", [10, 15, 20, 25, 30, 40, 50],
-                        index=2, key="dend_top_n",
-                        help="Jumlah entitas teratas yang dianalisis"
-                    )
+            dend_r1 = st.columns([2, 2, 2, 2])
+            with dend_r1[0]:
+                dend_entity = st.selectbox(
+                    "🎯 Entitas", ["Hotel", "Perusahaan", "Kota"], key="dend_entity",
+                    help="Pilih entitas yang akan dikelompokkan"
+                )
+            with dend_r1[1]:
+                dend_metric_col = st.selectbox(
+                    "📐 Metric",
+                    ["Invoice Amount", "Number of Rooms Night", "Travel Request Number"],
+                    key="dend_metric",
+                    help="Metric yang digunakan sebagai dasar clustering"
+                )
+            with dend_r1[2]:
+                dend_method = st.selectbox(
+                    "🔗 Linkage",
+                    ["ward", "complete", "average", "single"],
+                    key="dend_method",
+                    help="Algoritma penggabungan klaster"
+                )
+            with dend_r1[3]:
+                dend_top_n = st.selectbox(
+                    "🔢 Top N", [10, 15, 20, 25, 30, 40, 50],
+                    index=2, key="dend_top_n",
+                    help="Jumlah entitas teratas yang dianalisis"
+                )
 
-                dend_r2 = st.columns([3, 2])
-                with dend_r2[0]:
-                    n_clusters_dend = st.slider(
-                        "🎨 Jumlah Klaster", 2, 8, 4, key="dend_clusters",
-                        help="Jumlah kelompok yang terbentuk dari pemotongan dendrogram"
-                    )
-                with dend_r2[1]:
-                    dend_show_bar = st.checkbox(
-                        "Tampilkan bar spend chart", value=True, key="dend_bar"
-                    )
+            dend_r2 = st.columns([3, 2])
+            with dend_r2[0]:
+                n_clusters_dend = st.slider(
+                    "🎨 Jumlah Klaster", 2, 8, 4, key="dend_clusters",
+                    help="Jumlah kelompok yang terbentuk dari pemotongan dendrogram"
+                )
+            with dend_r2[1]:
+                dend_show_bar = st.checkbox(
+                    "Tampilkan bar spend chart", value=True, key="dend_bar"
+                )
 
-                # ── Data preparation ─────────────────────────────────────────────
-                _city_col = next((c for c in df_all.columns if c in ["City", "City Destination"]), None)
-                entity_map_dend  = {"Hotel": "Hotel Name", "Perusahaan": "Nama Perusahaan", "Kota": _city_col}
-                pivot_rows_dend  = {
-                    "Hotel":     "Nama Perusahaan",
-                    "Perusahaan": _city_col if _city_col else "Hotel Name",
-                    "Kota":      "Nama Perusahaan"
-                }
+            # ── Data preparation ─────────────────────────────────────────────
+            _city_col = next((c for c in df_all.columns if c in ["City", "City Destination"]), None)
+            entity_map_dend  = {"Hotel": "Hotel Name", "Perusahaan": "Nama Perusahaan", "Kota": _city_col}
+            pivot_rows_dend  = {
+                "Hotel":     "Nama Perusahaan",
+                "Perusahaan": _city_col if _city_col else "Hotel Name",
+                "Kota":      "Nama Perusahaan"
+            }
 
-                entity_col_dend = entity_map_dend.get(dend_entity)
-                row_col_dend    = pivot_rows_dend.get(dend_entity)
-                metric_col_dend = next((c for c in df_all.columns if c == dend_metric_col), None)
+            entity_col_dend = entity_map_dend.get(dend_entity)
+            row_col_dend    = pivot_rows_dend.get(dend_entity)
+            metric_col_dend = next((c for c in df_all.columns if c == dend_metric_col), None)
 
-                if (entity_col_dend and entity_col_dend in df_all.columns
-                        and metric_col_dend
-                        and row_col_dend and row_col_dend in df_all.columns):
+            if (entity_col_dend and entity_col_dend in df_all.columns
+                    and metric_col_dend
+                    and row_col_dend and row_col_dend in df_all.columns):
 
-                    df_dend = df_all[[entity_col_dend, row_col_dend, metric_col_dend]].dropna()
-                    top_ent = df_dend.groupby(entity_col_dend)[metric_col_dend].sum().nlargest(dend_top_n).index
-                    df_dend = df_dend[df_dend[entity_col_dend].isin(top_ent)]
-                    pivot_dend = (df_dend.groupby([entity_col_dend, row_col_dend])[metric_col_dend]
-                                  .sum().unstack(fill_value=0))
-                    X_dend = sk_normalize(pivot_dend.values, norm="l2")
+                df_dend = df_all[[entity_col_dend, row_col_dend, metric_col_dend]].dropna()
+                top_ent = df_dend.groupby(entity_col_dend)[metric_col_dend].sum().nlargest(dend_top_n).index
+                df_dend = df_dend[df_dend[entity_col_dend].isin(top_ent)]
+                pivot_dend = (df_dend.groupby([entity_col_dend, row_col_dend])[metric_col_dend]
+                              .sum().unstack(fill_value=0))
+                X_dend = sk_normalize(pivot_dend.values, norm="l2")
 
-                    if X_dend.shape[0] >= 2:
-                        Z_dend       = sk_linkage(X_dend, method=dend_method, metric="euclidean")
-                        cluster_ids  = fcluster(Z_dend, t=n_clusters_dend, criterion="maxclust")
+                if X_dend.shape[0] >= 2:
+                    Z_dend       = sk_linkage(X_dend, method=dend_method, metric="euclidean")
+                    cluster_ids  = fcluster(Z_dend, t=n_clusters_dend, criterion="maxclust")
 
-                        # MTRAX-aligned cluster palette — blue family + lime accents
-                        DEND_PALETTE = [
-                            "#1BA0E2",  # MTRAX blue
-                            "#0D7FCC",  # blue dark
-                            "#98ea16",  # lime vivid
-                            "#062440",  # navy
-                            "#1494C6",  # blue mid
-                            "#e2f871",  # lime light
-                            "#47b5e8",  # blue light
-                            "#5a8fc0",  # steel blue
-                        ]
+                    # MTRAX-aligned cluster palette — blue family + lime accents
+                    DEND_PALETTE = [
+                        "#1BA0E2",  # MTRAX blue
+                        "#0D7FCC",  # blue dark
+                        "#98ea16",  # lime vivid
+                        "#062440",  # navy
+                        "#1494C6",  # blue mid
+                        "#e2f871",  # lime light
+                        "#47b5e8",  # blue light
+                        "#5a8fc0",  # steel blue
+                    ]
 
-                        def fmt_val(v, col):
-                            return f"Rp{v:,.0f}" if col == "Invoice Amount" else f"{v:,.0f}"
+                    def fmt_val(v, col):
+                        return f"Rp{v:,.0f}" if col == "Invoice Amount" else f"{v:,.0f}"
 
-                        labels_list     = pivot_dend.index.tolist()
-                        total_spend_dend = df_dend[metric_col_dend].sum()
-                        avg_spend_dend   = total_spend_dend / len(pivot_dend) if len(pivot_dend) else 0
-                        leaf_colors_map  = {
-                            lbl: DEND_PALETTE[(cid - 1) % len(DEND_PALETTE)]
-                            for lbl, cid in zip(labels_list, cluster_ids)
-                        }
+                    labels_list     = pivot_dend.index.tolist()
+                    total_spend_dend = df_dend[metric_col_dend].sum()
+                    avg_spend_dend   = total_spend_dend / len(pivot_dend) if len(pivot_dend) else 0
+                    leaf_colors_map  = {
+                        lbl: DEND_PALETTE[(cid - 1) % len(DEND_PALETTE)]
+                        for lbl, cid in zip(labels_list, cluster_ids)
+                    }
 
-                        # ── KPI Cards ──────────────────────────────────────────
-                        st.markdown('<div class="dnd-divider">Ringkasan Analisis</div>', unsafe_allow_html=True)
+                    # ── KPI Cards ──────────────────────────────────────────
+                    st.markdown('<div class="dnd-divider">Ringkasan Analisis</div>', unsafe_allow_html=True)
 
-                        st.markdown(f"""
-                        <div class="dnd-kpi-grid">
-                            <div class="dnd-kpi" style="--dnd-color:#1BA0E2;">
-                                <div class="dnd-kpi-label">Total Entitas</div>
-                                <div class="dnd-kpi-value">{len(pivot_dend)}</div>
-                                <div class="dnd-kpi-sub">dari Top {dend_top_n} {dend_entity}</div>
-                            </div>
-                            <div class="dnd-kpi" style="--dnd-color:#0D7FCC;">
-                                <div class="dnd-kpi-label">Jumlah Klaster</div>
-                                <div class="dnd-kpi-value">{n_clusters_dend}</div>
-                                <div class="dnd-kpi-sub">linkage: {dend_method}</div>
-                            </div>
-                            <div class="dnd-kpi" style="--dnd-color:#1494C6;">
-                                <div class="dnd-kpi-label">Total {dend_metric_col[:16]}</div>
-                                <div class="dnd-kpi-value">{fmt_val(total_spend_dend, metric_col_dend)}</div>
-                                <div class="dnd-kpi-sub">keseluruhan entitas</div>
-                            </div>
-                            <div class="dnd-kpi" style="--dnd-color:#062440;">
-                                <div class="dnd-kpi-label">Rata-rata per Entitas</div>
-                                <div class="dnd-kpi-value">{fmt_val(avg_spend_dend, metric_col_dend)}</div>
-                                <div class="dnd-kpi-sub">baseline clustering</div>
-                            </div>
+                    st.markdown(f"""
+                    <div class="dnd-kpi-grid">
+                        <div class="dnd-kpi" style="--dnd-color:#1BA0E2;">
+                            <div class="dnd-kpi-label">Total Entitas</div>
+                            <div class="dnd-kpi-value">{len(pivot_dend)}</div>
+                            <div class="dnd-kpi-sub">dari Top {dend_top_n} {dend_entity}</div>
                         </div>
-                        """, unsafe_allow_html=True)
+                        <div class="dnd-kpi" style="--dnd-color:#0D7FCC;">
+                            <div class="dnd-kpi-label">Jumlah Klaster</div>
+                            <div class="dnd-kpi-value">{n_clusters_dend}</div>
+                            <div class="dnd-kpi-sub">linkage: {dend_method}</div>
+                        </div>
+                        <div class="dnd-kpi" style="--dnd-color:#1494C6;">
+                            <div class="dnd-kpi-label">Total {dend_metric_col[:16]}</div>
+                            <div class="dnd-kpi-value">{fmt_val(total_spend_dend, metric_col_dend)}</div>
+                            <div class="dnd-kpi-sub">keseluruhan entitas</div>
+                        </div>
+                        <div class="dnd-kpi" style="--dnd-color:#062440;">
+                            <div class="dnd-kpi-label">Rata-rata per Entitas</div>
+                            <div class="dnd-kpi-value">{fmt_val(avg_spend_dend, metric_col_dend)}</div>
+                            <div class="dnd-kpi-sub">baseline clustering</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-                        # ── Build dendrogram ────────────────────────────────────
-                        color_thresh_dend = Z_dend[-(n_clusters_dend - 1), 2] if n_clusters_dend > 1 else 0
-                        dend_no_plot = scipy_dendrogram(
-                            Z_dend, labels=labels_list, no_plot=True,
-                            color_threshold=color_thresh_dend
+                    # ── Build dendrogram ────────────────────────────────────
+                    color_thresh_dend = Z_dend[-(n_clusters_dend - 1), 2] if n_clusters_dend > 1 else 0
+                    dend_no_plot = scipy_dendrogram(
+                        Z_dend, labels=labels_list, no_plot=True,
+                        color_threshold=color_thresh_dend
+                    )
+                    leaves_order    = dend_no_plot["leaves"]
+                    labels_ordered  = [labels_list[i] for i in leaves_order]
+                    leaf_xs         = {lbl: 5 + 10 * i for i, lbl in enumerate(labels_ordered)}
+                    spend_series    = (df_dend.groupby(entity_col_dend)[metric_col_dend]
+                                       .sum().reindex(labels_ordered).fillna(0))
+
+                    # ── Build Plotly figure ─────────────────────────────────
+                    st.markdown('<div class="dnd-divider">Dendrogram Visualisasi</div>', unsafe_allow_html=True)
+
+                    if dend_show_bar:
+                        fig_ply = _make_subplots(
+                            rows=1, cols=2,
+                            column_widths=[0.68, 0.32],
+                            horizontal_spacing=0.04,
+                            shared_yaxes=True
                         )
-                        leaves_order    = dend_no_plot["leaves"]
-                        labels_ordered  = [labels_list[i] for i in leaves_order]
-                        leaf_xs         = {lbl: 5 + 10 * i for i, lbl in enumerate(labels_ordered)}
-                        spend_series    = (df_dend.groupby(entity_col_dend)[metric_col_dend]
-                                           .sum().reindex(labels_ordered).fillna(0))
+                        dr, dc, br, bc = 1, 1, 1, 2
+                    else:
+                        fig_ply = go.Figure()
+                        dr = dc = br = bc = None
 
-                        # ── Build Plotly figure ─────────────────────────────────
-                        st.markdown('<div class="dnd-divider">Dendrogram Visualisasi</div>', unsafe_allow_html=True)
-
+                    def _add(trace):
                         if dend_show_bar:
-                            fig_ply = _make_subplots(
-                                rows=1, cols=2,
-                                column_widths=[0.68, 0.32],
-                                horizontal_spacing=0.04,
-                                shared_yaxes=True
-                            )
-                            dr, dc, br, bc = 1, 1, 1, 2
+                            fig_ply.add_trace(trace, row=dr, col=dc)
                         else:
-                            fig_ply = go.Figure()
-                            dr = dc = br = bc = None
+                            fig_ply.add_trace(trace)
 
-                        def _add(trace):
-                            if dend_show_bar:
-                                fig_ply.add_trace(trace, row=dr, col=dc)
-                            else:
-                                fig_ply.add_trace(trace)
+                    # Edge lines — subtle blue
+                    for xi, yi in zip(dend_no_plot["icoord"], dend_no_plot["dcoord"]):
+                        _add(go.Scatter(
+                            x=yi, y=xi, mode="lines",
+                            line=dict(color="rgba(27,160,226,0.32)", width=1.6),
+                            hoverinfo="skip", showlegend=False
+                        ))
 
-                        # Edge lines — subtle blue
-                        for xi, yi in zip(dend_no_plot["icoord"], dend_no_plot["dcoord"]):
-                            _add(go.Scatter(
-                                x=yi, y=xi, mode="lines",
-                                line=dict(color="rgba(27,160,226,0.32)", width=1.6),
-                                hoverinfo="skip", showlegend=False
-                            ))
-
-                        # Leaf nodes
-                        for lbl in labels_ordered:
-                            xp  = leaf_xs[lbl]
-                            nc  = leaf_colors_map.get(lbl, "#1BA0E2")
-                            cid = cluster_ids[labels_list.index(lbl)]
-                            sv  = spend_series.get(lbl, 0)
-                            _add(go.Scatter(
-                                x=[0], y=[xp],
-                                mode="markers+text",
-                                marker=dict(size=10, color=nc,
-                                            line=dict(color="white", width=2),
-                                            symbol="circle"),
-                                text=[lbl],
-                                textposition="middle left",
-                                textfont=dict(size=9, color=nc),
-                                hovertemplate=(
-                                    f"<b>{lbl}</b><br>"
-                                    f"Klaster: <b>{cid}</b><br>"
-                                    f"{dend_metric_col}: <b>{fmt_val(sv, metric_col_dend)}</b>"
-                                    "<extra></extra>"
-                                ),
-                                showlegend=False
-                            ))
-
-                        # Cut threshold line
-                        if n_clusters_dend > 1:
-                            y_range = [min(leaf_xs.values()) - 5, max(leaf_xs.values()) + 5]
-                            _add(go.Scatter(
-                                x=[color_thresh_dend, color_thresh_dend], y=y_range,
-                                mode="lines",
-                                line=dict(color="#d9534f", width=1.6, dash="dash"),
-                                name=f"Cut @ {color_thresh_dend:.3f}",
-                                showlegend=True
-                            ))
-
-                        # Bar chart (spend per entity)
-                        if dend_show_bar:
-                            bar_colors = [leaf_colors_map.get(l, "#1BA0E2") for l in labels_ordered]
-                            fig_ply.add_trace(
-                                go.Bar(
-                                    y=[leaf_xs[l] for l in labels_ordered],
-                                    x=spend_series.values,
-                                    orientation="h",
-                                    marker=dict(color=bar_colors, opacity=0.85,
-                                                line=dict(color="white", width=0.5)),
-                                    showlegend=False,
-                                    name="Spend"
-                                ),
-                                row=br, col=bc
-                            )
-
-                        # Legend entries per cluster
-                        for i in range(n_clusters_dend):
-                            fig_ply.add_trace(go.Scatter(
-                                x=[None], y=[None], mode="markers",
-                                marker=dict(size=10, color=DEND_PALETTE[i % len(DEND_PALETTE)]),
-                                name=f"Klaster {i + 1}",
-                                showlegend=True
-                            ))
-
-                        # Layout
-                        chart_h  = max(520, len(pivot_dend) * 26 + 80)
-                        max_diss = max((max(d) for d in dend_no_plot["dcoord"]), default=1.0)
-                        x_left   = -max(0.55 * max_diss, 0.35)
-
-                        _ax = dict(
-                            showgrid=True,
-                            gridcolor="rgba(204,228,244,0.50)",
-                            gridwidth=0.6,
-                            zeroline=False,
-                            tickfont=dict(size=8, color="#6a8fa0"),
-                            linecolor="#cce4f4",
-                            linewidth=1,
-                            showline=True
-                        )
-
-                        fig_ply.update_layout(
-                            height=chart_h,
-                            paper_bgcolor="#f0f8ff",
-                            plot_bgcolor="#f0f8ff",
-                            font=dict(size=11, color="#1a2a3a"),
-                            title=dict(
-                                text=(
-                                    f"<b>Dendrogram — {dend_entity}</b>"
-                                    f"<span style='color:#6a8fa0;font-size:11px;'>"
-                                    f"  ·  Linkage: {dend_method}"
-                                    f"  ·  {n_clusters_dend} Klaster"
-                                    f"  ·  Metric: {dend_metric_col}"
-                                    f"</span>"
-                                ),
-                                x=0.01, xanchor="left",
-                                font=dict(size=13, color="#1a2a3a")
+                    # Leaf nodes
+                    for lbl in labels_ordered:
+                        xp  = leaf_xs[lbl]
+                        nc  = leaf_colors_map.get(lbl, "#1BA0E2")
+                        cid = cluster_ids[labels_list.index(lbl)]
+                        sv  = spend_series.get(lbl, 0)
+                        _add(go.Scatter(
+                            x=[0], y=[xp],
+                            mode="markers+text",
+                            marker=dict(size=10, color=nc,
+                                        line=dict(color="white", width=2),
+                                        symbol="circle"),
+                            text=[lbl],
+                            textposition="middle left",
+                            textfont=dict(size=9, color=nc),
+                            hovertemplate=(
+                                f"<b>{lbl}</b><br>"
+                                f"Klaster: <b>{cid}</b><br>"
+                                f"{dend_metric_col}: <b>{fmt_val(sv, metric_col_dend)}</b>"
+                                "<extra></extra>"
                             ),
-                            legend=dict(
+                            showlegend=False
+                        ))
+
+                    # Cut threshold line
+                    if n_clusters_dend > 1:
+                        y_range = [min(leaf_xs.values()) - 5, max(leaf_xs.values()) + 5]
+                        _add(go.Scatter(
+                            x=[color_thresh_dend, color_thresh_dend], y=y_range,
+                            mode="lines",
+                            line=dict(color="#d9534f", width=1.6, dash="dash"),
+                            name=f"Cut @ {color_thresh_dend:.3f}",
+                            showlegend=True
+                        ))
+
+                    # Bar chart (spend per entity)
+                    if dend_show_bar:
+                        bar_colors = [leaf_colors_map.get(l, "#1BA0E2") for l in labels_ordered]
+                        fig_ply.add_trace(
+                            go.Bar(
+                                y=[leaf_xs[l] for l in labels_ordered],
+                                x=spend_series.values,
                                 orientation="h",
-                                yanchor="bottom", y=1.01,
-                                xanchor="right", x=1,
-                                bgcolor="rgba(240,248,255,0.95)",
-                                bordercolor="#cce4f4",
-                                borderwidth=1,
-                                font=dict(size=10, color="#1a2a3a")
+                                marker=dict(color=bar_colors, opacity=0.85,
+                                            line=dict(color="white", width=0.5)),
+                                showlegend=False,
+                                name="Spend"
                             ),
-                            margin=dict(l=10, r=20, t=60, b=40),
-                            hovermode="closest",
-                            bargap=0.10
+                            row=br, col=bc
                         )
 
-                        fig_ply.update_xaxes(**_ax)
-                        fig_ply.update_yaxes(**_ax)
+                    # Legend entries per cluster
+                    for i in range(n_clusters_dend):
+                        fig_ply.add_trace(go.Scatter(
+                            x=[None], y=[None], mode="markers",
+                            marker=dict(size=10, color=DEND_PALETTE[i % len(DEND_PALETTE)]),
+                            name=f"Klaster {i + 1}",
+                            showlegend=True
+                        ))
+
+                    # Layout
+                    chart_h  = max(520, len(pivot_dend) * 26 + 80)
+                    max_diss = max((max(d) for d in dend_no_plot["dcoord"]), default=1.0)
+                    x_left   = -max(0.55 * max_diss, 0.35)
+
+                    _ax = dict(
+                        showgrid=True,
+                        gridcolor="rgba(204,228,244,0.50)",
+                        gridwidth=0.6,
+                        zeroline=False,
+                        tickfont=dict(size=8, color="#6a8fa0"),
+                        linecolor="#cce4f4",
+                        linewidth=1,
+                        showline=True
+                    )
+
+                    fig_ply.update_layout(
+                        height=chart_h,
+                        paper_bgcolor="#f0f8ff",
+                        plot_bgcolor="#f0f8ff",
+                        font=dict(size=11, color="#1a2a3a"),
+                        title=dict(
+                            text=(
+                                f"<b>Dendrogram — {dend_entity}</b>"
+                                f"<span style='color:#6a8fa0;font-size:11px;'>"
+                                f"  ·  Linkage: {dend_method}"
+                                f"  ·  {n_clusters_dend} Klaster"
+                                f"  ·  Metric: {dend_metric_col}"
+                                f"</span>"
+                            ),
+                            x=0.01, xanchor="left",
+                            font=dict(size=13, color="#1a2a3a")
+                        ),
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom", y=1.01,
+                            xanchor="right", x=1,
+                            bgcolor="rgba(240,248,255,0.95)",
+                            bordercolor="#cce4f4",
+                            borderwidth=1,
+                            font=dict(size=10, color="#1a2a3a")
+                        ),
+                        margin=dict(l=10, r=20, t=60, b=40),
+                        hovermode="closest",
+                        bargap=0.10
+                    )
+
+                    fig_ply.update_xaxes(**_ax)
+                    fig_ply.update_yaxes(**_ax)
+                    fig_ply.update_xaxes(
+                        title_text="Dissimilarity",
+                        range=[x_left, max_diss * 1.08],
+                        row=dr, col=dc
+                    )
+                    fig_ply.update_yaxes(
+                        showticklabels=False, showgrid=False,
+                        row=dr, col=dc
+                    )
+                    if dend_show_bar:
                         fig_ply.update_xaxes(
-                            title_text="Dissimilarity",
-                            range=[x_left, max_diss * 1.08],
-                            row=dr, col=dc
+                            title_text=dend_metric_col[:18],
+                            row=br, col=bc
                         )
                         fig_ply.update_yaxes(
                             showticklabels=False, showgrid=False,
-                            row=dr, col=dc
+                            row=br, col=bc
                         )
-                        if dend_show_bar:
-                            fig_ply.update_xaxes(
-                                title_text=dend_metric_col[:18],
-                                row=br, col=bc
+
+                    st.plotly_chart(fig_ply, use_container_width=True)
+
+                    # ── Cluster Summary Cards ──────────────────────────────
+                    st.markdown('<div class="dnd-divider">Ringkasan Klaster</div>', unsafe_allow_html=True)
+
+                    cluster_df_dend = pd.DataFrame({
+                        dend_entity: labels_list,
+                        "Klaster":   cluster_ids,
+                        "Total": (
+                            df_dend.groupby(entity_col_dend)[metric_col_dend]
+                            .sum().reindex(labels_list).values
+                        )
+                    }).sort_values(["Klaster", "Total"], ascending=[True, False])
+
+                    unique_clusters = sorted(cluster_df_dend["Klaster"].unique())
+
+                    # Render cards in rows of 4
+                    for row_start in range(0, len(unique_clusters), 4):
+                        row_clusters = unique_clusters[row_start:row_start + 4]
+                        cols_c = st.columns(len(row_clusters))
+
+                        for col_c, cid in zip(cols_c, row_clusters):
+                            c_color  = DEND_PALETTE[(cid - 1) % len(DEND_PALETTE)]
+                            sub      = cluster_df_dend[cluster_df_dend["Klaster"] == cid]
+                            total_c  = sub["Total"].sum()
+                            pct_c    = total_c / total_spend_dend * 100 if total_spend_dend else 0
+                            members  = sub[dend_entity].tolist()
+                            shown    = members[:4]
+                            more_n   = max(0, len(members) - 4)
+                            members_html = "<br>".join(
+                                [f"<span style='color:#4a5a6a;'>• {m}</span>" for m in shown]
                             )
-                            fig_ply.update_yaxes(
-                                showticklabels=False, showgrid=False,
-                                row=br, col=bc
-                            )
-
-                        st.plotly_chart(fig_ply, use_container_width=True)
-
-                        # ── Cluster Summary Cards ──────────────────────────────
-                        st.markdown('<div class="dnd-divider">Ringkasan Klaster</div>', unsafe_allow_html=True)
-
-                        cluster_df_dend = pd.DataFrame({
-                            dend_entity: labels_list,
-                            "Klaster":   cluster_ids,
-                            "Total": (
-                                df_dend.groupby(entity_col_dend)[metric_col_dend]
-                                .sum().reindex(labels_list).values
-                            )
-                        }).sort_values(["Klaster", "Total"], ascending=[True, False])
-
-                        unique_clusters = sorted(cluster_df_dend["Klaster"].unique())
-
-                        # Render cards in rows of 4
-                        for row_start in range(0, len(unique_clusters), 4):
-                            row_clusters = unique_clusters[row_start:row_start + 4]
-                            cols_c = st.columns(len(row_clusters))
-
-                            for col_c, cid in zip(cols_c, row_clusters):
-                                c_color  = DEND_PALETTE[(cid - 1) % len(DEND_PALETTE)]
-                                sub      = cluster_df_dend[cluster_df_dend["Klaster"] == cid]
-                                total_c  = sub["Total"].sum()
-                                pct_c    = total_c / total_spend_dend * 100 if total_spend_dend else 0
-                                members  = sub[dend_entity].tolist()
-                                shown    = members[:4]
-                                more_n   = max(0, len(members) - 4)
-                                members_html = "<br>".join(
-                                    [f"<span style='color:#4a5a6a;'>• {m}</span>" for m in shown]
+                            if more_n > 0:
+                                members_html += (
+                                    f"<br><span style='color:#a0b0c0;font-size:0.88em;'>"
+                                    f"+{more_n} lainnya…</span>"
                                 )
-                                if more_n > 0:
-                                    members_html += (
-                                        f"<br><span style='color:#a0b0c0;font-size:0.88em;'>"
-                                        f"+{more_n} lainnya…</span>"
-                                    )
 
-                                with col_c:
-                                    st.markdown(f"""
-                                    <div class="dnd-cluster-card" style="--cl-color:{c_color};">
-                                        <div class="dnd-cluster-head">
-                                            <span class="dnd-cluster-name">Klaster {cid}</span>
-                                            <span class="dnd-cluster-count">{len(sub)} entitas</span>
-                                        </div>
-                                        <div class="dnd-cluster-members">{members_html}</div>
-                                        <div class="dnd-cluster-stat">
-                                            <div class="dnd-cluster-stat-value">{fmt_val(total_c, metric_col_dend)}</div>
-                                            <div class="dnd-cluster-stat-label">{pct_c:.1f}% dari total · {dend_metric_col[:18]}</div>
-                                        </div>
+                            with col_c:
+                                st.markdown(f"""
+                                <div class="dnd-cluster-card" style="--cl-color:{c_color};">
+                                    <div class="dnd-cluster-head">
+                                        <span class="dnd-cluster-name">Klaster {cid}</span>
+                                        <span class="dnd-cluster-count">{len(sub)} entitas</span>
                                     </div>
-                                    """, unsafe_allow_html=True)
+                                    <div class="dnd-cluster-members">{members_html}</div>
+                                    <div class="dnd-cluster-stat">
+                                        <div class="dnd-cluster-stat-value">{fmt_val(total_c, metric_col_dend)}</div>
+                                        <div class="dnd-cluster-stat-label">{pct_c:.1f}% dari total · {dend_metric_col[:18]}</div>
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
 
-                        # ── Insight Box ────────────────────────────────────────
-                        st.markdown('<div class="dnd-divider">Interpretasi</div>', unsafe_allow_html=True)
+                    # ── Insight Box ────────────────────────────────────────
+                    st.markdown('<div class="dnd-divider">Interpretasi</div>', unsafe_allow_html=True)
 
-                        # Find dominant cluster
-                        dominant = cluster_df_dend.groupby("Klaster")["Total"].sum().idxmax()
-                        dominant_pct = (cluster_df_dend[cluster_df_dend["Klaster"] == dominant]["Total"].sum()
-                                        / total_spend_dend * 100)
+                    # Find dominant cluster
+                    dominant = cluster_df_dend.groupby("Klaster")["Total"].sum().idxmax()
+                    dominant_pct = (cluster_df_dend[cluster_df_dend["Klaster"] == dominant]["Total"].sum()
+                                    / total_spend_dend * 100)
 
-                        st.markdown(f"""
-                        <div class="dnd-insight">
-                            <strong>Hasil Clustering — {dend_entity} · {dend_method} linkage · {n_clusters_dend} klaster</strong><br><br>
-                            Dari <em>{len(pivot_dend)} {dend_entity}</em> yang dianalisis,
-                            terbentuk <em>{n_clusters_dend} klaster</em> berdasarkan kemiripan pola
-                            <em>{dend_metric_col}</em>.<br><br>
-                            <strong>Klaster {dominant}</strong> mendominasi dengan kontribusi
-                            <em>{dominant_pct:.1f}%</em> dari total.
-                            Entitas pada klaster yang sama memiliki profil perjalanan serupa dan berpotensi
-                            untuk dikelola dengan <strong>strategi pengadaan bersama</strong> guna meningkatkan
-                            leverage negosiasi.
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                else:
-                    st.markdown("""
-                    <div style='background:#f0f8ff;border:1px solid #cce4f4;
-                                border-left:4px solid #1BA0E2;border-radius:8px;
-                                padding:16px 20px;font-size:0.88em;color:#0D7FCC;'>
-                        ⚠️ Data tidak cukup untuk membuat dendrogram dengan parameter yang dipilih.
-                        Pastikan kolom <strong>Hotel Name</strong>, <strong>Nama Perusahaan</strong>,
-                        dan <strong>Invoice Amount</strong> tersedia.
+                    st.markdown(f"""
+                    <div class="dnd-insight">
+                        <strong>Hasil Clustering — {dend_entity} · {dend_method} linkage · {n_clusters_dend} klaster</strong><br><br>
+                        Dari <em>{len(pivot_dend)} {dend_entity}</em> yang dianalisis,
+                        terbentuk <em>{n_clusters_dend} klaster</em> berdasarkan kemiripan pola
+                        <em>{dend_metric_col}</em>.<br><br>
+                        <strong>Klaster {dominant}</strong> mendominasi dengan kontribusi
+                        <em>{dominant_pct:.1f}%</em> dari total.
+                        Entitas pada klaster yang sama memiliki profil perjalanan serupa dan berpotensi
+                        untuk dikelola dengan <strong>strategi pengadaan bersama</strong> guna meningkatkan
+                        leverage negosiasi.
                     </div>
                     """, unsafe_allow_html=True)
+
+            else:
+                st.markdown("""
+                <div style='background:#f0f8ff;border:1px solid #cce4f4;
+                            border-left:4px solid #1BA0E2;border-radius:8px;
+                            padding:16px 20px;font-size:0.88em;color:#0D7FCC;'>
+                    ⚠️ Data tidak cukup untuk membuat dendrogram dengan parameter yang dipilih.
+                    Pastikan kolom <strong>Hotel Name</strong>, <strong>Nama Perusahaan</strong>,
+                    dan <strong>Invoice Amount</strong> tersedia.
+                </div>
+                """, unsafe_allow_html=True)
 
         # ======================================
         # TAB 10: EXPORT
@@ -6899,641 +6907,638 @@ def main_app():
         # TAB 11: PATRA JASA GROUP vs NON-PATRA JASA
         # ======================================
         with tab11:
-            if _tab_locked():
-                _render_coming_soon('Patra Jasa')
+            st.markdown("<div class='section-title'>Patra Jasa Group vs Non-Patra Jasa — Perbandingan Hotel Domestik</div>", unsafe_allow_html=True)
+
+            # ── Kamus Hotel Patra Jasa Group ──
+            PATRA_JASA_HOTELS = [
+                "The Patra Bali Resort & Villas",
+                "Patra Semarang Hotel & Convention",
+                "Patra Cirebon Hotel & Convention",
+                "Patra Malioboro Hotel",
+                "Patra Dumai Hotel",
+                "Patra Bandung Hotel",
+                "Patra Jakarta Hotel",
+                "Patra Anyer Hotel",
+                "Patra Parapat Hotel",
+            ]
+            PATRA_JASA_NORMALIZED = [h.lower().strip() for h in PATRA_JASA_HOTELS]
+
+            # ── Validasi kolom minimum ──
+            _req_cols = {"Hotel Name", "Country"}
+            _missing = _req_cols - set(df_all.columns)
+            if _missing:
+                st.warning(f"⚠️ Kolom berikut tidak ditemukan di data: {', '.join(_missing)}. Tab ini membutuhkan kolom tersebut.")
             else:
-                st.markdown("<div class='section-title'>Patra Jasa Group vs Non-Patra Jasa — Perbandingan Hotel Domestik</div>", unsafe_allow_html=True)
+                # ── Filter INDONESIA saja ──
+                df_pj = df_all.copy()
+                df_pj["_country_up"] = df_pj["Country"].astype(str).str.strip().str.upper()
+                df_pj = df_pj[df_pj["_country_up"] == "INDONESIA"].copy()
 
-                # ── Kamus Hotel Patra Jasa Group ──
-                PATRA_JASA_HOTELS = [
-                    "The Patra Bali Resort & Villas",
-                    "Patra Semarang Hotel & Convention",
-                    "Patra Cirebon Hotel & Convention",
-                    "Patra Malioboro Hotel",
-                    "Patra Dumai Hotel",
-                    "Patra Bandung Hotel",
-                    "Patra Jakarta Hotel",
-                    "Patra Anyer Hotel",
-                    "Patra Parapat Hotel",
-                ]
-                PATRA_JASA_NORMALIZED = [h.lower().strip() for h in PATRA_JASA_HOTELS]
-
-                # ── Validasi kolom minimum ──
-                _req_cols = {"Hotel Name", "Country"}
-                _missing = _req_cols - set(df_all.columns)
-                if _missing:
-                    st.warning(f"⚠️ Kolom berikut tidak ditemukan di data: {', '.join(_missing)}. Tab ini membutuhkan kolom tersebut.")
+                if df_pj.empty:
+                    st.info("ℹ️ Tidak ada data domestik (Country = INDONESIA) setelah filter global diterapkan.")
                 else:
-                    # ── Filter INDONESIA saja ──
-                    df_pj = df_all.copy()
-                    df_pj["_country_up"] = df_pj["Country"].astype(str).str.strip().str.upper()
-                    df_pj = df_pj[df_pj["_country_up"] == "INDONESIA"].copy()
+                    # ── Klasifikasi Patra / Non-Patra ──
+                    df_pj["_hotel_norm"] = df_pj["Hotel Name"].astype(str).str.lower().str.strip()
+                    df_pj["Grup Hotel"] = df_pj["_hotel_norm"].apply(
+                        lambda x: "Patra Jasa Group" if x in PATRA_JASA_NORMALIZED else "Non-Patra Jasa"
+                    )
 
-                    if df_pj.empty:
-                        st.info("ℹ️ Tidak ada data domestik (Country = INDONESIA) setelah filter global diterapkan.")
-                    else:
-                        # ── Klasifikasi Patra / Non-Patra ──
-                        df_pj["_hotel_norm"] = df_pj["Hotel Name"].astype(str).str.lower().str.strip()
-                        df_pj["Grup Hotel"] = df_pj["_hotel_norm"].apply(
-                            lambda x: "Patra Jasa Group" if x in PATRA_JASA_NORMALIZED else "Non-Patra Jasa"
-                        )
+                    # ── Tambahkan kolom bulan & tahun ──
+                    # PERBAIKAN: sebelumnya hanya .dt.month tanpa memperhitungkan tahun,
+                    # sehingga bulan yang sama dari tahun berbeda bisa tercampur/menyembunyikan data.
+                    # PERBAIKAN 2: tambah fallback antar-kolom tanggal per baris — kalau kolom utama
+                    # gagal di-parse (NaT) untuk sebagian baris, baris itu tidak lagi hilang diam-diam
+                    # dari agregasi bulanan, melainkan dicoba pakai kolom tanggal lain yang tersedia.
+                    _date_col_pj = None
+                    for _c in ["Issue Time", "Check in Date"]:
+                        if _c in df_pj.columns:
+                            _date_col_pj = _c
+                            break
+                    if _date_col_pj:
+                        df_pj["_dt"] = pd.to_datetime(df_pj[_date_col_pj], errors="coerce", dayfirst=True)
+                        for _fb_col in [c for c in ["Issue Time", "Check in Date", "Check out Date"]
+                                        if c in df_pj.columns and c != _date_col_pj]:
+                            _fb_dt = pd.to_datetime(df_pj[_fb_col], errors="coerce", dayfirst=True)
+                            df_pj["_dt"] = df_pj["_dt"].fillna(_fb_dt)
+                        df_pj["_month"] = df_pj["_dt"].dt.month
+                        df_pj["_year"] = df_pj["_dt"].dt.year
 
-                        # ── Tambahkan kolom bulan & tahun ──
-                        # PERBAIKAN: sebelumnya hanya .dt.month tanpa memperhitungkan tahun,
-                        # sehingga bulan yang sama dari tahun berbeda bisa tercampur/menyembunyikan data.
-                        # PERBAIKAN 2: tambah fallback antar-kolom tanggal per baris — kalau kolom utama
-                        # gagal di-parse (NaT) untuk sebagian baris, baris itu tidak lagi hilang diam-diam
-                        # dari agregasi bulanan, melainkan dicoba pakai kolom tanggal lain yang tersedia.
-                        _date_col_pj = None
-                        for _c in ["Issue Time", "Check in Date"]:
-                            if _c in df_pj.columns:
-                                _date_col_pj = _c
-                                break
-                        if _date_col_pj:
-                            df_pj["_dt"] = pd.to_datetime(df_pj[_date_col_pj], errors="coerce", dayfirst=True)
-                            for _fb_col in [c for c in ["Issue Time", "Check in Date", "Check out Date"]
-                                            if c in df_pj.columns and c != _date_col_pj]:
-                                _fb_dt = pd.to_datetime(df_pj[_fb_col], errors="coerce", dayfirst=True)
-                                df_pj["_dt"] = df_pj["_dt"].fillna(_fb_dt)
-                            df_pj["_month"] = df_pj["_dt"].dt.month
-                            df_pj["_year"] = df_pj["_dt"].dt.year
-
-                            _n_unparsed = df_pj["_dt"].isna().sum()
-                            if _n_unparsed > 0:
-                                st.caption(
-                                    f"⚠️ {_n_unparsed:,} baris tidak punya tanggal yang bisa dibaca "
-                                    f"(kolom {_date_col_pj} dan alternatifnya kosong/format tidak dikenali) "
-                                    f"— baris ini tidak masuk ke tabel bulanan di bawah."
-                                )
-
-                        # ── Filter Nama Perusahaan (opsional) ──
-                        st.markdown("""
-                        <div style='background:var(--clr-surface,#fff);border:1px solid #e8eaf0;
-                                    border-left:4px solid #1BA0E2;border-radius:6px;
-                                    padding:10px 16px 8px 16px;margin-bottom:16px;'>
-                            <div style='font-size:0.72em;font-weight:700;color:#1BA0E2;
-                                        text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;'>
-                                🔍 Filter Tab Ini
-                            </div>
-                        </div>""", unsafe_allow_html=True)
-
-                        _pj_col1, _pj_col2, _pj_col3 = st.columns([1.6, 1, 1])
-
-                        with _pj_col1:
-                            if "Nama Perusahaan" in df_pj.columns:
-                                _pj_company_opts = sorted(df_pj["Nama Perusahaan"].dropna().unique().tolist())
-                                _pj_selected_companies = st.multiselect(
-                                    "🏢 Filter Perusahaan",
-                                    options=_pj_company_opts,
-                                    default=[],
-                                    placeholder="Semua perusahaan",
-                                    key="pj_company_filter"
-                                )
-                                if _pj_selected_companies:
-                                    df_pj = df_pj[df_pj["Nama Perusahaan"].isin(_pj_selected_companies)]
-                            else:
-                                _pj_selected_companies = []
-
-                        with _pj_col2:
-                            # PERBAIKAN: selector tahun eksplisit agar tabel bulanan tidak pernah
-                            # mencampur bulan yang sama dari tahun berbeda (mis. Jan 2025 + Jan 2026
-                            # tergabung jadi satu kolom "Jan"). Default ke tahun terbaru yang ada di data.
-                            if "_year" in df_pj.columns and df_pj["_year"].notna().any():
-                                _pj_year_opts = sorted(df_pj["_year"].dropna().astype(int).unique().tolist(), reverse=True)
-                                _pj_selected_year = st.selectbox(
-                                    "📅 Tahun (Tabel Bulanan)",
-                                    options=_pj_year_opts,
-                                    index=0,
-                                    key="pj_year_select"
-                                )
-                            else:
-                                _pj_selected_year = None
-
-                        with _pj_col3:
-                            _pj_metric_opt = st.selectbox(
-                                "📊 Metrik Tabel",
-                                options=["Invoice (unique)", "Room Nights"],
-                                key="pj_metric_select"
+                        _n_unparsed = df_pj["_dt"].isna().sum()
+                        if _n_unparsed > 0:
+                            st.caption(
+                                f"⚠️ {_n_unparsed:,} baris tidak punya tanggal yang bisa dibaca "
+                                f"(kolom {_date_col_pj} dan alternatifnya kosong/format tidak dikenali) "
+                                f"— baris ini tidak masuk ke tabel bulanan di bawah."
                             )
 
-                        # ── Hitung aggregasi ──
-                        # Invoice unique = jumlah baris unik per Travel Request Number (atau row count jika tidak ada)
-                        if "Travel Request Number" in df_pj.columns:
-                            _inv_col = "Travel Request Number"
-                            pj_inv  = df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"][_inv_col].nunique()
-                            npj_inv = df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"][_inv_col].nunique()
+                    # ── Filter Nama Perusahaan (opsional) ──
+                    st.markdown("""
+                    <div style='background:var(--clr-surface,#fff);border:1px solid #e8eaf0;
+                                border-left:4px solid #1BA0E2;border-radius:6px;
+                                padding:10px 16px 8px 16px;margin-bottom:16px;'>
+                        <div style='font-size:0.72em;font-weight:700;color:#1BA0E2;
+                                    text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;'>
+                            🔍 Filter Tab Ini
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+
+                    _pj_col1, _pj_col2, _pj_col3 = st.columns([1.6, 1, 1])
+
+                    with _pj_col1:
+                        if "Nama Perusahaan" in df_pj.columns:
+                            _pj_company_opts = sorted(df_pj["Nama Perusahaan"].dropna().unique().tolist())
+                            _pj_selected_companies = st.multiselect(
+                                "🏢 Filter Perusahaan",
+                                options=_pj_company_opts,
+                                default=[],
+                                placeholder="Semua perusahaan",
+                                key="pj_company_filter"
+                            )
+                            if _pj_selected_companies:
+                                df_pj = df_pj[df_pj["Nama Perusahaan"].isin(_pj_selected_companies)]
                         else:
-                            pj_inv  = len(df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"])
-                            npj_inv = len(df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"])
+                            _pj_selected_companies = []
 
-                        total_inv = pj_inv + npj_inv
-                        pj_inv_pct  = (pj_inv  / total_inv * 100) if total_inv > 0 else 0
-                        npj_inv_pct = (npj_inv / total_inv * 100) if total_inv > 0 else 0
-
-                        # Room Nights
-                        if "Number of Rooms Night" in df_pj.columns:
-                            df_pj["Number of Rooms Night"] = pd.to_numeric(df_pj["Number of Rooms Night"], errors="coerce")
-                            pj_rn  = df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"]["Number of Rooms Night"].sum()
-                            npj_rn = df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"]["Number of Rooms Night"].sum()
+                    with _pj_col2:
+                        # PERBAIKAN: selector tahun eksplisit agar tabel bulanan tidak pernah
+                        # mencampur bulan yang sama dari tahun berbeda (mis. Jan 2025 + Jan 2026
+                        # tergabung jadi satu kolom "Jan"). Default ke tahun terbaru yang ada di data.
+                        if "_year" in df_pj.columns and df_pj["_year"].notna().any():
+                            _pj_year_opts = sorted(df_pj["_year"].dropna().astype(int).unique().tolist(), reverse=True)
+                            _pj_selected_year = st.selectbox(
+                                "📅 Tahun (Tabel Bulanan)",
+                                options=_pj_year_opts,
+                                index=0,
+                                key="pj_year_select"
+                            )
                         else:
-                            pj_rn, npj_rn = 0, 0
+                            _pj_selected_year = None
 
-                        total_rn = pj_rn + npj_rn
-                        pj_rn_pct  = (pj_rn  / total_rn * 100) if total_rn > 0 else 0
-                        npj_rn_pct = (npj_rn / total_rn * 100) if total_rn > 0 else 0
-
-                        # ── Metric Cards ──
-                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-                        _mc1, _mc2, _mc3, _mc4 = st.columns(4)
-                        with _mc1:
-                            st.markdown(f"""
-                            <div class='metric-box'>
-                                <div class='metric-label'>Total Invoice (Domestik)</div>
-                                <div class='metric-value'>{total_inv:,}</div>
-                            </div>""", unsafe_allow_html=True)
-                        with _mc2:
-                            st.markdown(f"""
-                            <div class='metric-box' style='border-left-color:#1BA0E2;'>
-                                <div class='metric-label'>Patra Jasa Group</div>
-                                <div class='metric-value' style='color:#1BA0E2;'>{pj_inv:,}</div>
-                                <div style='font-size:0.78em;color:#888;margin-top:4px;'>{pj_inv_pct:.1f}% dari total</div>
-                            </div>""", unsafe_allow_html=True)
-                        with _mc3:
-                            st.markdown(f"""
-                            <div class='metric-box' style='border-left-color:#ff8c00;'>
-                                <div class='metric-label'>Non-Patra Jasa</div>
-                                <div class='metric-value' style='color:#ff8c00;'>{npj_inv:,}</div>
-                                <div style='font-size:0.78em;color:#888;margin-top:4px;'>{npj_inv_pct:.1f}% dari total</div>
-                            </div>""", unsafe_allow_html=True)
-                        with _mc4:
-                            st.markdown(f"""
-                            <div class='metric-box'>
-                                <div class='metric-label'>Total Room Nights</div>
-                                <div class='metric-value'>{total_rn:,.0f}</div>
-                            </div>""", unsafe_allow_html=True)
-
-                        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                        # ── Pie Charts ──
-                        st.markdown("<div class='section-title'>Proporsi Perbandingan</div>", unsafe_allow_html=True)
-                        _pie1, _pie2 = st.columns(2)
-
-                        with _pie1:
-                            if total_inv > 0:
-                                fig_pj_inv = go.Figure(data=[go.Pie(
-                                    labels=["Patra Jasa Group", "Non-Patra Jasa"],
-                                    values=[pj_inv, npj_inv],
-                                    hole=0.55,
-                                    marker=dict(colors=["#1BA0E2", "#ff8c00"],
-                                                line=dict(color="white", width=2)),
-                                    textinfo="percent",
-                                    textfont=dict(size=13),
-                                    hovertemplate="<b>%{label}</b><br>Invoice: %{value:,}<br>Proporsi: %{percent}<extra></extra>"
-                                )])
-                                fig_pj_inv.update_layout(
-                                    title=dict(text="Invoice Unique — Patra vs Non-Patra", font=dict(size=14)),
-                                    height=340,
-                                    plot_bgcolor="white",
-                                    paper_bgcolor="white",
-                                    showlegend=True,
-                                    legend=dict(orientation="h", yanchor="bottom", y=-0.18,
-                                                xanchor="center", x=0.5, font=dict(size=11)),
-                                    margin=dict(l=10, r=10, t=60, b=20),
-                                    annotations=[dict(
-                                        text=f"<b>{total_inv:,}</b><br><span style='font-size:10px'>total</span>",
-                                        x=0.5, y=0.5, font=dict(size=15), showarrow=False
-                                    )]
-                                )
-                                st.plotly_chart(fig_pj_inv, use_container_width=True)
-
-                                # Tabel ringkasan invoice
-                                st.markdown(f"""
-                                <table style='width:100%;border-collapse:collapse;font-size:0.83em;'>
-                                  <thead>
-                                    <tr style='background:#f0f8ff;'>
-                                      <th style='padding:6px 10px;text-align:left;border:1px solid #e0e0e0;color:#555;'>Grup</th>
-                                      <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>Invoice</th>
-                                      <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>%</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    <tr>
-                                      <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
-                                        <span style='display:inline-block;width:10px;height:10px;background:#1BA0E2;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Patra Jasa Group
-                                      </td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#1BA0E2;'>{pj_inv:,}</td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{pj_inv_pct:.1f}%</td>
-                                    </tr>
-                                    <tr>
-                                      <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
-                                        <span style='display:inline-block;width:10px;height:10px;background:#ff8c00;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Non-Patra Jasa
-                                      </td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#ff8c00;'>{npj_inv:,}</td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{npj_inv_pct:.1f}%</td>
-                                    </tr>
-                                    <tr style='background:#f9f9f9;'>
-                                      <td style='padding:6px 10px;border:1px solid #e0e0e0;font-weight:600;'>Total</td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>{total_inv:,}</td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>100%</td>
-                                    </tr>
-                                  </tbody>
-                                </table>
-                                """, unsafe_allow_html=True)
-                            else:
-                                st.info("Tidak ada data invoice untuk ditampilkan.")
-
-                        with _pie2:
-                            if total_rn > 0:
-                                fig_pj_rn = go.Figure(data=[go.Pie(
-                                    labels=["Patra Jasa Group", "Non-Patra Jasa"],
-                                    values=[pj_rn, npj_rn],
-                                    hole=0.55,
-                                    marker=dict(colors=["#1BA0E2", "#ff8c00"],
-                                                line=dict(color="white", width=2)),
-                                    textinfo="percent",
-                                    textfont=dict(size=13),
-                                    hovertemplate="<b>%{label}</b><br>Room Nights: %{value:,.0f}<br>Proporsi: %{percent}<extra></extra>"
-                                )])
-                                fig_pj_rn.update_layout(
-                                    title=dict(text="Room Nights — Patra vs Non-Patra", font=dict(size=14)),
-                                    height=340,
-                                    plot_bgcolor="white",
-                                    paper_bgcolor="white",
-                                    showlegend=True,
-                                    legend=dict(orientation="h", yanchor="bottom", y=-0.18,
-                                                xanchor="center", x=0.5, font=dict(size=11)),
-                                    margin=dict(l=10, r=10, t=60, b=20),
-                                    annotations=[dict(
-                                        text=f"<b>{total_rn:,.0f}</b><br><span style='font-size:10px'>total</span>",
-                                        x=0.5, y=0.5, font=dict(size=15), showarrow=False
-                                    )]
-                                )
-                                st.plotly_chart(fig_pj_rn, use_container_width=True)
-
-                                # Tabel ringkasan room nights
-                                st.markdown(f"""
-                                <table style='width:100%;border-collapse:collapse;font-size:0.83em;'>
-                                  <thead>
-                                    <tr style='background:#f0f8ff;'>
-                                      <th style='padding:6px 10px;text-align:left;border:1px solid #e0e0e0;color:#555;'>Grup</th>
-                                      <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>Room Nights</th>
-                                      <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>%</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    <tr>
-                                      <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
-                                        <span style='display:inline-block;width:10px;height:10px;background:#1BA0E2;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Patra Jasa Group
-                                      </td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#1BA0E2;'>{pj_rn:,.0f}</td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{pj_rn_pct:.1f}%</td>
-                                    </tr>
-                                    <tr>
-                                      <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
-                                        <span style='display:inline-block;width:10px;height:10px;background:#ff8c00;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Non-Patra Jasa
-                                      </td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#ff8c00;'>{npj_rn:,.0f}</td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{npj_rn_pct:.1f}%</td>
-                                    </tr>
-                                    <tr style='background:#f9f9f9;'>
-                                      <td style='padding:6px 10px;border:1px solid #e0e0e0;font-weight:600;'>Total</td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>{total_rn:,.0f}</td>
-                                      <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>100%</td>
-                                    </tr>
-                                  </tbody>
-                                </table>
-                                """, unsafe_allow_html=True)
-                            else:
-                                st.info("Kolom 'Number of Rooms Night' tidak ditemukan atau tidak ada data.")
-
-                        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                        # ── Tabel Bulanan ──
-                        _pj_year_label = f" · Tahun {_pj_selected_year}" if _pj_selected_year is not None else ""
-                        st.markdown(
-                            f"<div class='section-title'>Tabel Perbandingan Bulanan — "
-                            f"{'Invoice (unique)' if _pj_metric_opt == 'Invoice (unique)' else 'Room Nights'}"
-                            f"{_pj_year_label}</div>",
-                            unsafe_allow_html=True
+                    with _pj_col3:
+                        _pj_metric_opt = st.selectbox(
+                            "📊 Metrik Tabel",
+                            options=["Invoice (unique)", "Room Nights"],
+                            key="pj_metric_select"
                         )
 
-                        # PERBAIKAN: scope tabel bulanan ke SATU tahun yang dipilih di atas —
-                        # ini mencegah bulan yang sama dari tahun berbeda tergabung jadi satu kolom
-                        # (mis. data Jan 2025 + Jan 2026 tidak lagi ikut menumpuk/menyembunyikan bulan lain).
-                        df_pj_month_table = df_pj.copy()
-                        if _pj_selected_year is not None and "_year" in df_pj_month_table.columns:
-                            df_pj_month_table = df_pj_month_table[df_pj_month_table["_year"] == _pj_selected_year]
+                    # ── Hitung aggregasi ──
+                    # Invoice unique = jumlah baris unik per Travel Request Number (atau row count jika tidak ada)
+                    if "Travel Request Number" in df_pj.columns:
+                        _inv_col = "Travel Request Number"
+                        pj_inv  = df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"][_inv_col].nunique()
+                        npj_inv = df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"][_inv_col].nunique()
+                    else:
+                        pj_inv  = len(df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"])
+                        npj_inv = len(df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"])
 
-                        if _date_col_pj and "_month" in df_pj_month_table.columns and not df_pj_month_table.empty:
-                            MONTH_NAMES = {
-                                1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",
-                                7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"
-                            }
+                    total_inv = pj_inv + npj_inv
+                    pj_inv_pct  = (pj_inv  / total_inv * 100) if total_inv > 0 else 0
+                    npj_inv_pct = (npj_inv / total_inv * 100) if total_inv > 0 else 0
 
-                            if _pj_metric_opt == "Invoice (unique)":
-                                if "Travel Request Number" in df_pj_month_table.columns:
-                                    _monthly_agg = (
-                                        df_pj_month_table.groupby(["Grup Hotel","_month"])["Travel Request Number"]
-                                        .nunique()
-                                        .reset_index(name="Nilai")
-                                    )
-                                else:
-                                    _monthly_agg = (
-                                        df_pj_month_table.groupby(["Grup Hotel","_month"])
-                                        .size()
-                                        .reset_index(name="Nilai")
-                                    )
-                            else:
-                                if "Number of Rooms Night" in df_pj_month_table.columns:
-                                    _monthly_agg = (
-                                        df_pj_month_table.groupby(["Grup Hotel","_month"])["Number of Rooms Night"]
-                                        .sum()
-                                        .reset_index(name="Nilai")
-                                    )
-                                else:
-                                    st.warning("Kolom 'Number of Rooms Night' tidak tersedia.")
-                                    _monthly_agg = pd.DataFrame()
+                    # Room Nights
+                    if "Number of Rooms Night" in df_pj.columns:
+                        df_pj["Number of Rooms Night"] = pd.to_numeric(df_pj["Number of Rooms Night"], errors="coerce")
+                        pj_rn  = df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"]["Number of Rooms Night"].sum()
+                        npj_rn = df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"]["Number of Rooms Night"].sum()
+                    else:
+                        pj_rn, npj_rn = 0, 0
 
-                            if not _monthly_agg.empty:
-                                _pivot = _monthly_agg.pivot_table(
-                                    index="Grup Hotel",
-                                    columns="_month",
-                                    values="Nilai",
-                                    fill_value=0
-                                )
-                                # PERBAIKAN: normalisasi label kolom ke int murni — pivot_table bisa
-                                # menghasilkan kolom bertipe float (mis. 4.0) kalau ada NaN tercampur
-                                # di data sumber sebelum di-groupby, sehingga pengecekan
-                                # "if _m not in _pivot.columns" di bawah (memakai int biasa) gagal
-                                # mengenali kolom yang sebenarnya sudah ada, lalu menimpanya dengan 0.
-                                _pivot.columns = [int(c) for c in _pivot.columns]
+                    total_rn = pj_rn + npj_rn
+                    pj_rn_pct  = (pj_rn  / total_rn * 100) if total_rn > 0 else 0
+                    npj_rn_pct = (npj_rn / total_rn * 100) if total_rn > 0 else 0
 
-                                # Pastikan semua 12 bulan ada
-                                for _m in range(1, 13):
-                                    if _m not in _pivot.columns:
-                                        _pivot[_m] = 0
-                                _pivot = _pivot[[m for m in range(1, 13)]]
-                                _pivot["Total"] = _pivot.sum(axis=1)
-                                _pivot = _pivot.reset_index()
+                    # ── Metric Cards ──
+                    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                    _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+                    with _mc1:
+                        st.markdown(f"""
+                        <div class='metric-box'>
+                            <div class='metric-label'>Total Invoice (Domestik)</div>
+                            <div class='metric-value'>{total_inv:,}</div>
+                        </div>""", unsafe_allow_html=True)
+                    with _mc2:
+                        st.markdown(f"""
+                        <div class='metric-box' style='border-left-color:#1BA0E2;'>
+                            <div class='metric-label'>Patra Jasa Group</div>
+                            <div class='metric-value' style='color:#1BA0E2;'>{pj_inv:,}</div>
+                            <div style='font-size:0.78em;color:#888;margin-top:4px;'>{pj_inv_pct:.1f}% dari total</div>
+                        </div>""", unsafe_allow_html=True)
+                    with _mc3:
+                        st.markdown(f"""
+                        <div class='metric-box' style='border-left-color:#ff8c00;'>
+                            <div class='metric-label'>Non-Patra Jasa</div>
+                            <div class='metric-value' style='color:#ff8c00;'>{npj_inv:,}</div>
+                            <div style='font-size:0.78em;color:#888;margin-top:4px;'>{npj_inv_pct:.1f}% dari total</div>
+                        </div>""", unsafe_allow_html=True)
+                    with _mc4:
+                        st.markdown(f"""
+                        <div class='metric-box'>
+                            <div class='metric-label'>Total Room Nights</div>
+                            <div class='metric-value'>{total_rn:,.0f}</div>
+                        </div>""", unsafe_allow_html=True)
 
-                                # Reorder rows: Patra Jasa dulu
-                                _row_order = ["Patra Jasa Group", "Non-Patra Jasa"]
-                                _pivot["_sort"] = _pivot["Grup Hotel"].map(
-                                    {r: i for i, r in enumerate(_row_order)}
-                                ).fillna(99)
-                                _pivot = _pivot.sort_values("_sort").drop(columns=["_sort"])
+                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
-                                # Tambah row % share Patra
-                                _totals_by_month = {m: _pivot[m].sum() for m in range(1, 13)}
-                                _pj_row = _pivot[_pivot["Grup Hotel"] == "Patra Jasa Group"]
-                                _share_row = {"Grup Hotel": "% Patra share"}
-                                for _m in range(1, 13):
-                                    _denom = _totals_by_month[_m]
-                                    _num = _pj_row[_m].values[0] if not _pj_row.empty else 0
-                                    _share_row[_m] = f"{(_num/_denom*100):.0f}%" if _denom > 0 else "-"
-                                _total_denom = _pivot["Total"].sum()
-                                _pj_total = _pj_row["Total"].values[0] if not _pj_row.empty else 0
-                                _share_row["Total"] = f"{(_pj_total/_total_denom*100):.0f}%" if _total_denom > 0 else "-"
+                    # ── Pie Charts ──
+                    st.markdown("<div class='section-title'>Proporsi Perbandingan</div>", unsafe_allow_html=True)
+                    _pie1, _pie2 = st.columns(2)
 
-                                # Build HTML table
-                                _th_style = "padding:7px 10px;background:#f0f8ff;border:1px solid #d0dde8;font-size:0.8em;color:#444;text-align:center;white-space:nowrap;"
-                                _th_left  = "padding:7px 10px;background:#f0f8ff;border:1px solid #d0dde8;font-size:0.8em;color:#444;text-align:left;white-space:nowrap;min-width:150px;"
+                    with _pie1:
+                        if total_inv > 0:
+                            fig_pj_inv = go.Figure(data=[go.Pie(
+                                labels=["Patra Jasa Group", "Non-Patra Jasa"],
+                                values=[pj_inv, npj_inv],
+                                hole=0.55,
+                                marker=dict(colors=["#1BA0E2", "#ff8c00"],
+                                            line=dict(color="white", width=2)),
+                                textinfo="percent",
+                                textfont=dict(size=13),
+                                hovertemplate="<b>%{label}</b><br>Invoice: %{value:,}<br>Proporsi: %{percent}<extra></extra>"
+                            )])
+                            fig_pj_inv.update_layout(
+                                title=dict(text="Invoice Unique — Patra vs Non-Patra", font=dict(size=14)),
+                                height=340,
+                                plot_bgcolor="white",
+                                paper_bgcolor="white",
+                                showlegend=True,
+                                legend=dict(orientation="h", yanchor="bottom", y=-0.18,
+                                            xanchor="center", x=0.5, font=dict(size=11)),
+                                margin=dict(l=10, r=10, t=60, b=20),
+                                annotations=[dict(
+                                    text=f"<b>{total_inv:,}</b><br><span style='font-size:10px'>total</span>",
+                                    x=0.5, y=0.5, font=dict(size=15), showarrow=False
+                                )]
+                            )
+                            st.plotly_chart(fig_pj_inv, use_container_width=True)
 
-                                _html_tbl = f"""
-                                <div style='overflow-x:auto;'>
-                                <table style='width:100%;border-collapse:collapse;font-size:0.82em;'>
-                                  <thead>
-                                    <tr>
-                                      <th style='{_th_left}'>Grup Hotel</th>
-                                      {"".join(f"<th style='{_th_style}'>{MONTH_NAMES[m]}</th>" for m in range(1,13))}
-                                      <th style='{_th_style}font-weight:700;background:#daeaf8;'>Total</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                """
-
-                                for _, row in _pivot.iterrows():
-                                    _grup = row["Grup Hotel"]
-                                    if _grup == "Patra Jasa Group":
-                                        _row_bg  = "background:rgba(27,160,226,0.07);"
-                                        _val_col = "color:#1BA0E2;font-weight:600;"
-                                        _badge   = "<span style='background:#e6f4fb;color:#0D7FCC;border-radius:20px;padding:1px 7px;font-size:0.78em;font-weight:600;margin-left:4px;'>PJ</span>"
-                                    else:
-                                        _row_bg  = "background:rgba(255,140,0,0.05);"
-                                        _val_col = "color:#cc6600;font-weight:600;"
-                                        _badge   = "<span style='background:#fff4e6;color:#b05a00;border-radius:20px;padding:1px 7px;font-size:0.78em;font-weight:600;margin-left:4px;'>NPJ</span>"
-
-                                    _html_tbl += f"<tr style='{_row_bg}'>"
-                                    _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;font-weight:500;'>{_grup}{_badge}</td>"
-                                    for _m in range(1, 13):
-                                        _v = int(row[_m]) if _pj_metric_opt == "Invoice (unique)" else f"{row[_m]:,.0f}"
-                                        _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;{_val_col}'>{_v}</td>"
-                                    _total_v = int(row["Total"]) if _pj_metric_opt == "Invoice (unique)" else f"{row['Total']:,.0f}"
-                                    _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;background:#daeaf8;{_val_col}'>{_total_v}</td>"
-                                    _html_tbl += "</tr>"
-
-                                # Row total gabungan
-                                _html_tbl += "<tr style='background:#f5f5f5;font-weight:600;'>"
-                                _html_tbl += "<td style='padding:7px 10px;border:1px solid #e0e0e0;'>Total Domestik</td>"
-                                for _m in range(1, 13):
-                                    _col_total = _pivot[_m].sum()
-                                    _v = int(_col_total) if _pj_metric_opt == "Invoice (unique)" else f"{_col_total:,.0f}"
-                                    _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;'>{_v}</td>"
-                                _grand = _pivot["Total"].sum()
-                                _grand_v = int(_grand) if _pj_metric_opt == "Invoice (unique)" else f"{_grand:,.0f}"
-                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;background:#daeaf8;'>{_grand_v}</td>"
-                                _html_tbl += "</tr>"
-
-                                # Row % share Patra
-                                _html_tbl += "<tr style='background:#fafafa;font-style:italic;'>"
-                                _html_tbl += "<td style='padding:7px 10px;border:1px solid #e0e0e0;font-size:0.78em;color:#888;'>% Patra Jasa share</td>"
-                                for _m in range(1, 13):
-                                    _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;font-size:0.78em;color:#888;'>{_share_row[_m]}</td>"
-                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;font-size:0.78em;color:#888;background:#daeaf8;'>{_share_row['Total']}</td>"
-                                _html_tbl += "</tr>"
-
-                                _html_tbl += "</tbody></table></div>"
-                                st.markdown(_html_tbl, unsafe_allow_html=True)
-
-                                # Download tabel
-                                st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-                                _dl_pivot = _pivot.rename(columns={m: MONTH_NAMES[m] for m in range(1,13)})
-                                _output_pj = BytesIO()
-                                _dl_pivot.to_excel(_output_pj, index=False, sheet_name="Patra vs Non-Patra")
-                                _output_pj.seek(0)
-                                if st.session_state.get("role") == "Admin":
-                                    st.download_button(
-                                        label="⬇️ Download Tabel",
-                                        data=_output_pj,
-                                        file_name=f"patra_jasa_comparison_{_pj_metric_opt.replace(' ','_')}.xlsx",
-                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                        key="dl_patra_jasa_comparison")
-                                else:
-                                    st.markdown("""
-                                    <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
-                                    padding:10px 16px;font-size:0.82em;color:#1BA0E2;display:flex;align-items:center;gap:8px;'>
-                                        <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
-                                    </div>""", unsafe_allow_html=True)
-                            else:
-                                st.info(f"ℹ️ Tidak ada data bulanan untuk ditampilkan pada tahun {_pj_selected_year}.")
+                            # Tabel ringkasan invoice
+                            st.markdown(f"""
+                            <table style='width:100%;border-collapse:collapse;font-size:0.83em;'>
+                              <thead>
+                                <tr style='background:#f0f8ff;'>
+                                  <th style='padding:6px 10px;text-align:left;border:1px solid #e0e0e0;color:#555;'>Grup</th>
+                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>Invoice</th>
+                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>%</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
+                                    <span style='display:inline-block;width:10px;height:10px;background:#1BA0E2;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Patra Jasa Group
+                                  </td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#1BA0E2;'>{pj_inv:,}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{pj_inv_pct:.1f}%</td>
+                                </tr>
+                                <tr>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
+                                    <span style='display:inline-block;width:10px;height:10px;background:#ff8c00;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Non-Patra Jasa
+                                  </td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#ff8c00;'>{npj_inv:,}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{npj_inv_pct:.1f}%</td>
+                                </tr>
+                                <tr style='background:#f9f9f9;'>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;font-weight:600;'>Total</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>{total_inv:,}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>100%</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                            """, unsafe_allow_html=True)
                         else:
-                            if not _date_col_pj:
-                                st.info("ℹ️ Kolom tanggal (Issue Time / Check in Date) tidak ditemukan. Tabel bulanan tidak dapat ditampilkan.")
-                            elif df_pj_month_table.empty:
-                                st.info(f"ℹ️ Tidak ada data untuk tahun {_pj_selected_year} setelah filter yang aktif diterapkan. Coba pilih tahun lain di atas.")
-                            else:
-                                st.info("ℹ️ Tabel bulanan tidak dapat ditampilkan untuk kombinasi filter saat ini.")
+                            st.info("Tidak ada data invoice untuk ditampilkan.")
 
-                        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+                    with _pie2:
+                        if total_rn > 0:
+                            fig_pj_rn = go.Figure(data=[go.Pie(
+                                labels=["Patra Jasa Group", "Non-Patra Jasa"],
+                                values=[pj_rn, npj_rn],
+                                hole=0.55,
+                                marker=dict(colors=["#1BA0E2", "#ff8c00"],
+                                            line=dict(color="white", width=2)),
+                                textinfo="percent",
+                                textfont=dict(size=13),
+                                hovertemplate="<b>%{label}</b><br>Room Nights: %{value:,.0f}<br>Proporsi: %{percent}<extra></extra>"
+                            )])
+                            fig_pj_rn.update_layout(
+                                title=dict(text="Room Nights — Patra vs Non-Patra", font=dict(size=14)),
+                                height=340,
+                                plot_bgcolor="white",
+                                paper_bgcolor="white",
+                                showlegend=True,
+                                legend=dict(orientation="h", yanchor="bottom", y=-0.18,
+                                            xanchor="center", x=0.5, font=dict(size=11)),
+                                margin=dict(l=10, r=10, t=60, b=20),
+                                annotations=[dict(
+                                    text=f"<b>{total_rn:,.0f}</b><br><span style='font-size:10px'>total</span>",
+                                    x=0.5, y=0.5, font=dict(size=15), showarrow=False
+                                )]
+                            )
+                            st.plotly_chart(fig_pj_rn, use_container_width=True)
 
-                        # ── Kamus Referensi + Data Per Hotel ──
-                        with st.expander(f"📋 Detail Per Hotel Patra Jasa Group — Invoice & Room Nights Bulanan{_pj_year_label}"):
+                            # Tabel ringkasan room nights
+                            st.markdown(f"""
+                            <table style='width:100%;border-collapse:collapse;font-size:0.83em;'>
+                              <thead>
+                                <tr style='background:#f0f8ff;'>
+                                  <th style='padding:6px 10px;text-align:left;border:1px solid #e0e0e0;color:#555;'>Grup</th>
+                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>Room Nights</th>
+                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>%</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
+                                    <span style='display:inline-block;width:10px;height:10px;background:#1BA0E2;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Patra Jasa Group
+                                  </td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#1BA0E2;'>{pj_rn:,.0f}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{pj_rn_pct:.1f}%</td>
+                                </tr>
+                                <tr>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
+                                    <span style='display:inline-block;width:10px;height:10px;background:#ff8c00;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Non-Patra Jasa
+                                  </td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#ff8c00;'>{npj_rn:,.0f}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{npj_rn_pct:.1f}%</td>
+                                </tr>
+                                <tr style='background:#f9f9f9;'>
+                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;font-weight:600;'>Total</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>{total_rn:,.0f}</td>
+                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>100%</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.info("Kolom 'Number of Rooms Night' tidak ditemukan atau tidak ada data.")
 
-                            MONTH_NAMES_KM = {
-                                1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",
-                                7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"
-                            }
+                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
-                            # Data hanya hotel Patra Jasa — pakai df_pj_month_table (sudah di-scope ke tahun terpilih)
-                            # agar konsisten dengan tabel perbandingan bulanan di atas dan tidak mencampur tahun.
-                            df_kamus = df_pj_month_table[df_pj_month_table["Grup Hotel"] == "Patra Jasa Group"].copy()
+                    # ── Tabel Bulanan ──
+                    _pj_year_label = f" · Tahun {_pj_selected_year}" if _pj_selected_year is not None else ""
+                    st.markdown(
+                        f"<div class='section-title'>Tabel Perbandingan Bulanan — "
+                        f"{'Invoice (unique)' if _pj_metric_opt == 'Invoice (unique)' else 'Room Nights'}"
+                        f"{_pj_year_label}</div>",
+                        unsafe_allow_html=True
+                    )
 
-                            # Normalisasi nama hotel ke nama kanonik dari kamus
-                            _norm_to_canonical = {h.lower().strip(): h for h in PATRA_JASA_HOTELS}
-                            df_kamus["Nama Hotel Canonical"] = df_kamus["_hotel_norm"].map(_norm_to_canonical).fillna(df_kamus["Hotel Name"])
+                    # PERBAIKAN: scope tabel bulanan ke SATU tahun yang dipilih di atas —
+                    # ini mencegah bulan yang sama dari tahun berbeda tergabung jadi satu kolom
+                    # (mis. data Jan 2025 + Jan 2026 tidak lagi ikut menumpuk/menyembunyikan bulan lain).
+                    df_pj_month_table = df_pj.copy()
+                    if _pj_selected_year is not None and "_year" in df_pj_month_table.columns:
+                        df_pj_month_table = df_pj_month_table[df_pj_month_table["_year"] == _pj_selected_year]
 
-                            _km_th_h  = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:center;white-space:nowrap;"
-                            _km_th_l  = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:left;white-space:nowrap;min-width:30px;"
-                            _km_th_nm = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:left;white-space:nowrap;min-width:200px;"
-                            _km_td    = "padding:5px 9px;border:1px solid #e0e0e0;text-align:right;font-size:0.8em;"
-                            _km_td_l  = "padding:5px 9px;border:1px solid #e0e0e0;text-align:left;font-size:0.8em;"
-                            _km_td_tot= "padding:5px 9px;border:1px solid #b8d9f0;text-align:right;font-size:0.8em;font-weight:600;background:#daeaf8;color:#0D7FCC;"
+                    if _date_col_pj and "_month" in df_pj_month_table.columns and not df_pj_month_table.empty:
+                        MONTH_NAMES = {
+                            1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",
+                            7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"
+                        }
 
-                            # ── TABEL 1: INVOICE UNIQUE PER HOTEL ──
-                            st.markdown("<div style='font-size:0.85em;font-weight:600;color:#1BA0E2;margin:8px 0 6px 0;'>Invoice Unique per Hotel per Bulan</div>", unsafe_allow_html=True)
-
-                            if _date_col_pj and "_month" in df_kamus.columns and not df_kamus.empty:
-                                if "Travel Request Number" in df_kamus.columns:
-                                    _km_inv_agg = (
-                                        df_kamus.groupby(["Nama Hotel Canonical", "_month"])["Travel Request Number"]
-                                        .nunique()
-                                        .reset_index(name="Nilai")
-                                    )
-                                else:
-                                    _km_inv_agg = (
-                                        df_kamus.groupby(["Nama Hotel Canonical", "_month"])
-                                        .size().reset_index(name="Nilai")
-                                    )
-
-                                _km_inv_pivot = _km_inv_agg.pivot_table(
-                                    index="Nama Hotel Canonical", columns="_month",
-                                    values="Nilai", fill_value=0
+                        if _pj_metric_opt == "Invoice (unique)":
+                            if "Travel Request Number" in df_pj_month_table.columns:
+                                _monthly_agg = (
+                                    df_pj_month_table.groupby(["Grup Hotel","_month"])["Travel Request Number"]
+                                    .nunique()
+                                    .reset_index(name="Nilai")
                                 )
-                                _km_inv_pivot.columns = [int(c) for c in _km_inv_pivot.columns]  # normalisasi tipe kolom
-                                for _m in range(1, 13):
-                                    if _m not in _km_inv_pivot.columns:
-                                        _km_inv_pivot[_m] = 0
-                                _km_inv_pivot = _km_inv_pivot[[m for m in range(1, 13)]]
-                                _km_inv_pivot["Total"] = _km_inv_pivot.sum(axis=1)
-                                _km_inv_pivot = _km_inv_pivot.sort_values("Total", ascending=False).reset_index()
+                            else:
+                                _monthly_agg = (
+                                    df_pj_month_table.groupby(["Grup Hotel","_month"])
+                                    .size()
+                                    .reset_index(name="Nilai")
+                                )
+                        else:
+                            if "Number of Rooms Night" in df_pj_month_table.columns:
+                                _monthly_agg = (
+                                    df_pj_month_table.groupby(["Grup Hotel","_month"])["Number of Rooms Night"]
+                                    .sum()
+                                    .reset_index(name="Nilai")
+                                )
+                            else:
+                                st.warning("Kolom 'Number of Rooms Night' tidak tersedia.")
+                                _monthly_agg = pd.DataFrame()
 
-                                _html_km_inv = f"""
-                                <div style='overflow-x:auto;margin-bottom:18px;'>
-                                <table style='border-collapse:collapse;font-size:0.82em;min-width:100%;'>
-                                  <thead><tr>
-                                    <th style='{_km_th_l}'>No</th>
-                                    <th style='{_km_th_nm}'>Nama Hotel</th>
-                                    {"".join(f"<th style='{_km_th_h}'>{MONTH_NAMES_KM[m]}</th>" for m in range(1,13))}
-                                    <th style='{_km_th_h}background:#daeaf8;'>Total</th>
-                                  </tr></thead>
-                                  <tbody>
-                                """
-                                for _i, _row in _km_inv_pivot.iterrows():
-                                    _bg = "background:#fafeff;" if _i % 2 == 0 else "background:#f4faff;"
-                                    _html_km_inv += f"<tr style='{_bg}'>"
-                                    _html_km_inv += f"<td style='{_km_td_l}color:#999;'>{_i+1}</td>"
-                                    _html_km_inv += f"<td style='{_km_td_l}font-weight:500;'>{_row['Nama Hotel Canonical']}</td>"
-                                    for _m in range(1, 13):
-                                        _v = int(_row[_m])
-                                        _col_style = _km_td if _v > 0 else _km_td + "color:#ccc;"
-                                        _html_km_inv += f"<td style='{_col_style}'>{_v if _v > 0 else '—'}</td>"
-                                    _html_km_inv += f"<td style='{_km_td_tot}'>{int(_row['Total']):,}</td>"
-                                    _html_km_inv += "</tr>"
+                        if not _monthly_agg.empty:
+                            _pivot = _monthly_agg.pivot_table(
+                                index="Grup Hotel",
+                                columns="_month",
+                                values="Nilai",
+                                fill_value=0
+                            )
+                            # PERBAIKAN: normalisasi label kolom ke int murni — pivot_table bisa
+                            # menghasilkan kolom bertipe float (mis. 4.0) kalau ada NaN tercampur
+                            # di data sumber sebelum di-groupby, sehingga pengecekan
+                            # "if _m not in _pivot.columns" di bawah (memakai int biasa) gagal
+                            # mengenali kolom yang sebenarnya sudah ada, lalu menimpanya dengan 0.
+                            _pivot.columns = [int(c) for c in _pivot.columns]
 
-                                # Baris total kolom
-                                _html_km_inv += f"<tr style='background:#e6f4fb;font-weight:700;'>"
-                                _html_km_inv += f"<td style='{_km_td_l}'></td>"
-                                _html_km_inv += f"<td style='{_km_td_l}font-weight:700;color:#0D7FCC;'>Total</td>"
+                            # Pastikan semua 12 bulan ada
+                            for _m in range(1, 13):
+                                if _m not in _pivot.columns:
+                                    _pivot[_m] = 0
+                            _pivot = _pivot[[m for m in range(1, 13)]]
+                            _pivot["Total"] = _pivot.sum(axis=1)
+                            _pivot = _pivot.reset_index()
+
+                            # Reorder rows: Patra Jasa dulu
+                            _row_order = ["Patra Jasa Group", "Non-Patra Jasa"]
+                            _pivot["_sort"] = _pivot["Grup Hotel"].map(
+                                {r: i for i, r in enumerate(_row_order)}
+                            ).fillna(99)
+                            _pivot = _pivot.sort_values("_sort").drop(columns=["_sort"])
+
+                            # Tambah row % share Patra
+                            _totals_by_month = {m: _pivot[m].sum() for m in range(1, 13)}
+                            _pj_row = _pivot[_pivot["Grup Hotel"] == "Patra Jasa Group"]
+                            _share_row = {"Grup Hotel": "% Patra share"}
+                            for _m in range(1, 13):
+                                _denom = _totals_by_month[_m]
+                                _num = _pj_row[_m].values[0] if not _pj_row.empty else 0
+                                _share_row[_m] = f"{(_num/_denom*100):.0f}%" if _denom > 0 else "-"
+                            _total_denom = _pivot["Total"].sum()
+                            _pj_total = _pj_row["Total"].values[0] if not _pj_row.empty else 0
+                            _share_row["Total"] = f"{(_pj_total/_total_denom*100):.0f}%" if _total_denom > 0 else "-"
+
+                            # Build HTML table
+                            _th_style = "padding:7px 10px;background:#f0f8ff;border:1px solid #d0dde8;font-size:0.8em;color:#444;text-align:center;white-space:nowrap;"
+                            _th_left  = "padding:7px 10px;background:#f0f8ff;border:1px solid #d0dde8;font-size:0.8em;color:#444;text-align:left;white-space:nowrap;min-width:150px;"
+
+                            _html_tbl = f"""
+                            <div style='overflow-x:auto;'>
+                            <table style='width:100%;border-collapse:collapse;font-size:0.82em;'>
+                              <thead>
+                                <tr>
+                                  <th style='{_th_left}'>Grup Hotel</th>
+                                  {"".join(f"<th style='{_th_style}'>{MONTH_NAMES[m]}</th>" for m in range(1,13))}
+                                  <th style='{_th_style}font-weight:700;background:#daeaf8;'>Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                            """
+
+                            for _, row in _pivot.iterrows():
+                                _grup = row["Grup Hotel"]
+                                if _grup == "Patra Jasa Group":
+                                    _row_bg  = "background:rgba(27,160,226,0.07);"
+                                    _val_col = "color:#1BA0E2;font-weight:600;"
+                                    _badge   = "<span style='background:#e6f4fb;color:#0D7FCC;border-radius:20px;padding:1px 7px;font-size:0.78em;font-weight:600;margin-left:4px;'>PJ</span>"
+                                else:
+                                    _row_bg  = "background:rgba(255,140,0,0.05);"
+                                    _val_col = "color:#cc6600;font-weight:600;"
+                                    _badge   = "<span style='background:#fff4e6;color:#b05a00;border-radius:20px;padding:1px 7px;font-size:0.78em;font-weight:600;margin-left:4px;'>NPJ</span>"
+
+                                _html_tbl += f"<tr style='{_row_bg}'>"
+                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;font-weight:500;'>{_grup}{_badge}</td>"
                                 for _m in range(1, 13):
-                                    _col_sum = int(_km_inv_pivot[_m].sum())
-                                    _html_km_inv += f"<td style='{_km_th_h}'>{_col_sum:,}</td>"
-                                _html_km_inv += f"<td style='{_km_th_h}background:#c8e0f5;'>{int(_km_inv_pivot['Total'].sum()):,}</td>"
+                                    _v = int(row[_m]) if _pj_metric_opt == "Invoice (unique)" else f"{row[_m]:,.0f}"
+                                    _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;{_val_col}'>{_v}</td>"
+                                _total_v = int(row["Total"]) if _pj_metric_opt == "Invoice (unique)" else f"{row['Total']:,.0f}"
+                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;background:#daeaf8;{_val_col}'>{_total_v}</td>"
+                                _html_tbl += "</tr>"
+
+                            # Row total gabungan
+                            _html_tbl += "<tr style='background:#f5f5f5;font-weight:600;'>"
+                            _html_tbl += "<td style='padding:7px 10px;border:1px solid #e0e0e0;'>Total Domestik</td>"
+                            for _m in range(1, 13):
+                                _col_total = _pivot[_m].sum()
+                                _v = int(_col_total) if _pj_metric_opt == "Invoice (unique)" else f"{_col_total:,.0f}"
+                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;'>{_v}</td>"
+                            _grand = _pivot["Total"].sum()
+                            _grand_v = int(_grand) if _pj_metric_opt == "Invoice (unique)" else f"{_grand:,.0f}"
+                            _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;background:#daeaf8;'>{_grand_v}</td>"
+                            _html_tbl += "</tr>"
+
+                            # Row % share Patra
+                            _html_tbl += "<tr style='background:#fafafa;font-style:italic;'>"
+                            _html_tbl += "<td style='padding:7px 10px;border:1px solid #e0e0e0;font-size:0.78em;color:#888;'>% Patra Jasa share</td>"
+                            for _m in range(1, 13):
+                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;font-size:0.78em;color:#888;'>{_share_row[_m]}</td>"
+                            _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;font-size:0.78em;color:#888;background:#daeaf8;'>{_share_row['Total']}</td>"
+                            _html_tbl += "</tr>"
+
+                            _html_tbl += "</tbody></table></div>"
+                            st.markdown(_html_tbl, unsafe_allow_html=True)
+
+                            # Download tabel
+                            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                            _dl_pivot = _pivot.rename(columns={m: MONTH_NAMES[m] for m in range(1,13)})
+                            _output_pj = BytesIO()
+                            _dl_pivot.to_excel(_output_pj, index=False, sheet_name="Patra vs Non-Patra")
+                            _output_pj.seek(0)
+                            if st.session_state.get("role") == "Admin":
+                                st.download_button(
+                                    label="⬇️ Download Tabel",
+                                    data=_output_pj,
+                                    file_name=f"patra_jasa_comparison_{_pj_metric_opt.replace(' ','_')}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key="dl_patra_jasa_comparison")
+                            else:
+                                st.markdown("""
+                                <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
+                                padding:10px 16px;font-size:0.82em;color:#1BA0E2;display:flex;align-items:center;gap:8px;'>
+                                    <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
+                                </div>""", unsafe_allow_html=True)
+                        else:
+                            st.info(f"ℹ️ Tidak ada data bulanan untuk ditampilkan pada tahun {_pj_selected_year}.")
+                    else:
+                        if not _date_col_pj:
+                            st.info("ℹ️ Kolom tanggal (Issue Time / Check in Date) tidak ditemukan. Tabel bulanan tidak dapat ditampilkan.")
+                        elif df_pj_month_table.empty:
+                            st.info(f"ℹ️ Tidak ada data untuk tahun {_pj_selected_year} setelah filter yang aktif diterapkan. Coba pilih tahun lain di atas.")
+                        else:
+                            st.info("ℹ️ Tabel bulanan tidak dapat ditampilkan untuk kombinasi filter saat ini.")
+
+                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+                    # ── Kamus Referensi + Data Per Hotel ──
+                    with st.expander(f"📋 Detail Per Hotel Patra Jasa Group — Invoice & Room Nights Bulanan{_pj_year_label}"):
+
+                        MONTH_NAMES_KM = {
+                            1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",
+                            7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"
+                        }
+
+                        # Data hanya hotel Patra Jasa — pakai df_pj_month_table (sudah di-scope ke tahun terpilih)
+                        # agar konsisten dengan tabel perbandingan bulanan di atas dan tidak mencampur tahun.
+                        df_kamus = df_pj_month_table[df_pj_month_table["Grup Hotel"] == "Patra Jasa Group"].copy()
+
+                        # Normalisasi nama hotel ke nama kanonik dari kamus
+                        _norm_to_canonical = {h.lower().strip(): h for h in PATRA_JASA_HOTELS}
+                        df_kamus["Nama Hotel Canonical"] = df_kamus["_hotel_norm"].map(_norm_to_canonical).fillna(df_kamus["Hotel Name"])
+
+                        _km_th_h  = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:center;white-space:nowrap;"
+                        _km_th_l  = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:left;white-space:nowrap;min-width:30px;"
+                        _km_th_nm = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:left;white-space:nowrap;min-width:200px;"
+                        _km_td    = "padding:5px 9px;border:1px solid #e0e0e0;text-align:right;font-size:0.8em;"
+                        _km_td_l  = "padding:5px 9px;border:1px solid #e0e0e0;text-align:left;font-size:0.8em;"
+                        _km_td_tot= "padding:5px 9px;border:1px solid #b8d9f0;text-align:right;font-size:0.8em;font-weight:600;background:#daeaf8;color:#0D7FCC;"
+
+                        # ── TABEL 1: INVOICE UNIQUE PER HOTEL ──
+                        st.markdown("<div style='font-size:0.85em;font-weight:600;color:#1BA0E2;margin:8px 0 6px 0;'>Invoice Unique per Hotel per Bulan</div>", unsafe_allow_html=True)
+
+                        if _date_col_pj and "_month" in df_kamus.columns and not df_kamus.empty:
+                            if "Travel Request Number" in df_kamus.columns:
+                                _km_inv_agg = (
+                                    df_kamus.groupby(["Nama Hotel Canonical", "_month"])["Travel Request Number"]
+                                    .nunique()
+                                    .reset_index(name="Nilai")
+                                )
+                            else:
+                                _km_inv_agg = (
+                                    df_kamus.groupby(["Nama Hotel Canonical", "_month"])
+                                    .size().reset_index(name="Nilai")
+                                )
+
+                            _km_inv_pivot = _km_inv_agg.pivot_table(
+                                index="Nama Hotel Canonical", columns="_month",
+                                values="Nilai", fill_value=0
+                            )
+                            _km_inv_pivot.columns = [int(c) for c in _km_inv_pivot.columns]  # normalisasi tipe kolom
+                            for _m in range(1, 13):
+                                if _m not in _km_inv_pivot.columns:
+                                    _km_inv_pivot[_m] = 0
+                            _km_inv_pivot = _km_inv_pivot[[m for m in range(1, 13)]]
+                            _km_inv_pivot["Total"] = _km_inv_pivot.sum(axis=1)
+                            _km_inv_pivot = _km_inv_pivot.sort_values("Total", ascending=False).reset_index()
+
+                            _html_km_inv = f"""
+                            <div style='overflow-x:auto;margin-bottom:18px;'>
+                            <table style='border-collapse:collapse;font-size:0.82em;min-width:100%;'>
+                              <thead><tr>
+                                <th style='{_km_th_l}'>No</th>
+                                <th style='{_km_th_nm}'>Nama Hotel</th>
+                                {"".join(f"<th style='{_km_th_h}'>{MONTH_NAMES_KM[m]}</th>" for m in range(1,13))}
+                                <th style='{_km_th_h}background:#daeaf8;'>Total</th>
+                              </tr></thead>
+                              <tbody>
+                            """
+                            for _i, _row in _km_inv_pivot.iterrows():
+                                _bg = "background:#fafeff;" if _i % 2 == 0 else "background:#f4faff;"
+                                _html_km_inv += f"<tr style='{_bg}'>"
+                                _html_km_inv += f"<td style='{_km_td_l}color:#999;'>{_i+1}</td>"
+                                _html_km_inv += f"<td style='{_km_td_l}font-weight:500;'>{_row['Nama Hotel Canonical']}</td>"
+                                for _m in range(1, 13):
+                                    _v = int(_row[_m])
+                                    _col_style = _km_td if _v > 0 else _km_td + "color:#ccc;"
+                                    _html_km_inv += f"<td style='{_col_style}'>{_v if _v > 0 else '—'}</td>"
+                                _html_km_inv += f"<td style='{_km_td_tot}'>{int(_row['Total']):,}</td>"
                                 _html_km_inv += "</tr>"
 
-                                _html_km_inv += "</tbody></table></div>"
-                                st.markdown(_html_km_inv, unsafe_allow_html=True)
-                            else:
-                                st.info("Data invoice per hotel tidak tersedia.")
+                            # Baris total kolom
+                            _html_km_inv += f"<tr style='background:#e6f4fb;font-weight:700;'>"
+                            _html_km_inv += f"<td style='{_km_td_l}'></td>"
+                            _html_km_inv += f"<td style='{_km_td_l}font-weight:700;color:#0D7FCC;'>Total</td>"
+                            for _m in range(1, 13):
+                                _col_sum = int(_km_inv_pivot[_m].sum())
+                                _html_km_inv += f"<td style='{_km_th_h}'>{_col_sum:,}</td>"
+                            _html_km_inv += f"<td style='{_km_th_h}background:#c8e0f5;'>{int(_km_inv_pivot['Total'].sum()):,}</td>"
+                            _html_km_inv += "</tr>"
 
-                            # ── TABEL 2: ROOM NIGHTS PER HOTEL ──
-                            st.markdown("<div style='font-size:0.85em;font-weight:600;color:#1BA0E2;margin:14px 0 6px 0;'>Room Nights per Hotel per Bulan</div>", unsafe_allow_html=True)
+                            _html_km_inv += "</tbody></table></div>"
+                            st.markdown(_html_km_inv, unsafe_allow_html=True)
+                        else:
+                            st.info("Data invoice per hotel tidak tersedia.")
 
-                            if _date_col_pj and "_month" in df_kamus.columns and "Number of Rooms Night" in df_kamus.columns and not df_kamus.empty:
-                                _km_rn_agg = (
-                                    df_kamus.groupby(["Nama Hotel Canonical", "_month"])["Number of Rooms Night"]
-                                    .sum().reset_index(name="Nilai")
-                                )
+                        # ── TABEL 2: ROOM NIGHTS PER HOTEL ──
+                        st.markdown("<div style='font-size:0.85em;font-weight:600;color:#1BA0E2;margin:14px 0 6px 0;'>Room Nights per Hotel per Bulan</div>", unsafe_allow_html=True)
 
-                                _km_rn_pivot = _km_rn_agg.pivot_table(
-                                    index="Nama Hotel Canonical", columns="_month",
-                                    values="Nilai", fill_value=0
-                                )
-                                _km_rn_pivot.columns = [int(c) for c in _km_rn_pivot.columns]  # normalisasi tipe kolom
+                        if _date_col_pj and "_month" in df_kamus.columns and "Number of Rooms Night" in df_kamus.columns and not df_kamus.empty:
+                            _km_rn_agg = (
+                                df_kamus.groupby(["Nama Hotel Canonical", "_month"])["Number of Rooms Night"]
+                                .sum().reset_index(name="Nilai")
+                            )
+
+                            _km_rn_pivot = _km_rn_agg.pivot_table(
+                                index="Nama Hotel Canonical", columns="_month",
+                                values="Nilai", fill_value=0
+                            )
+                            _km_rn_pivot.columns = [int(c) for c in _km_rn_pivot.columns]  # normalisasi tipe kolom
+                            for _m in range(1, 13):
+                                if _m not in _km_rn_pivot.columns:
+                                    _km_rn_pivot[_m] = 0
+                            _km_rn_pivot = _km_rn_pivot[[m for m in range(1, 13)]]
+                            _km_rn_pivot["Total"] = _km_rn_pivot.sum(axis=1)
+                            _km_rn_pivot = _km_rn_pivot.sort_values("Total", ascending=False).reset_index()
+
+                            _html_km_rn = f"""
+                            <div style='overflow-x:auto;margin-bottom:12px;'>
+                            <table style='border-collapse:collapse;font-size:0.82em;min-width:100%;'>
+                              <thead><tr>
+                                <th style='{_km_th_l}'>No</th>
+                                <th style='{_km_th_nm}'>Nama Hotel</th>
+                                {"".join(f"<th style='{_km_th_h}'>{MONTH_NAMES_KM[m]}</th>" for m in range(1,13))}
+                                <th style='{_km_th_h}background:#daeaf8;'>Total</th>
+                              </tr></thead>
+                              <tbody>
+                            """
+                            for _i, _row in _km_rn_pivot.iterrows():
+                                _bg = "background:#fafeff;" if _i % 2 == 0 else "background:#f4faff;"
+                                _html_km_rn += f"<tr style='{_bg}'>"
+                                _html_km_rn += f"<td style='{_km_td_l}color:#999;'>{_i+1}</td>"
+                                _html_km_rn += f"<td style='{_km_td_l}font-weight:500;'>{_row['Nama Hotel Canonical']}</td>"
                                 for _m in range(1, 13):
-                                    if _m not in _km_rn_pivot.columns:
-                                        _km_rn_pivot[_m] = 0
-                                _km_rn_pivot = _km_rn_pivot[[m for m in range(1, 13)]]
-                                _km_rn_pivot["Total"] = _km_rn_pivot.sum(axis=1)
-                                _km_rn_pivot = _km_rn_pivot.sort_values("Total", ascending=False).reset_index()
-
-                                _html_km_rn = f"""
-                                <div style='overflow-x:auto;margin-bottom:12px;'>
-                                <table style='border-collapse:collapse;font-size:0.82em;min-width:100%;'>
-                                  <thead><tr>
-                                    <th style='{_km_th_l}'>No</th>
-                                    <th style='{_km_th_nm}'>Nama Hotel</th>
-                                    {"".join(f"<th style='{_km_th_h}'>{MONTH_NAMES_KM[m]}</th>" for m in range(1,13))}
-                                    <th style='{_km_th_h}background:#daeaf8;'>Total</th>
-                                  </tr></thead>
-                                  <tbody>
-                                """
-                                for _i, _row in _km_rn_pivot.iterrows():
-                                    _bg = "background:#fafeff;" if _i % 2 == 0 else "background:#f4faff;"
-                                    _html_km_rn += f"<tr style='{_bg}'>"
-                                    _html_km_rn += f"<td style='{_km_td_l}color:#999;'>{_i+1}</td>"
-                                    _html_km_rn += f"<td style='{_km_td_l}font-weight:500;'>{_row['Nama Hotel Canonical']}</td>"
-                                    for _m in range(1, 13):
-                                        _v = _row[_m]
-                                        _v_fmt = f"{_v:,.0f}" if _v > 0 else "—"
-                                        _col_style = _km_td if _v > 0 else _km_td + "color:#ccc;"
-                                        _html_km_rn += f"<td style='{_col_style}'>{_v_fmt}</td>"
-                                    _html_km_rn += f"<td style='{_km_td_tot}'>{_row['Total']:,.0f}</td>"
-                                    _html_km_rn += "</tr>"
-
-                                # Baris total kolom
-                                _html_km_rn += f"<tr style='background:#e6f4fb;font-weight:700;'>"
-                                _html_km_rn += f"<td style='{_km_td_l}'></td>"
-                                _html_km_rn += f"<td style='{_km_td_l}font-weight:700;color:#0D7FCC;'>Total</td>"
-                                for _m in range(1, 13):
-                                    _col_sum = _km_rn_pivot[_m].sum()
-                                    _html_km_rn += f"<td style='{_km_th_h}'>{_col_sum:,.0f}</td>"
-                                _html_km_rn += f"<td style='{_km_th_h}background:#c8e0f5;'>{_km_rn_pivot['Total'].sum():,.0f}</td>"
+                                    _v = _row[_m]
+                                    _v_fmt = f"{_v:,.0f}" if _v > 0 else "—"
+                                    _col_style = _km_td if _v > 0 else _km_td + "color:#ccc;"
+                                    _html_km_rn += f"<td style='{_col_style}'>{_v_fmt}</td>"
+                                _html_km_rn += f"<td style='{_km_td_tot}'>{_row['Total']:,.0f}</td>"
                                 _html_km_rn += "</tr>"
 
-                                _html_km_rn += "</tbody></table></div>"
-                                st.markdown(_html_km_rn, unsafe_allow_html=True)
-                            else:
-                                st.info("Data room nights per hotel tidak tersedia (kolom 'Number of Rooms Night' tidak ditemukan).")
+                            # Baris total kolom
+                            _html_km_rn += f"<tr style='background:#e6f4fb;font-weight:700;'>"
+                            _html_km_rn += f"<td style='{_km_td_l}'></td>"
+                            _html_km_rn += f"<td style='{_km_td_l}font-weight:700;color:#0D7FCC;'>Total</td>"
+                            for _m in range(1, 13):
+                                _col_sum = _km_rn_pivot[_m].sum()
+                                _html_km_rn += f"<td style='{_km_th_h}'>{_col_sum:,.0f}</td>"
+                            _html_km_rn += f"<td style='{_km_th_h}background:#c8e0f5;'>{_km_rn_pivot['Total'].sum():,.0f}</td>"
+                            _html_km_rn += "</tr>"
+
+                            _html_km_rn += "</tbody></table></div>"
+                            st.markdown(_html_km_rn, unsafe_allow_html=True)
+                        else:
+                            st.info("Data room nights per hotel tidak tersedia (kolom 'Number of Rooms Night' tidak ditemukan).")
 
     # ======================================
     # DISCLAIMER + FOOTER
