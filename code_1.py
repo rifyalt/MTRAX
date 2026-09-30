@@ -700,15 +700,63 @@ _AI_SYSTEM_PROMPT = (
 
 
 def _ai_secret(key):
-    """Ambil nilai dari st.secrets (top-level) atau environment variable."""
+    """Cari secret di mana pun letaknya di Secrets: top-level ATAU di dalam section
+    (mis. tidak sengaja tertulis di bawah [auth]). Tidak peka huruf besar/kecil.
+    Juga menerima nama alternatif, mis. [anthropic] api_key untuk ANTHROPIC_API_KEY."""
+    aliases = {
+        "ANTHROPIC_API_KEY": ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "ANTHROPIC_KEY", "API_KEY"],
+        "APP_PASSWORD": ["APP_PASSWORD", "AI_PASSWORD"],
+    }.get(key, [key])
+    wanted = [a.lower() for a in aliases]
+
+    def _search(node, depth=0, section=""):
+        try:
+            items = list(node.items())
+        except Exception:
+            return None
+        # 1) cocok langsung di level ini
+        for k, v in items:
+            if str(k).lower() in wanted and isinstance(v, (str, int, float)) and str(v).strip():
+                return str(v).strip().strip('"').strip("'")
+        # 2) section [anthropic] dengan api_key / key
+        if key == "ANTHROPIC_API_KEY" and section.lower() in ("anthropic", "claude"):
+            for k, v in items:
+                if str(k).lower() in ("api_key", "key", "apikey") and str(v).strip():
+                    return str(v).strip()
+        # 3) cari ke dalam section
+        if depth < 3:
+            for k, v in items:
+                if hasattr(v, "items"):
+                    found = _search(v, depth + 1, str(k))
+                    if found:
+                        return found
+        return None
+
     try:
-        val = st.secrets.get(key)
-        if val:
-            return str(val).strip()
+        found = _search(st.secrets)
+        if found:
+            return found
     except Exception:
         pass
-    val = os.environ.get(key, "")
-    return val.strip() or None
+    for a in aliases:
+        val = os.environ.get(a, "").strip()
+        if val:
+            return val
+    return None
+
+
+def _ai_secret_diagnostics():
+    """Daftar NAMA key/section di Secrets (tanpa nilai) untuk membantu debug."""
+    out = []
+    try:
+        for k, v in st.secrets.items():
+            if hasattr(v, "items"):
+                out.append(f"[{k}] → " + ", ".join(str(x) for x in v.keys()))
+            else:
+                out.append(f"{k} (top-level)")
+    except Exception as e:
+        out.append(f"Secrets tidak bisa dibaca: {e}")
+    return out
 
 
 def _ai_norm(name):
@@ -1184,6 +1232,15 @@ def render_ai_hotel_merge_tab(summary):
     st.markdown(f"<div style='font-size:0.82em;color:#0D7FCC;margin:4px 0 12px 0;'>{' · '.join(status_bits)}</div>",
                 unsafe_allow_html=True)
 
+    if not api_key and is_admin:
+        with st.expander("🔧 Diagnosa: kenapa API key tidak terbaca?", expanded=True):
+            st.markdown("Nama key yang terbaca dari Secrets (nilainya tidak ditampilkan):")
+            st.code("\n".join(_ai_secret_diagnostics()) or "(Secrets kosong)")
+            st.markdown(
+                "Pastikan ada baris `ANTHROPIC_API_KEY = \"sk-ant-...\"` di Secrets, klik **Save**, "
+                "lalu **Reboot app** dari menu ⋮ → Manage app. Jika nama key tidak muncul di daftar di atas, "
+                "berarti Secrets belum tersimpan di app yang sedang Anda buka.")
+
     # ── Panel admin: pengaturan & menjalankan analisa ─────────────────
     if is_admin:
         enabled = st.toggle("Terapkan penggabungan AI ke seluruh dashboard", value=store.get("enabled", True),
@@ -1377,6 +1434,291 @@ def render_ai_hotel_merge_tab(summary):
         border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>
             🔒 Menjalankan analisa, koreksi, dan download hanya tersedia untuk <strong>Admin</strong>
         </div>""", unsafe_allow_html=True)
+
+
+#==========================#
+# PROPERTY MERGE (Price & Room Intelligence)
+#==========================#
+# Kata generik yang dibuang sebelum membandingkan nama hotel, supaya
+# "Aston Balikpapan Hotel & Residence" == "Aston Balikpapan".
+_PROPERTY_GENERIC_WORDS = {
+    "hotel", "hotels", "the", "and", "by", "at", "of", "residence", "residences",
+    "resort", "resorts", "inn", "suite", "suites", "convention", "center", "centre",
+    "pt", "tbk", "spa", "villa", "villas",
+}
+
+# Alias manual untuk kasus yang tidak tertangkap otomatis.
+# Format: "Nama asli persis di data": "Nama properti yang diinginkan"
+# Contoh: "Swissbel Hotel Balikpapan": "Swiss-Belhotel Balikpapan",
+PROPERTY_MANUAL_ALIAS = {
+}
+
+
+def _fold_text(value) -> str:
+    """Huruf kecil + buang aksen (é→e, ü→u) + rapikan spasi non-standar."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(value))
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.replace("\u00a0", " ").replace("\u200b", "")
+    return s.lower()
+
+
+# Awalan/akhiran kota yang diabaikan saat membandingkan kota
+_CITY_NOISE_WORDS = {"kota", "kab", "kabupaten", "city", "regency", "adm", "administrasi",
+                     "daerah", "istimewa", "provinsi", "prov", "dki", "di"}
+
+# Variasi penulisan kota / wilayah metro -> satu kunci kota.
+# Tambahkan sendiri bila menemukan variasi lain di data.
+CITY_ALIAS = {
+    "JOGJA": "YOGYAKARTA", "JOGJAKARTA": "YOGYAKARTA", "YOGYA": "YOGYAKARTA",
+    "YOGJAKARTA": "YOGYAKARTA", "DIY": "YOGYAKARTA", "SLEMAN": "YOGYAKARTA", "BANTUL": "YOGYAKARTA",
+    "JAKARTA PUSAT": "JAKARTA", "JAKARTA SELATAN": "JAKARTA", "JAKARTA BARAT": "JAKARTA",
+    "JAKARTA TIMUR": "JAKARTA", "JAKARTA UTARA": "JAKARTA", "JKT": "JAKARTA",
+    "BADUNG": "BALI", "DENPASAR": "BALI", "KUTA": "BALI", "NUSA DUA": "BALI",
+    "SEMINYAK": "BALI", "UBUD": "BALI", "GIANYAR": "BALI", "JIMBARAN": "BALI", "SANUR": "BALI",
+    "BANDUNG BARAT": "BANDUNG", "CIMAHI": "BANDUNG",
+}
+
+
+def _normalize_city_key(city) -> str:
+    if city is None or (isinstance(city, float) and np.isnan(city)):
+        return ""
+    s = re.sub(r"[^a-z0-9 ]", " ", _fold_text(city))
+    tokens = [t for t in s.split() if t not in _CITY_NOISE_WORDS]
+    key = " ".join(tokens).upper()
+    if key in ("NAN", "NONE", "NULL", "-"):
+        return ""
+    return CITY_ALIAS.get(key, key)
+
+
+def _city_words(city_key: str) -> set:
+    """Semua kata yang merujuk ke kota ini (nama kota + seluruh aliasnya)."""
+    if not city_key:
+        return set()
+    words = set(city_key.lower().split())
+    for alias, canon in CITY_ALIAS.items():
+        if canon == city_key:
+            words |= set(alias.lower().split())
+    return words
+
+
+def _singular(token: str) -> str:
+    """Bentuk tunggal sederhana: 'points' -> 'point' (kata >3 huruf, bukan akhiran 'ss')."""
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def _normalize_property_name(name, city_key: str = "") -> str:
+    """
+    Normalisasi nama hotel untuk dibandingkan: tanpa aksen, tanpa kata generik,
+    tanpa nama kotanya sendiri (perbandingan sudah dibatasi per kota), kata diurutkan.
+    'Hotel Meliá Purosani Yogyakarta' dan 'Melia Purosani Hotel' -> 'melia purosani'
+    """
+    s = re.sub(r"[^a-z0-9 ]", " ", _fold_text(name))
+    tokens = [_singular(t) for t in s.split() if t not in _PROPERTY_GENERIC_WORDS]
+    city_ws = _city_words(city_key)
+    no_city = [t for t in tokens if t not in city_ws]
+    if no_city:                 # jangan sampai nama kosong (mis. "Hotel Bandung")
+        tokens = no_city
+    if not tokens:              # nama hanya berisi kata generik -> pakai apa adanya
+        tokens = s.split()
+    return " ".join(sorted(tokens))
+
+
+@st.cache_data(show_spinner=False)
+def build_property_merge_map(pairs_df: pd.DataFrame, threshold: float = 0.88) -> pd.DataFrame:
+    """
+    pairs_df: kolom [_hotel_raw, _city_key, _freq] (unik per hotel+kota).
+    Return: kolom [_hotel_raw, _city_key, Hotel / Properti].
+    Hotel hanya digabung bila kotanya sama; nama tampilan properti =
+    nama asli yang paling sering muncul di data.
+    """
+    if pairs_df.empty:
+        return pd.DataFrame(columns=["_hotel_raw", "_city_key", "Hotel / Properti"])
+
+    df = pairs_df.copy()
+    df["_alias"] = df["_hotel_raw"].map(PROPERTY_MANUAL_ALIAS).fillna(df["_hotel_raw"])
+    df["_norm"] = [_normalize_property_name(n, c) for n, c in zip(df["_alias"], df["_city_key"])]
+    df["_cluster"] = ""
+
+    for city, grp in df.groupby("_city_key", sort=False):
+        norms = grp["_norm"].unique().tolist()
+        parent = list(range(len(norms)))
+
+        def _find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        if len(norms) > 1:
+            tfidf = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5)).fit_transform(norms)
+            sim = cosine_similarity(tfidf)
+            ii, jj = np.where(np.triu(sim, k=1) >= threshold)
+            for i, j in zip(ii, jj):
+                ri, rj = _find(i), _find(j)
+                if ri != rj:
+                    parent[rj] = ri
+
+            # Aturan subset: nama pendek (>=2 kata) yang seluruh katanya terkandung
+            # di nama lain, mis. "four point" ⊂ "four point sheraton"
+            # (Four Points by Sheraton). Hanya digabung bila kandidatnya menunjuk
+            # ke SATU properti saja, agar nama umum tidak menarik banyak properti.
+            token_sets = [set(n.split()) for n in norms]
+            for i, ti in enumerate(token_sets):
+                if len(ti) < 2:
+                    continue
+                cand_roots = {_find(j) for j, tj in enumerate(token_sets) if j != i and ti < tj}
+                if len(cand_roots) == 1:
+                    ri, rj = _find(i), cand_roots.pop()
+                    if ri != rj:
+                        parent[ri] = rj
+
+        root_of = {n: f"{city}||{_find(k)}" for k, n in enumerate(norms)}
+        df.loc[grp.index, "_cluster"] = grp["_norm"].map(root_of)
+
+    # Baris tanpa kota: ikut cluster dengan nama ternormalisasi yang sama
+    # bila nama tersebut hanya ada di satu cluster berkota.
+    blank = df["_city_key"].eq("")
+    if blank.any() and (~blank).any():
+        known = df[~blank]
+        lookup = {}  # (kota, nama ternormalisasi) -> set cluster
+        for cl, ck, nm in zip(known["_cluster"], known["_city_key"], known["_norm"]):
+            lookup.setdefault((ck, nm), set()).add(cl)
+        cities = known["_city_key"].unique().tolist()
+        for idx in df.index[blank]:
+            raw_name = df.at[idx, "_alias"]
+            cands = set()
+            for ck in cities:  # normalisasi ulang memakai tiap kota kandidat
+                cands |= lookup.get((ck, _normalize_property_name(raw_name, ck)), set())
+                if len(cands) > 1:
+                    break
+            if len(cands) == 1:
+                df.at[idx, "_cluster"] = cands.pop()
+
+    # Nama tampilan = alias/nama asli dengan frekuensi terbesar di cluster
+    # (jika frekuensi sama, pilih nama terpanjang — biasanya nama resmi lengkap)
+    df["_len"] = df["_alias"].str.len()
+    display = (
+        df.sort_values(["_freq", "_len"], ascending=[False, False])
+          .groupby("_cluster")["_alias"].first()
+    )
+    df["Hotel / Properti"] = df["_cluster"].map(display)
+    return df[["_hotel_raw", "_city_key", "Hotel / Properti"]]
+
+
+def get_property_merge_map(df: pd.DataFrame, hotel_col: str = "Hotel Name",
+                           city_col: str = "City") -> pd.DataFrame:
+    """Bangun peta penggabungan properti dari df (hasil di-cache)."""
+    if hotel_col not in df.columns:
+        return pd.DataFrame(columns=["_hotel_raw", "_city_key", "Hotel / Properti"])
+    tmp = pd.DataFrame({
+        "_hotel_raw": df[hotel_col].fillna("").astype(str).str.strip(),
+        "_city_key": (df[city_col].map(_normalize_city_key)
+                      if city_col in df.columns else "ALL"),
+    })
+    tmp = tmp[tmp["_hotel_raw"].ne("") & tmp["_hotel_raw"].str.lower().ne("nan")]
+    pairs = tmp.value_counts().reset_index(name="_freq")
+    return build_property_merge_map(pairs)
+
+
+def apply_property_merge(df: pd.DataFrame, prop_map: pd.DataFrame,
+                         hotel_col: str = "Hotel Name", city_col: str = "City") -> pd.DataFrame:
+    """Tambahkan kolom 'Hotel / Properti' ke df berdasarkan prop_map."""
+    out = df.copy()
+    out["_hotel_raw"] = out[hotel_col].fillna("").astype(str).str.strip()
+    out["_city_key"] = (out[city_col].map(_normalize_city_key)
+                        if city_col in out.columns else "ALL")
+    out = out.merge(prop_map, on=["_hotel_raw", "_city_key"], how="left")
+    out["Hotel / Properti"] = out["Hotel / Properti"].fillna(out["_hotel_raw"])
+    return out.drop(columns=["_hotel_raw", "_city_key"])
+
+
+def build_member_names(df: pd.DataFrame, key_col: str, hotel_col: str = "Hotel Name",
+                       weight_col: str = None) -> pd.Series:
+    """Series: key -> 'Nama A; Nama B' (diurutkan dari kontribusi terbesar)."""
+    # Jika nama hotel sudah digabung oleh AI, tampilkan nama ASLI-nya sebagai anggota
+    if hotel_col == "Hotel Name" and "Hotel Name (Original)" in df.columns:
+        df = df.drop(columns=[hotel_col]).rename(columns={"Hotel Name (Original)": hotel_col})
+    tmp = df[[key_col, hotel_col]].copy()
+    tmp[hotel_col] = tmp[hotel_col].astype(str).str.strip()
+    if weight_col and weight_col in df.columns:
+        tmp["_w"] = pd.to_numeric(df[weight_col], errors="coerce").fillna(0)
+    else:
+        tmp["_w"] = 1
+    agg = (tmp.groupby([key_col, hotel_col])["_w"].sum().reset_index()
+              .sort_values([key_col, "_w"], ascending=[True, False]))
+    return agg.groupby(key_col)[hotel_col].apply(lambda s: "; ".join(s.tolist()))
+
+
+def excel_bytes_with_formats(df: pd.DataFrame, sheet_name: str,
+                             pct_cols=(), money_cols=(), int_cols=(), dec_cols=()) -> BytesIO:
+    """Tulis df ke Excel; kolom persen (skala 0-100) disimpan sebagai persen asli Excel."""
+    out = df.copy()
+    for c in pct_cols:
+        if c in out.columns:
+            out[c] = out[c] / 100.0
+    buf = BytesIO()
+    try:
+        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+            out.to_excel(writer, index=False, sheet_name=sheet_name)
+            wb, ws = writer.book, writer.sheets[sheet_name]
+            fmt = {
+                "pct": wb.add_format({"num_format": "0.00%"}),
+                "money": wb.add_format({"num_format": '"Rp"#,##0'}),
+                "int": wb.add_format({"num_format": "#,##0"}),
+                "dec": wb.add_format({"num_format": "#,##0.00"}),
+            }
+            for i, c in enumerate(out.columns):
+                kind = ("pct" if c in pct_cols else "money" if c in money_cols
+                        else "int" if c in int_cols else "dec" if c in dec_cols else None)
+                width = min(60, max(12, int(out[c].astype(str).str.len().max() or 0) + 2, len(c) + 2))
+                ws.set_column(i, i, width, fmt[kind] if kind else None)
+    except ImportError:
+        buf = BytesIO()
+        out.to_excel(buf, index=False, sheet_name=sheet_name)
+    buf.seek(0)
+    return buf
+
+
+def tab_date_range_filter(df: pd.DataFrame, date_col, key_prefix: str, col_from, col_to):
+    """
+    Filter tanggal From/To khusus satu tab (di dalam rentang Global Filter).
+    Return: (df_terfilter, label_periode). Jika kolom tanggal tidak ada, df dikembalikan utuh.
+    """
+    if not date_col or date_col not in df.columns or df.empty:
+        return df, "Semua periode"
+    _dates = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
+    _valid = _dates.dropna()
+    if _valid.empty:
+        return df, "Semua periode"
+    mn, mx = _valid.min().date(), _valid.max().date()
+
+    k_from, k_to = f"{key_prefix}_date_from", f"{key_prefix}_date_to"
+    # Jaga nilai tersimpan tetap di dalam rentang data (mis. setelah Global Filter berubah)
+    if k_from not in st.session_state or not (mn <= st.session_state[k_from] <= mx):
+        st.session_state[k_from] = mn
+    if k_to not in st.session_state or not (mn <= st.session_state[k_to] <= mx):
+        st.session_state[k_to] = mx
+
+    _lbl = ("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;"
+            "letter-spacing:0.08em;margin-bottom:6px;'>{}</div>")
+    with col_from:
+        st.markdown(_lbl.format(f"📅 From · {date_col}"), unsafe_allow_html=True)
+        d_from = st.date_input("from", min_value=mn, max_value=mx, key=k_from,
+                               format="YYYY/MM/DD", label_visibility="collapsed")
+    with col_to:
+        st.markdown(_lbl.format("📅 To"), unsafe_allow_html=True)
+        d_to = st.date_input("to", min_value=mn, max_value=mx, key=k_to,
+                             format="YYYY/MM/DD", label_visibility="collapsed")
+
+    if d_from > d_to:
+        st.warning("⚠️ Tanggal 'From' lebih besar dari 'To'. Filter tanggal tab ini diabaikan.")
+        return df, f"{mn:%d %b %Y} – {mx:%d %b %Y}"
+
+    mask = (_dates.dt.date >= d_from) & (_dates.dt.date <= d_to)
+    return df[mask.fillna(False)], f"{d_from:%d %b %Y} – {d_to:%d %b %Y}"
 
 
 def trim_string_columns(df):
@@ -2341,7 +2683,7 @@ def login_page():
     [data-testid="stSidebar"]           { display:none !important; }
     [data-testid="stAppViewContainer"]  { padding:0 !important; overflow:hidden !important; }
     section[data-testid="stMain"]       { overflow:hidden !important; }
-    #MainMenu, footer, header           { display:none !important; }
+    #MainMenu, footer, header[data-testid="stHeader"] { display:none !important; }
     .block-container                    { padding:0 !important; max-width:100% !important; overflow:hidden !important; }
     ::-webkit-scrollbar                 { display:none !important; }
 
@@ -2756,7 +3098,11 @@ def main_app():
             background: var(--clr-bg);
         }
 
-        #MainMenu, footer, header { visibility: hidden; }
+        /* Sembunyikan hanya header bawaan Streamlit (bukan semua tag <header>,
+           agar judul bulan/tahun di kalender date picker tetap tampil) */
+        #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; }
+        div[data-baseweb="calendar"],
+        div[data-baseweb="calendar"] * { visibility: visible !important; }
 
         /* ── NEWS TICKER ─────────────────────────────── */
         .news-ticker {
@@ -3388,7 +3734,8 @@ def main_app():
         # ======================================
         # AI HOTEL MERGE (Claude) — terapkan nama gabungan ke seluruh dashboard
         # Ringkasan dibuat dari nama ASLI sebelum digabung & sebelum filter,
-        # dipakai oleh tab "AI Hotel Merge".
+        # dipakai oleh tab "AI Hotel Merge". Nama asli disimpan di kolom
+        # "Hotel Name (Original)" dan tetap tampil di "Nama Hotel Tergabung".
         # ======================================
         _ai_hotel_summary = ai_build_hotel_summary(df_all, hotel_col="Hotel Name")
         df_all = ai_apply_hotel_merge(df_all, hotel_col="Hotel Name")
@@ -3403,6 +3750,14 @@ def main_app():
         # ======================================
         if st.session_state.get("username") == "demo":
             df_all = mask_dataframe_for_demo(df_all)
+
+        # ======================================
+        # PETA PENGGABUNGAN PROPERTI HOTEL
+        # Dihitung dari data penuh (setelah standardisasi City & masking demo,
+        # sebelum filter global) agar pengelompokan stabil. Dipakai di tab
+        # Price Intelligence & Room Intelligence.
+        # ======================================
+        property_merge_map = get_property_merge_map(df_all, hotel_col="Hotel Name", city_col="City")
 
         # ======================================
         # GLOBAL FILTERS
@@ -3546,13 +3901,14 @@ def main_app():
         # ======================================
 
         # Tabs
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab_room, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
             "Value Creation",
             "Dashboard",
             "Explorer",
             "CRM",
             "Network",
             "Price Intelligence",
+            "Room Intelligence",
             "Sankey Flow",
             "Top Hotel/City",
             "Dendrogram",
@@ -5820,6 +6176,7 @@ def main_app():
                 """, unsafe_allow_html=True)
 
                 gf_col1, gf_col2, gf_col3 = st.columns([1.2, 2, 2])
+                gd_col1, gd_col2, gd_col3 = st.columns([1.2, 1.2, 2.8])
 
                 # ── Filter 1: Wilayah ────────────────────────────────────────
                 with gf_col1:
@@ -5851,6 +6208,10 @@ def main_app():
                     df_pi_base.drop(columns=["_cu"], inplace=True)
                 else:
                     filter_label = "🌏 Semua Wilayah"
+
+                # ── Filter tanggal From / To (khusus tab ini) ────────────────
+                df_pi_base, pi_period_label = tab_date_range_filter(
+                    df_pi_base, _date_col_for_filter, "pi", gd_col1, gd_col2)
 
                 # ── Filter 2: Nama Hotel (multiselect) ───────────────────────
                 with gf_col2:
@@ -5886,6 +6247,17 @@ def main_app():
                 if pi_hotel_filter:
                     df_pi_base = df_pi_base[df_pi_base["Hotel Name"].isin(pi_hotel_filter)]
 
+                # ── Toggle penggabungan properti (hanya untuk dimensi Hotel Name) ──
+                if pi_dimension == "Hotel Name":
+                    _toggle = getattr(st, "toggle", st.checkbox)
+                    pi_merge_property = _toggle(
+                        "🔗 Gabungkan properti yang sama (nama hotel mirip di kota yang sama)",
+                        value=True, key="pi_merge_toggle",
+                        help="KPI, grafik Pareto, dan tabel Detail Data akan memakai data properti gabungan."
+                    )
+                else:
+                    pi_merge_property = False
+
                 # ── Filter summary badge ─────────────────────────────────────
                 total_records  = len(df_all)
                 filtered_records = len(df_pi_base)
@@ -5898,6 +6270,7 @@ def main_app():
                             font-size:0.82em;color:#0D7FCC;display:flex;gap:20px;align-items:center;flex-wrap:wrap;'>
                     <span>🔎 <b>Filter aktif</b></span>
                     <span>Wilayah: <b>{filter_label}</b></span>
+                    <span>Periode: <b>{pi_period_label}</b></span>
                     <span>Hotel: <b>{hotel_label}</b></span>
                     <span>Menampilkan <b>{filtered_records:,}</b> dari <b>{total_records:,}</b> records
                         <span style='background:#1BA0E2;color:white;border-radius:20px;
@@ -5927,18 +6300,67 @@ def main_app():
                         st.markdown('<div class="pi-insight">⚠️ Tidak ada data setelah filter.</div>',
                                     unsafe_allow_html=True)
                     else:
-                        pareto_df = (df_sc.groupby(pi_dimension)["Invoice Amount"]
-                                     .sum().reset_index()
-                                     .sort_values("Invoice Amount", ascending=False))
+                        # ── Kunci pengelompokan: properti gabungan atau nama asli ──
+                        is_hotel_dim = (pi_dimension == "Hotel Name")
+                        if is_hotel_dim and pi_merge_property:
+                            df_sc = apply_property_merge(df_sc, property_merge_map,
+                                                         hotel_col="Hotel Name", city_col="City")
+                            df_sc["_pareto_key"] = df_sc["Hotel / Properti"]
+                        else:
+                            df_sc["_pareto_key"] = df_sc[pi_dimension].astype(str).str.strip()
+                        # buang baris tanpa nama (setara perilaku groupby lama yang mengabaikan NaN)
+                        df_sc = df_sc[df_sc["_pareto_key"].notna()
+                                      & df_sc["_pareto_key"].astype(str).str.strip().ne("")
+                                      & df_sc["_pareto_key"].astype(str).str.lower().ne("nan")]
+
+                        has_rn = "Number of Rooms Night" in df_sc.columns
+                        agg_map = {"Invoice Amount": ("Invoice Amount", "sum")}
+                        if has_rn:
+                            agg_map["Room Nights"] = ("Number of Rooms Night", "sum")
+
+                        pareto_df = (df_sc.groupby("_pareto_key").agg(**agg_map)
+                                     .reset_index()
+                                     .rename(columns={"_pareto_key": pi_dimension})
+                                     .sort_values("Invoice Amount", ascending=False)
+                                     .reset_index(drop=True))
+                        if not has_rn:
+                            pareto_df["Room Nights"] = np.nan
+
+                        # Daftar nama hotel asli per properti (untuk tabel, Excel & tooltip)
+                        if is_hotel_dim:
+                            members = build_member_names(df_sc, "_pareto_key", hotel_col="Hotel Name",
+                                                         weight_col="Invoice Amount")
+                            pareto_df["Nama Hotel Tergabung"] = (
+                                pareto_df[pi_dimension].map(members).fillna(pareto_df[pi_dimension]))
+                            pareto_df["_n_members"] = pareto_df["Nama Hotel Tergabung"].str.count(";") + 1
+                        else:
+                            pareto_df["Nama Hotel Tergabung"] = pareto_df[pi_dimension]
+                            pareto_df["_n_members"] = 1
+
                         total_spend           = pareto_df["Invoice Amount"].sum()
                         pareto_df["Spend %"]  = pareto_df["Invoice Amount"] / total_spend * 100
-                        pareto_df["Cumulative %"] = pareto_df["Spend %"].cumsum()
+                        pareto_df["Cumulative %"] = pareto_df["Spend %"].cumsum().clip(upper=100)
                         pareto_df["Rank"]     = range(1, len(pareto_df) + 1)
 
                         top_20_pct_count  = max(1, int(len(pareto_df) * 0.2))
                         top_contributors  = pareto_df.head(top_20_pct_count)
                         top_spend         = top_contributors["Invoice Amount"].sum()
                         top_spend_pct     = top_spend / total_spend * 100
+
+                        # Info penggabungan
+                        if is_hotel_dim and pi_merge_property:
+                            n_raw    = df_sc["Hotel Name"].astype(str).str.strip().nunique()
+                            n_prop   = len(pareto_df)
+                            n_merged = int((pareto_df["_n_members"] > 1).sum())
+                            st.markdown(f"""
+                            <div style='background:#f0f8ff;border:1px solid #cce4f4;border-left:3px solid #1BA0E2;
+                                        border-radius:6px;padding:8px 16px;margin-bottom:14px;
+                                        font-size:0.82em;color:#0D7FCC;'>
+                                🔗 <b>{n_raw:,} nama hotel</b> digabung menjadi <b>{n_prop:,} properti</b>
+                                ({n_merged:,} properti memiliki lebih dari satu nama) · KPI, grafik &amp; tabel
+                                memakai data gabungan
+                            </div>
+                            """, unsafe_allow_html=True)
 
                         # KPI Cards
                         st.markdown(f"""
@@ -5951,7 +6373,7 @@ def main_app():
                             <div class="pi-kpi" style="border-top-color:#1494C6;">
                                 <div class="pi-kpi-label">Top 20% Count</div>
                                 <div class="pi-kpi-value">{top_20_pct_count}</div>
-                                <div class="pi-kpi-sub">{pi_dimension} teratas</div>
+                                <div class="pi-kpi-sub">{"properti" if is_hotel_dim and pi_merge_property else pi_dimension} teratas</div>
                             </div>
                             <div class="pi-kpi" style="border-top-color:#0D7FCC;">
                                 <div class="pi-kpi-label">Top 20% Contribution</div>
@@ -5966,20 +6388,27 @@ def main_app():
                         </div>
                         """, unsafe_allow_html=True)
 
-                        # Pareto Chart
+                        # Pareto Chart (mengikuti data gabungan)
                         colors = ["#1BA0E2" if i < top_20_pct_count else "#d4e8f8"
                                   for i in range(len(pareto_df))]
+                        _hover_members = pareto_df.apply(
+                            lambda r: ("<br><i>Tergabung dari:</i><br>• " + r["Nama Hotel Tergabung"].replace("; ", "<br>• "))
+                            if r["_n_members"] > 1 else "", axis=1)
+                        _hover_rn = pareto_df["Room Nights"].apply(
+                            lambda v: f"{v:,.0f} room nights" if pd.notna(v) else "-")
                         fig = go.Figure()
                         fig.add_trace(go.Bar(
                             x=pareto_df[pi_dimension], y=pareto_df["Invoice Amount"],
                             name="Spend", marker=dict(color=colors),
-                            hovertemplate="<b>%{x}</b><br>Rp%{y:,.0f}<extra></extra>"
+                            customdata=np.stack([_hover_rn, _hover_members], axis=-1),
+                            hovertemplate="<b>%{x}</b><br>Rp%{y:,.0f} · %{customdata[0]}%{customdata[1]}<extra></extra>"
                         ))
                         fig.add_trace(go.Scatter(
                             x=pareto_df[pi_dimension], y=pareto_df["Cumulative %"],
                             name="Cumulative %", yaxis="y2", mode="lines+markers",
                             line=dict(color="#062440", width=2.5),
-                            marker=dict(size=5, color="#062440")
+                            marker=dict(size=5, color="#062440"),
+                            hovertemplate="Cumulative: %{y:.1f}%<extra></extra>"
                         ))
                         fig.add_hline(y=80, yref="y2", line_dash="dash",
                                       line_color="#1BA0E2", opacity=0.5,
@@ -6034,18 +6463,30 @@ def main_app():
                             """, unsafe_allow_html=True)
 
                         with tab_detail:
-                            display_cols = [pi_dimension, "Invoice Amount", "Spend %", "Cumulative %", "Rank"]
+                            # Kolom: Hotel / Properti, Nama Hotel Tergabung, Invoice Amount,
+                            #        Room Nights, Spend %, Cumulative %, Rank
+                            name_col = "Hotel / Properti" if is_hotel_dim else pi_dimension
+                            detail_df = top_contributors.rename(columns={pi_dimension: name_col})
+                            detail_cols = [name_col]
+                            if is_hotel_dim:
+                                detail_cols.append("Nama Hotel Tergabung")
+                            detail_cols += ["Invoice Amount", "Room Nights", "Spend %", "Cumulative %", "Rank"]
+                            detail_df = detail_df[detail_cols].reset_index(drop=True)
+
                             st.dataframe(
-                                top_contributors[display_cols].style
+                                detail_df.style
                                 .format({"Invoice Amount": "Rp{:,.0f}",
+                                         "Room Nights": "{:,.0f}",
                                          "Spend %": "{:.2f}%",
-                                         "Cumulative %": "{:.2f}%"})
+                                         "Cumulative %": "{:.2f}%"}, na_rep="-")
                                 .background_gradient(subset=["Spend %"], cmap="Blues"),
-                                use_container_width=True
+                                use_container_width=True, hide_index=True
                             )
-                            output_excel = BytesIO()
-                            top_contributors.to_excel(output_excel, index=False, sheet_name="Top Contributors")
-                            output_excel.seek(0)
+                            output_excel = excel_bytes_with_formats(
+                                detail_df, "Top Contributors",
+                                pct_cols=("Spend %", "Cumulative %"),
+                                money_cols=("Invoice Amount",),
+                                int_cols=("Room Nights", "Rank"))
                             if st.session_state.get("role") == "Admin":
                                 st.download_button(
                                     label="⬇️ Download Excel", data=output_excel,
@@ -6216,6 +6657,519 @@ def main_app():
             # TAB 7: SANKEY FLOW — MTRAX Blue Theme
             # ======================================
             _render_tab6()
+
+        # ======================================
+        # TAB ROOM INTELLIGENCE — konsep sama dengan Price Intelligence,
+        # parameter utama: Room Nights
+        # ======================================
+        with tab_room:
+            def _render_tab_room():
+                # Kelas CSS pi-* sudah didefinisikan di tab Price Intelligence (global
+                # di halaman). Di sini hanya ditambah style untuk radio & header tab ini.
+                st.markdown("""
+                <style>
+                div[data-testid="stRadio"].st-key-ri_country_radio > div[role="radiogroup"] {
+                    display:inline-flex!important; background:#1BA0E2;
+                    border-radius:50px; padding:3px; gap:0;
+                }
+                div[data-testid="stRadio"].st-key-ri_country_radio > div[role="radiogroup"] > label {
+                    cursor:pointer; padding:5px 18px!important; border-radius:50px!important;
+                    font-size:0.78em!important; font-weight:500!important;
+                    color:rgba(255,255,255,0.80)!important; margin:0!important;
+                }
+                div[data-testid="stRadio"].st-key-ri_country_radio > div[role="radiogroup"] > label > div:first-child { display:none!important; }
+                div[data-testid="stRadio"].st-key-ri_country_radio > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background:white!important; }
+                div[data-testid="stRadio"].st-key-ri_country_radio > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color:#1BA0E2!important; font-weight:700!important; }
+                div[data-testid="stRadio"].st-key-ri_country_radio > label { display:none!important; }
+                </style>
+
+                <div class="pi-header">
+                    <div class="pi-header-inner">
+                        <div class="pi-header-icon">🛏️</div>
+                        <div>
+                            <div class="pi-header-title">Room Intelligence</div>
+                            <div class="pi-header-sub">Pareto 80/20 Room Night Concentration · Hotel Room Night Benchmarking · Volume Leverage Simulator</div>
+                        </div>
+                        <div class="pi-header-badge">
+                            <span class="pi-badge-dot"></span>LIVE ANALYSIS
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pi-global-filter">
+                    <div class="pi-global-filter-title">
+                        🔍 Global Filters
+                        <span style="color:var(--pi-muted);font-weight:400;letter-spacing:0;text-transform:none;font-size:1.1em;">
+                            — berlaku untuk seluruh analisis di tab ini
+                        </span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                RN_COL = "Number of Rooms Night"
+                if RN_COL not in df_all.columns:
+                    st.markdown('<div class="pi-empty">⚠️ Kolom <b>Number of Rooms Night</b> tidak tersedia pada data.</div>',
+                                unsafe_allow_html=True)
+                    return
+
+                _lbl = ("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;"
+                        "letter-spacing:0.08em;margin-bottom:6px;'>{}</div>")
+                rf_col1, rf_col2, rf_col3 = st.columns([1.2, 2, 2])
+                rd_col1, rd_col2, rd_col3 = st.columns([1.2, 1.2, 2.8])
+
+                # ── Filter 1: Wilayah ──
+                with rf_col1:
+                    st.markdown(_lbl.format("Wilayah"), unsafe_allow_html=True)
+                    if "Country" in df_all.columns:
+                        ri_country_filter = st.radio(
+                            label="ri_wilayah", options=["Indonesia", "Internasional"],
+                            index=0, horizontal=True, label_visibility="collapsed",
+                            key="ri_country_radio")
+                    else:
+                        ri_country_filter = "Semua"
+                        st.info("Kolom Country tidak tersedia")
+
+                df_ri_base = df_all.copy()
+                if "Country" in df_ri_base.columns and ri_country_filter in ["Indonesia", "Internasional"]:
+                    _cu = df_ri_base["Country"].astype(str).str.strip().str.upper()
+                    _dom = _cu.isin(["INDONESIA", "ID", "IDN"])
+                    if ri_country_filter == "Indonesia":
+                        df_ri_base, ri_filter_label = df_ri_base[_dom], "🇮🇩 Indonesia"
+                    else:
+                        df_ri_base, ri_filter_label = df_ri_base[~_dom], "🌐 Internasional"
+                else:
+                    ri_filter_label = "🌏 Semua Wilayah"
+
+                # ── Filter tanggal From / To (khusus tab ini) ──
+                df_ri_base, ri_period_label = tab_date_range_filter(
+                    df_ri_base, _date_col_for_filter, "ri", rd_col1, rd_col2)
+
+                # ── Filter 2: Hotel ──
+                with rf_col2:
+                    st.markdown(_lbl.format("Filter Hotel (opsional)"), unsafe_allow_html=True)
+                    if "Hotel Name" in df_ri_base.columns:
+                        ri_hotel_filter = st.multiselect(
+                            label="ri_hotel_ms",
+                            options=sorted(df_ri_base["Hotel Name"].dropna().unique().tolist()),
+                            default=[], placeholder="Semua hotel (pilih untuk filter spesifik)…",
+                            label_visibility="collapsed", key="ri_hotel_multiselect")
+                    else:
+                        ri_hotel_filter = []
+
+                # ── Filter 3: Dimensi Pareto ──
+                with rf_col3:
+                    st.markdown(_lbl.format("Dimensi Pareto"), unsafe_allow_html=True)
+                    ri_dim_options = [c for c in ["Hotel Name", "City", "Supplier Name"] if c in df_ri_base.columns]
+                    ri_dimension = (st.selectbox("ri_dim", ri_dim_options, label_visibility="collapsed",
+                                                 key="ri_dimension_select") if ri_dim_options else None)
+
+                if ri_hotel_filter:
+                    df_ri_base = df_ri_base[df_ri_base["Hotel Name"].isin(ri_hotel_filter)]
+
+                if ri_dimension == "Hotel Name":
+                    _toggle = getattr(st, "toggle", st.checkbox)
+                    ri_merge_property = _toggle(
+                        "🔗 Gabungkan properti yang sama (nama hotel mirip di kota yang sama)",
+                        value=True, key="ri_merge_toggle",
+                        help="KPI, grafik Pareto, tabel, dan analisis per properti memakai data properti gabungan.")
+                else:
+                    ri_merge_property = False
+
+                # Hanya baris dengan room night valid
+                df_ri_base = df_ri_base.copy()
+                df_ri_base[RN_COL] = pd.to_numeric(df_ri_base[RN_COL], errors="coerce")
+                df_ri_base = df_ri_base[df_ri_base[RN_COL] > 0]
+
+                ri_total_records = len(df_all)
+                ri_filtered      = len(df_ri_base)
+                ri_pct           = (ri_filtered / ri_total_records * 100) if ri_total_records else 0
+                ri_hotel_label   = f"{len(ri_hotel_filter)} hotel dipilih" if ri_hotel_filter else "Semua hotel"
+
+                st.markdown(f"""
+                <div style='background:#e6f4fb;border:1px solid #cce4f4;border-left:4px solid #1BA0E2;
+                            border-radius:8px;padding:10px 18px;margin:4px 0 22px 0;
+                            font-size:0.82em;color:#0D7FCC;display:flex;gap:20px;align-items:center;flex-wrap:wrap;'>
+                    <span>🔎 <b>Filter aktif</b></span>
+                    <span>Wilayah: <b>{ri_filter_label}</b></span>
+                    <span>Periode: <b>{ri_period_label}</b></span>
+                    <span>Hotel: <b>{ri_hotel_label}</b></span>
+                    <span>Menampilkan <b>{ri_filtered:,}</b> dari <b>{ri_total_records:,}</b> records (room night &gt; 0)
+                        <span style='background:#1BA0E2;color:white;border-radius:20px;
+                                     padding:1px 10px;font-size:0.88em;margin-left:4px;'>{ri_pct:.1f}%</span>
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if df_ri_base.empty or ri_dimension is None:
+                    st.markdown('<div class="pi-empty">⚠️ Tidak ada data room night yang sesuai dengan filter.</div>',
+                                unsafe_allow_html=True)
+                    return
+
+                # Properti gabungan dipakai di Section 1 & 2 agar konsisten
+                ri_use_merge = ("Hotel Name" in df_ri_base.columns) and (ri_dimension != "Hotel Name" or ri_merge_property)
+                if "Hotel Name" in df_ri_base.columns:
+                    if ri_dimension == "Hotel Name" and not ri_merge_property:
+                        df_ri_base["Hotel / Properti"] = df_ri_base["Hotel Name"].astype(str).str.strip()
+                    else:
+                        df_ri_base = apply_property_merge(df_ri_base, property_merge_map,
+                                                          hotel_col="Hotel Name", city_col="City")
+
+                has_inv = "Invoice Amount" in df_ri_base.columns
+                has_trn = "Travel Request Number" in df_ri_base.columns
+
+                # ══════════════════════════════════════════════════════
+                #  SECTION 1 — PARETO ROOM NIGHT CONCENTRATION
+                # ══════════════════════════════════════════════════════
+                st.markdown('<div class="pi-section-divider">Room Night Concentration — Pareto 80/20</div>',
+                            unsafe_allow_html=True)
+
+                is_hotel_dim = (ri_dimension == "Hotel Name")
+                df_rc = df_ri_base.copy()
+                df_rc["_ri_key"] = (df_rc["Hotel / Properti"] if is_hotel_dim
+                                    else df_rc[ri_dimension].astype(str).str.strip())
+                df_rc = df_rc[df_rc["_ri_key"].notna()
+                              & df_rc["_ri_key"].astype(str).str.strip().ne("")
+                              & df_rc["_ri_key"].astype(str).str.lower().ne("nan")]
+                if df_rc.empty:
+                    st.markdown('<div class="pi-empty">⚠️ Tidak ada data untuk dimensi yang dipilih.</div>',
+                                unsafe_allow_html=True)
+                    return
+
+                agg = {"Room Nights": (RN_COL, "sum")}
+                agg["Bookings"] = ("Travel Request Number", "nunique") if has_trn else (RN_COL, "size")
+                if has_inv:
+                    agg["Invoice Amount"] = ("Invoice Amount", "sum")
+                rp = (df_rc.groupby("_ri_key").agg(**agg).reset_index()
+                        .rename(columns={"_ri_key": ri_dimension})
+                        .sort_values("Room Nights", ascending=False).reset_index(drop=True))
+                if not has_inv:
+                    rp["Invoice Amount"] = np.nan
+
+                if is_hotel_dim:
+                    _mem = build_member_names(df_rc, "_ri_key", hotel_col="Hotel Name", weight_col=RN_COL)
+                    rp["Nama Hotel Tergabung"] = rp[ri_dimension].map(_mem).fillna(rp[ri_dimension])
+                    rp["_n_members"] = rp["Nama Hotel Tergabung"].str.count(";") + 1
+                else:
+                    rp["Nama Hotel Tergabung"] = rp[ri_dimension]
+                    rp["_n_members"] = 1
+
+                total_rn = rp["Room Nights"].sum()
+                rp["Avg LOS"]         = rp["Room Nights"] / rp["Bookings"].replace(0, np.nan)
+                rp["Avg Rate/Night"]  = rp["Invoice Amount"] / rp["Room Nights"].replace(0, np.nan)
+                rp["RN %"]            = rp["Room Nights"] / total_rn * 100
+                rp["Cumulative %"]    = rp["RN %"].cumsum().clip(upper=100)
+                rp["Rank"]            = range(1, len(rp) + 1)
+
+                ri_top_n   = max(1, int(len(rp) * 0.2))
+                ri_top     = rp.head(ri_top_n)
+                top_rn     = ri_top["Room Nights"].sum()
+                top_rn_pct = top_rn / total_rn * 100 if total_rn else 0
+                bottom_rn  = total_rn - top_rn
+                entity_lbl = "properti" if (is_hotel_dim and ri_merge_property) else ri_dimension
+
+                if is_hotel_dim and ri_merge_property:
+                    n_raw = df_rc["Hotel Name"].astype(str).str.strip().nunique()
+                    st.markdown(f"""
+                    <div style='background:#f0f8ff;border:1px solid #cce4f4;border-left:3px solid #1BA0E2;
+                                border-radius:6px;padding:8px 16px;margin-bottom:14px;font-size:0.82em;color:#0D7FCC;'>
+                        🔗 <b>{n_raw:,} nama hotel</b> digabung menjadi <b>{len(rp):,} properti</b>
+                        ({int((rp["_n_members"] > 1).sum()):,} properti memiliki lebih dari satu nama)
+                    </div>""", unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div class="pi-kpi-grid">
+                    <div class="pi-kpi" style="border-top-color:#1BA0E2;">
+                        <div class="pi-kpi-label">Total Room Nights · {ri_filter_label}</div>
+                        <div class="pi-kpi-value">{total_rn:,.0f}</div>
+                        <div class="pi-kpi-sub">keseluruhan periode</div>
+                    </div>
+                    <div class="pi-kpi" style="border-top-color:#1494C6;">
+                        <div class="pi-kpi-label">Top 20% Count</div>
+                        <div class="pi-kpi-value">{ri_top_n}</div>
+                        <div class="pi-kpi-sub">{entity_lbl} teratas</div>
+                    </div>
+                    <div class="pi-kpi" style="border-top-color:#0D7FCC;">
+                        <div class="pi-kpi-label">Top 20% Contribution</div>
+                        <div class="pi-kpi-value" style="color:#0D7FCC;">{top_rn_pct:.1f}%</div>
+                        <div class="pi-kpi-sub">dari total room nights</div>
+                    </div>
+                    <div class="pi-kpi" style="border-top-color:#062440;">
+                        <div class="pi-kpi-label">Bottom 80% Room Nights</div>
+                        <div class="pi-kpi-value">{bottom_rn:,.0f}</div>
+                        <div class="pi-kpi-sub">sisa {len(rp) - ri_top_n} entitas</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                _colors = ["#1BA0E2" if i < ri_top_n else "#d4e8f8" for i in range(len(rp))]
+                _hv_mem = rp.apply(
+                    lambda r: ("<br><i>Tergabung dari:</i><br>• " + r["Nama Hotel Tergabung"].replace("; ", "<br>• "))
+                    if r["_n_members"] > 1 else "", axis=1)
+                _hv_inv = rp["Invoice Amount"].apply(lambda v: f"Rp{v:,.0f}" if pd.notna(v) else "-")
+                fig_ri = go.Figure()
+                fig_ri.add_trace(go.Bar(
+                    x=rp[ri_dimension], y=rp["Room Nights"], name="Room Nights",
+                    marker=dict(color=_colors),
+                    customdata=np.stack([_hv_inv, _hv_mem], axis=-1),
+                    hovertemplate="<b>%{x}</b><br>%{y:,.0f} room nights · %{customdata[0]}%{customdata[1]}<extra></extra>"))
+                fig_ri.add_trace(go.Scatter(
+                    x=rp[ri_dimension], y=rp["Cumulative %"], name="Cumulative %", yaxis="y2",
+                    mode="lines+markers", line=dict(color="#062440", width=2.5),
+                    marker=dict(size=5, color="#062440"),
+                    hovertemplate="Cumulative: %{y:.1f}%<extra></extra>"))
+                fig_ri.add_hline(y=80, yref="y2", line_dash="dash", line_color="#1BA0E2", opacity=0.5,
+                                 annotation_text="80%", annotation_position="right",
+                                 annotation_font_color="#1BA0E2")
+                fig_ri.update_layout(
+                    template="plotly_white",
+                    yaxis=dict(title="Room Nights", gridcolor="#e8f4fd"),
+                    yaxis2=dict(title="Cumulative %", overlaying="y", side="right",
+                                range=[0, 100], showgrid=False, ticksuffix="%"),
+                    height=460, plot_bgcolor="white", paper_bgcolor="white",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                                bgcolor="rgba(240,248,255,0.9)", bordercolor="#cce4f4", borderwidth=1),
+                    margin=dict(l=60, r=80, t=40, b=100),
+                    xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
+                    hovermode="x unified")
+                st.plotly_chart(fig_ri, use_container_width=True)
+
+                ri_tab_sim, ri_tab_detail, ri_tab_insight = st.tabs([
+                    "📦  Volume Leverage", "📋  Detail Data", "💡  Insight"])
+
+                top_inv       = ri_top["Invoice Amount"].sum() if has_inv else np.nan
+                top_avg_rate  = (top_inv / top_rn) if (has_inv and top_rn) else np.nan
+
+                with ri_tab_sim:
+                    sc1, sc2 = st.columns(2)
+                    with sc1:
+                        shift_pct = st.slider("Konsolidasi: % room night Bottom 80% dialihkan ke Top 20%",
+                                              0, 50, 10, 1, key="ri_shift_pct")
+                    with sc2:
+                        vol_disc = st.slider("Target diskon tier volume pada Top 20% (%)",
+                                             0, 20, 5, 1, key="ri_vol_disc")
+                    add_rn       = bottom_rn * shift_pct / 100
+                    proj_top_rn  = top_rn + add_rn
+                    vol_saving   = proj_top_rn * top_avg_rate * vol_disc / 100 if pd.notna(top_avg_rate) else np.nan
+                    _saving_txt  = f"Rp{vol_saving:,.0f}" if pd.notna(vol_saving) else "-"
+                    _rate_txt    = f"Rp{top_avg_rate:,.0f}" if pd.notna(top_avg_rate) else "-"
+
+                    st.markdown(f"""
+                    <div class="pi-sim-grid">
+                        <div class="pi-sim-card pi-sim-current">
+                            <div class="pi-sim-card-label">Top 20% Room Nights</div>
+                            <div class="pi-sim-card-value">{top_rn:,.0f}</div>
+                            <div class="pi-sim-card-sub">{ri_top_n} {entity_lbl} · avg rate {_rate_txt}/malam</div>
+                        </div>
+                        <div class="pi-sim-card pi-sim-neg">
+                            <div class="pi-sim-card-label">Setelah Konsolidasi +{shift_pct}%</div>
+                            <div class="pi-sim-card-value">{proj_top_rn:,.0f}</div>
+                            <div class="pi-sim-card-sub">+{add_rn:,.0f} room nights dari Bottom 80%</div>
+                        </div>
+                        <div class="pi-sim-card pi-sim-saving">
+                            <span class="pi-sim-saving-icon">💰</span>
+                            <div class="pi-sim-card-label">Potensi Saving (simulasi)</div>
+                            <div class="pi-sim-card-value">{_saving_txt}</div>
+                            <div class="pi-sim-card-sub">diskon tier volume {vol_disc}%</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    with st.expander("📘 Cara Perhitungan Potensi Saving", expanded=False):
+                        st.markdown(f"""
+                        <div class="pi-insight">
+                            <strong>Formula:</strong><br>
+                            Tambahan RN = Bottom 80% RN × % konsolidasi
+                            = {bottom_rn:,.0f} × {shift_pct}% = <em>{add_rn:,.0f}</em><br>
+                            Proyeksi RN Top 20% = {top_rn:,.0f} + {add_rn:,.0f} = <em>{proj_top_rn:,.0f}</em><br>
+                            Saving = Proyeksi RN × Avg Rate Top 20% × Diskon tier<br>
+                            = {proj_top_rn:,.0f} × {_rate_txt} × {vol_disc}% = <strong>{_saving_txt}</strong><br><br>
+                            <em>Catatan:</em> ini simulasi berbasis asumsi. Diskon tier volume aktual
+                            bergantung pada hasil negosiasi dengan masing-masing hotel.
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                with ri_tab_detail:
+                    name_col = "Hotel / Properti" if is_hotel_dim else ri_dimension
+                    ri_detail = ri_top.rename(columns={ri_dimension: name_col})
+                    cols = [name_col] + (["Nama Hotel Tergabung"] if is_hotel_dim else []) + \
+                           ["Room Nights", "Bookings", "Avg LOS", "Invoice Amount", "Avg Rate/Night",
+                            "RN %", "Cumulative %", "Rank"]
+                    ri_detail = ri_detail[cols].reset_index(drop=True)
+                    st.dataframe(
+                        ri_detail.style
+                        .format({"Room Nights": "{:,.0f}", "Bookings": "{:,.0f}", "Avg LOS": "{:.2f}",
+                                 "Invoice Amount": "Rp{:,.0f}", "Avg Rate/Night": "Rp{:,.0f}",
+                                 "RN %": "{:.2f}%", "Cumulative %": "{:.2f}%"}, na_rep="-")
+                        .background_gradient(subset=["RN %"], cmap="Blues"),
+                        use_container_width=True, hide_index=True)
+                    if not has_trn:
+                        st.caption("Bookings dihitung dari jumlah baris data (kolom Travel Request Number tidak tersedia).")
+                    if st.session_state.get("role") == "Admin":
+                        st.download_button(
+                            label="⬇️ Download Excel",
+                            data=excel_bytes_with_formats(
+                                ri_detail, "Top Room Nights",
+                                pct_cols=("RN %", "Cumulative %"),
+                                money_cols=("Invoice Amount", "Avg Rate/Night"),
+                                int_cols=("Room Nights", "Bookings", "Rank"),
+                                dec_cols=("Avg LOS",)),
+                            file_name=f"room_pareto_{ri_dimension.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_room_pareto")
+                    else:
+                        st.markdown('<div class="pi-locked">🔒 Download hanya tersedia untuk <strong>Admin</strong></div>',
+                                    unsafe_allow_html=True)
+
+                with ri_tab_insight:
+                    avg_los_all = total_rn / rp["Bookings"].sum() if rp["Bookings"].sum() else 0
+                    st.markdown(f"""
+                    <div class="pi-insight">
+                        <strong>Konsentrasi Room Night · {ri_filter_label} · {ri_hotel_label}</strong><br>
+                        Top 20% (<em>{ri_top_n} {entity_lbl}</em>) menyerap
+                        <em>{top_rn_pct:.1f}%</em> dari total <strong>{total_rn:,.0f} room nights</strong>
+                        dengan rata-rata lama menginap <em>{avg_los_all:.2f} malam</em> per booking.<br><br>
+                        Volume yang terkonsentrasi ini menjadi posisi tawar untuk kontrak rate berbasis
+                        volume (tiered/volume commitment). Mengalihkan sebagian room night dari Bottom 80%
+                        ke hotel Top 20% memperkuat posisi negosiasi tersebut.
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # ══════════════════════════════════════════════════════
+                #  SECTION 2 — HOTEL ROOM NIGHT INTELLIGENCE
+                # ══════════════════════════════════════════════════════
+                st.markdown('<div class="pi-section-divider">Hotel Room Night Intelligence</div>',
+                            unsafe_allow_html=True)
+
+                if "Hotel / Properti" not in df_ri_base.columns:
+                    st.markdown('<div class="pi-insight">⚠️ Kolom Hotel Name tidak tersedia.</div>',
+                                unsafe_allow_html=True)
+                    return
+
+                df_ri_base = df_ri_base[df_ri_base["Hotel / Properti"].astype(str).str.strip().ne("")
+                                        & df_ri_base["Hotel / Properti"].astype(str).str.lower().ne("nan")]
+                prop_rank = (df_ri_base.groupby("Hotel / Properti")[RN_COL].sum()
+                             .sort_values(ascending=False))
+                st.markdown(f"""
+                <div style='background:#f0f8ff;border:1px solid #cce4f4;border-left:3px solid #1BA0E2;
+                            border-radius:6px;padding:10px 16px;margin-bottom:14px;font-size:0.82em;color:#0D7FCC;'>
+                    🏨 <b>{len(prop_rank):,} {"properti" if ri_use_merge else "hotel"}</b> tersedia untuk
+                    <b>{ri_filter_label}</b> · diurutkan dari room night terbesar
+                </div>
+                """, unsafe_allow_html=True)
+
+                ri_selected = st.selectbox(
+                    "Pilih hotel/properti untuk analisis detail", prop_rank.index.tolist(),
+                    format_func=lambda x: f"{x}  ·  {prop_rank[x]:,.0f} RN",
+                    label_visibility="collapsed", key="ri_hotel_detail_select")
+
+                df_h = df_ri_base[df_ri_base["Hotel / Properti"] == ri_selected].copy()
+                h_rn       = df_h[RN_COL].sum()
+                h_book     = df_h["Travel Request Number"].nunique() if has_trn else len(df_h)
+                h_los      = h_rn / h_book if h_book else 0
+                h_share    = h_rn / df_ri_base[RN_COL].sum() * 100 if df_ri_base[RN_COL].sum() else 0
+                h_rate     = (df_h["Invoice Amount"].sum() / h_rn) if (has_inv and h_rn) else np.nan
+                h_rate_txt = f"Rp {h_rate:,.0f}" if pd.notna(h_rate) else "-"
+
+                h_members = df_h["Hotel Name"].astype(str).str.strip().unique().tolist()
+                if len(h_members) > 1:
+                    st.markdown(
+                        "<div style='font-size:0.80em;color:#6a8fa0;margin:-6px 0 12px;'>🔗 Tergabung dari: "
+                        + " · ".join(h_members) + "</div>", unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div class="pi-hotel-kpi-grid">
+                    <div class="pi-hotel-kpi" style="--pi-color:#1BA0E2;">
+                        <span class="pi-hotel-kpi-icon">🌙</span>
+                        <div class="pi-hotel-kpi-label">Total Room Nights</div>
+                        <div class="pi-hotel-kpi-value">{h_rn:,.0f}</div>
+                    </div>
+                    <div class="pi-hotel-kpi" style="--pi-color:#1494C6;">
+                        <span class="pi-hotel-kpi-icon">🧾</span>
+                        <div class="pi-hotel-kpi-label">Bookings</div>
+                        <div class="pi-hotel-kpi-value">{h_book:,.0f}</div>
+                    </div>
+                    <div class="pi-hotel-kpi" style="--pi-color:#0D7FCC;">
+                        <span class="pi-hotel-kpi-icon">⏱️</span>
+                        <div class="pi-hotel-kpi-label">Avg Length of Stay</div>
+                        <div class="pi-hotel-kpi-value">{h_los:.2f} malam</div>
+                    </div>
+                    <div class="pi-hotel-kpi" style="--pi-color:#2e8a57;">
+                        <span class="pi-hotel-kpi-icon">📊</span>
+                        <div class="pi-hotel-kpi-label">Share Room Nights</div>
+                        <div class="pi-hotel-kpi-value">{h_share:.2f}%</div>
+                    </div>
+                    <div class="pi-hotel-kpi" style="--pi-color:#062440;">
+                        <span class="pi-hotel-kpi-icon">💵</span>
+                        <div class="pi-hotel-kpi-label">Avg Rate / Night</div>
+                        <div class="pi-hotel-kpi-value">{h_rate_txt}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Tren room night bulanan
+                if "Check in Date" in df_h.columns:
+                    _d = pd.to_datetime(df_h["Check in Date"], errors="coerce")
+                    trend = (df_h.assign(_m=_d.dt.to_period("M").dt.to_timestamp())
+                             .dropna(subset=["_m"]).groupby("_m")[RN_COL].sum().reset_index())
+                    if not trend.empty:
+                        fig_tr = go.Figure(go.Bar(
+                            x=trend["_m"], y=trend[RN_COL], marker_color="#1BA0E2",
+                            hovertemplate="%{x|%b %Y}<br>%{y:,.0f} room nights<extra></extra>"))
+                        fig_tr.update_layout(
+                            template="plotly_white", height=300, plot_bgcolor="white", paper_bgcolor="white",
+                            title=dict(text="Tren Room Nights Bulanan (Check in Date)", font=dict(size=13)),
+                            yaxis=dict(title="Room Nights", gridcolor="#e8f4fd"),
+                            xaxis=dict(tickformat="%b %Y"), margin=dict(l=60, r=30, t=50, b=40))
+                        st.plotly_chart(fig_tr, use_container_width=True)
+
+                # Volume commitment simulator
+                st.markdown('<div class="pi-section-divider">Volume Commitment Simulator</div>',
+                            unsafe_allow_html=True)
+                vc1, vc2 = st.columns(2)
+                with vc1:
+                    commit_growth = st.slider("📈 Komitmen kenaikan volume (%)", 0, 50, 20, key="ri_commit_growth")
+                with vc2:
+                    commit_disc = st.slider("🎯 Target diskon atas komitmen volume (%)", 0, 20, 5, key="ri_commit_disc")
+                proj_rn     = h_rn * (1 + commit_growth / 100)
+                commit_save = proj_rn * h_rate * commit_disc / 100 if pd.notna(h_rate) else np.nan
+                _cs_txt     = f"Rp {commit_save:,.0f}" if pd.notna(commit_save) else "-"
+
+                st.markdown(f"""
+                <div class="pi-sim-grid">
+                    <div class="pi-sim-card pi-sim-current">
+                        <div class="pi-sim-card-label">Room Nights Saat Ini</div>
+                        <div class="pi-sim-card-value">{h_rn:,.0f}</div>
+                        <div class="pi-sim-card-sub">avg rate {h_rate_txt}/malam</div>
+                    </div>
+                    <div class="pi-sim-card pi-sim-neg">
+                        <div class="pi-sim-card-label">Proyeksi Komitmen +{commit_growth}%</div>
+                        <div class="pi-sim-card-value">{proj_rn:,.0f}</div>
+                        <div class="pi-sim-card-sub">room nights yang ditawarkan ke hotel</div>
+                    </div>
+                    <div class="pi-sim-card pi-sim-saving">
+                        <span class="pi-sim-saving-icon">💰</span>
+                        <div class="pi-sim-card-label">Estimated Saving (simulasi)</div>
+                        <div class="pi-sim-card-value">{_cs_txt}</div>
+                        <div class="pi-sim-card-sub">dengan diskon {commit_disc}%</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                with st.expander("📘 Cara Perhitungan Estimated Saving", expanded=False):
+                    st.markdown(f"""
+                    <div class="pi-insight">
+                        <strong>Formula:</strong><br>
+                        Proyeksi RN = RN saat ini × (1 + komitmen kenaikan)
+                        = {h_rn:,.0f} × (1 + {commit_growth}%) = <em>{proj_rn:,.0f}</em><br>
+                        Saving = Proyeksi RN × Avg Rate × Diskon
+                        = {proj_rn:,.0f} × {h_rate_txt} × {commit_disc}% = <strong>{_cs_txt}</strong><br><br>
+                        <em>Catatan:</em> simulasi ini mengasumsikan komitmen volume dapat dipenuhi
+                        dan hotel menyetujui diskon yang ditargetkan.
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            _render_tab_room()
+
         with tab7:
 
             st.markdown("""
