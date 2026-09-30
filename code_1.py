@@ -670,7 +670,20 @@ def _fold_text(value) -> str:
 
 
 # Awalan/akhiran kota yang diabaikan saat membandingkan kota
-_CITY_NOISE_WORDS = {"kota", "kab", "kabupaten", "city", "regency", "adm", "administrasi"}
+_CITY_NOISE_WORDS = {"kota", "kab", "kabupaten", "city", "regency", "adm", "administrasi",
+                     "daerah", "istimewa", "provinsi", "prov", "dki", "di"}
+
+# Variasi penulisan kota / wilayah metro -> satu kunci kota.
+# Tambahkan sendiri bila menemukan variasi lain di data.
+CITY_ALIAS = {
+    "JOGJA": "YOGYAKARTA", "JOGJAKARTA": "YOGYAKARTA", "YOGYA": "YOGYAKARTA",
+    "YOGJAKARTA": "YOGYAKARTA", "DIY": "YOGYAKARTA", "SLEMAN": "YOGYAKARTA", "BANTUL": "YOGYAKARTA",
+    "JAKARTA PUSAT": "JAKARTA", "JAKARTA SELATAN": "JAKARTA", "JAKARTA BARAT": "JAKARTA",
+    "JAKARTA TIMUR": "JAKARTA", "JAKARTA UTARA": "JAKARTA", "JKT": "JAKARTA",
+    "BADUNG": "BALI", "DENPASAR": "BALI", "KUTA": "BALI", "NUSA DUA": "BALI",
+    "SEMINYAK": "BALI", "UBUD": "BALI", "GIANYAR": "BALI", "JIMBARAN": "BALI", "SANUR": "BALI",
+    "BANDUNG BARAT": "BANDUNG", "CIMAHI": "BANDUNG",
+}
 
 
 def _normalize_city_key(city) -> str:
@@ -679,13 +692,35 @@ def _normalize_city_key(city) -> str:
     s = re.sub(r"[^a-z0-9 ]", " ", _fold_text(city))
     tokens = [t for t in s.split() if t not in _CITY_NOISE_WORDS]
     key = " ".join(tokens).upper()
-    return "" if key in ("NAN", "NONE", "NULL", "-") else key
+    if key in ("NAN", "NONE", "NULL", "-"):
+        return ""
+    return CITY_ALIAS.get(key, key)
 
 
-def _normalize_property_name(name) -> str:
+def _city_words(city_key: str) -> set:
+    """Semua kata yang merujuk ke kota ini (nama kota + seluruh aliasnya)."""
+    if not city_key:
+        return set()
+    words = set(city_key.lower().split())
+    for alias, canon in CITY_ALIAS.items():
+        if canon == city_key:
+            words |= set(alias.lower().split())
+    return words
+
+
+def _normalize_property_name(name, city_key: str = "") -> str:
+    """
+    Normalisasi nama hotel untuk dibandingkan: tanpa aksen, tanpa kata generik,
+    tanpa nama kotanya sendiri (perbandingan sudah dibatasi per kota), kata diurutkan.
+    'Hotel Meliá Purosani Yogyakarta' dan 'Melia Purosani Hotel' -> 'melia purosani'
+    """
     s = re.sub(r"[^a-z0-9 ]", " ", _fold_text(name))
     tokens = [t for t in s.split() if t not in _PROPERTY_GENERIC_WORDS]
-    if not tokens:  # nama hanya berisi kata generik -> pakai apa adanya
+    city_ws = _city_words(city_key)
+    no_city = [t for t in tokens if t not in city_ws]
+    if no_city:                 # jangan sampai nama kosong (mis. "Hotel Bandung")
+        tokens = no_city
+    if not tokens:              # nama hanya berisi kata generik -> pakai apa adanya
         tokens = s.split()
     return " ".join(sorted(tokens))
 
@@ -703,7 +738,7 @@ def build_property_merge_map(pairs_df: pd.DataFrame, threshold: float = 0.88) ->
 
     df = pairs_df.copy()
     df["_alias"] = df["_hotel_raw"].map(PROPERTY_MANUAL_ALIAS).fillna(df["_hotel_raw"])
-    df["_norm"] = df["_alias"].map(_normalize_property_name)
+    df["_norm"] = [_normalize_property_name(n, c) for n, c in zip(df["_alias"], df["_city_key"])]
     df["_cluster"] = ""
 
     for city, grp in df.groupby("_city_key", sort=False):
@@ -732,11 +767,20 @@ def build_property_merge_map(pairs_df: pd.DataFrame, threshold: float = 0.88) ->
     # bila nama tersebut hanya ada di satu cluster berkota.
     blank = df["_city_key"].eq("")
     if blank.any() and (~blank).any():
-        norm_to_clusters = df[~blank].groupby("_norm")["_cluster"].unique()
+        known = df[~blank]
+        lookup = {}  # (kota, nama ternormalisasi) -> set cluster
+        for cl, ck, nm in zip(known["_cluster"], known["_city_key"], known["_norm"]):
+            lookup.setdefault((ck, nm), set()).add(cl)
+        cities = known["_city_key"].unique().tolist()
         for idx in df.index[blank]:
-            cl = norm_to_clusters.get(df.at[idx, "_norm"])
-            if cl is not None and len(cl) == 1:
-                df.at[idx, "_cluster"] = cl[0]
+            raw_name = df.at[idx, "_alias"]
+            cands = set()
+            for ck in cities:  # normalisasi ulang memakai tiap kota kandidat
+                cands |= lookup.get((ck, _normalize_property_name(raw_name, ck)), set())
+                if len(cands) > 1:
+                    break
+            if len(cands) == 1:
+                df.at[idx, "_cluster"] = cands.pop()
 
     # Nama tampilan = alias/nama asli dengan frekuensi terbesar di cluster
     display = (
