@@ -708,6 +708,13 @@ def _city_words(city_key: str) -> set:
     return words
 
 
+def _singular(token: str) -> str:
+    """Bentuk tunggal sederhana: 'points' -> 'point' (kata >3 huruf, bukan akhiran 'ss')."""
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
 def _normalize_property_name(name, city_key: str = "") -> str:
     """
     Normalisasi nama hotel untuk dibandingkan: tanpa aksen, tanpa kata generik,
@@ -715,7 +722,7 @@ def _normalize_property_name(name, city_key: str = "") -> str:
     'Hotel Meliá Purosani Yogyakarta' dan 'Melia Purosani Hotel' -> 'melia purosani'
     """
     s = re.sub(r"[^a-z0-9 ]", " ", _fold_text(name))
-    tokens = [t for t in s.split() if t not in _PROPERTY_GENERIC_WORDS]
+    tokens = [_singular(t) for t in s.split() if t not in _PROPERTY_GENERIC_WORDS]
     city_ws = _city_words(city_key)
     no_city = [t for t in tokens if t not in city_ws]
     if no_city:                 # jangan sampai nama kosong (mis. "Hotel Bandung")
@@ -760,6 +767,20 @@ def build_property_merge_map(pairs_df: pd.DataFrame, threshold: float = 0.88) ->
                 if ri != rj:
                     parent[rj] = ri
 
+            # Aturan subset: nama pendek (>=2 kata) yang seluruh katanya terkandung
+            # di nama lain, mis. "four point" ⊂ "four point sheraton"
+            # (Four Points by Sheraton). Hanya digabung bila kandidatnya menunjuk
+            # ke SATU properti saja, agar nama umum tidak menarik banyak properti.
+            token_sets = [set(n.split()) for n in norms]
+            for i, ti in enumerate(token_sets):
+                if len(ti) < 2:
+                    continue
+                cand_roots = {_find(j) for j, tj in enumerate(token_sets) if j != i and ti < tj}
+                if len(cand_roots) == 1:
+                    ri, rj = _find(i), cand_roots.pop()
+                    if ri != rj:
+                        parent[ri] = rj
+
         root_of = {n: f"{city}||{_find(k)}" for k, n in enumerate(norms)}
         df.loc[grp.index, "_cluster"] = grp["_norm"].map(root_of)
 
@@ -783,8 +804,10 @@ def build_property_merge_map(pairs_df: pd.DataFrame, threshold: float = 0.88) ->
                 df.at[idx, "_cluster"] = cands.pop()
 
     # Nama tampilan = alias/nama asli dengan frekuensi terbesar di cluster
+    # (jika frekuensi sama, pilih nama terpanjang — biasanya nama resmi lengkap)
+    df["_len"] = df["_alias"].str.len()
     display = (
-        df.sort_values("_freq", ascending=False)
+        df.sort_values(["_freq", "_len"], ascending=[False, False])
           .groupby("_cluster")["_alias"].first()
     )
     df["Hotel / Properti"] = df["_cluster"].map(display)
