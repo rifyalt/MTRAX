@@ -660,8 +660,30 @@ PROPERTY_MANUAL_ALIAS = {
 }
 
 
+def _fold_text(value) -> str:
+    """Huruf kecil + buang aksen (é→e, ü→u) + rapikan spasi non-standar."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(value))
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.replace("\u00a0", " ").replace("\u200b", "")
+    return s.lower()
+
+
+# Awalan/akhiran kota yang diabaikan saat membandingkan kota
+_CITY_NOISE_WORDS = {"kota", "kab", "kabupaten", "city", "regency", "adm", "administrasi"}
+
+
+def _normalize_city_key(city) -> str:
+    if city is None or (isinstance(city, float) and np.isnan(city)):
+        return ""
+    s = re.sub(r"[^a-z0-9 ]", " ", _fold_text(city))
+    tokens = [t for t in s.split() if t not in _CITY_NOISE_WORDS]
+    key = " ".join(tokens).upper()
+    return "" if key in ("NAN", "NONE", "NULL", "-") else key
+
+
 def _normalize_property_name(name) -> str:
-    s = re.sub(r"[^a-z0-9 ]", " ", str(name).lower())
+    s = re.sub(r"[^a-z0-9 ]", " ", _fold_text(name))
     tokens = [t for t in s.split() if t not in _PROPERTY_GENERIC_WORDS]
     if not tokens:  # nama hanya berisi kata generik -> pakai apa adanya
         tokens = s.split()
@@ -706,6 +728,16 @@ def build_property_merge_map(pairs_df: pd.DataFrame, threshold: float = 0.88) ->
         root_of = {n: f"{city}||{_find(k)}" for k, n in enumerate(norms)}
         df.loc[grp.index, "_cluster"] = grp["_norm"].map(root_of)
 
+    # Baris tanpa kota: ikut cluster dengan nama ternormalisasi yang sama
+    # bila nama tersebut hanya ada di satu cluster berkota.
+    blank = df["_city_key"].eq("")
+    if blank.any() and (~blank).any():
+        norm_to_clusters = df[~blank].groupby("_norm")["_cluster"].unique()
+        for idx in df.index[blank]:
+            cl = norm_to_clusters.get(df.at[idx, "_norm"])
+            if cl is not None and len(cl) == 1:
+                df.at[idx, "_cluster"] = cl[0]
+
     # Nama tampilan = alias/nama asli dengan frekuensi terbesar di cluster
     display = (
         df.sort_values("_freq", ascending=False)
@@ -722,7 +754,7 @@ def get_property_merge_map(df: pd.DataFrame, hotel_col: str = "Hotel Name",
         return pd.DataFrame(columns=["_hotel_raw", "_city_key", "Hotel / Properti"])
     tmp = pd.DataFrame({
         "_hotel_raw": df[hotel_col].fillna("").astype(str).str.strip(),
-        "_city_key": (df[city_col].fillna("").astype(str).str.strip().str.upper()
+        "_city_key": (df[city_col].map(_normalize_city_key)
                       if city_col in df.columns else "ALL"),
     })
     tmp = tmp[tmp["_hotel_raw"].ne("") & tmp["_hotel_raw"].str.lower().ne("nan")]
@@ -735,7 +767,7 @@ def apply_property_merge(df: pd.DataFrame, prop_map: pd.DataFrame,
     """Tambahkan kolom 'Hotel / Properti' ke df berdasarkan prop_map."""
     out = df.copy()
     out["_hotel_raw"] = out[hotel_col].fillna("").astype(str).str.strip()
-    out["_city_key"] = (out[city_col].fillna("").astype(str).str.strip().str.upper()
+    out["_city_key"] = (out[city_col].map(_normalize_city_key)
                         if city_col in out.columns else "ALL")
     out = out.merge(prop_map, on=["_hotel_raw", "_city_key"], how="left")
     out["Hotel / Properti"] = out["Hotel / Properti"].fillna(out["_hotel_raw"])
@@ -784,6 +816,45 @@ def excel_bytes_with_formats(df: pd.DataFrame, sheet_name: str,
         out.to_excel(buf, index=False, sheet_name=sheet_name)
     buf.seek(0)
     return buf
+
+
+def tab_date_range_filter(df: pd.DataFrame, date_col, key_prefix: str, col_from, col_to):
+    """
+    Filter tanggal From/To khusus satu tab (di dalam rentang Global Filter).
+    Return: (df_terfilter, label_periode). Jika kolom tanggal tidak ada, df dikembalikan utuh.
+    """
+    if not date_col or date_col not in df.columns or df.empty:
+        return df, "Semua periode"
+    _dates = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
+    _valid = _dates.dropna()
+    if _valid.empty:
+        return df, "Semua periode"
+    mn, mx = _valid.min().date(), _valid.max().date()
+
+    k_from, k_to = f"{key_prefix}_date_from", f"{key_prefix}_date_to"
+    # Jaga nilai tersimpan tetap di dalam rentang data (mis. setelah Global Filter berubah)
+    if k_from not in st.session_state or not (mn <= st.session_state[k_from] <= mx):
+        st.session_state[k_from] = mn
+    if k_to not in st.session_state or not (mn <= st.session_state[k_to] <= mx):
+        st.session_state[k_to] = mx
+
+    _lbl = ("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;"
+            "letter-spacing:0.08em;margin-bottom:6px;'>{}</div>")
+    with col_from:
+        st.markdown(_lbl.format(f"📅 From · {date_col}"), unsafe_allow_html=True)
+        d_from = st.date_input("from", min_value=mn, max_value=mx, key=k_from,
+                               format="YYYY/MM/DD", label_visibility="collapsed")
+    with col_to:
+        st.markdown(_lbl.format("📅 To"), unsafe_allow_html=True)
+        d_to = st.date_input("to", min_value=mn, max_value=mx, key=k_to,
+                             format="YYYY/MM/DD", label_visibility="collapsed")
+
+    if d_from > d_to:
+        st.warning("⚠️ Tanggal 'From' lebih besar dari 'To'. Filter tanggal tab ini diabaikan.")
+        return df, f"{mn:%d %b %Y} – {mx:%d %b %Y}"
+
+    mask = (_dates.dt.date >= d_from) & (_dates.dt.date <= d_to)
+    return df[mask.fillna(False)], f"{d_from:%d %b %Y} – {d_to:%d %b %Y}"
 
 
 def trim_string_columns(df):
@@ -1748,7 +1819,7 @@ def login_page():
     [data-testid="stSidebar"]           { display:none !important; }
     [data-testid="stAppViewContainer"]  { padding:0 !important; overflow:hidden !important; }
     section[data-testid="stMain"]       { overflow:hidden !important; }
-    #MainMenu, footer, header           { display:none !important; }
+    #MainMenu, footer, header[data-testid="stHeader"] { display:none !important; }
     .block-container                    { padding:0 !important; max-width:100% !important; overflow:hidden !important; }
     ::-webkit-scrollbar                 { display:none !important; }
 
@@ -2163,7 +2234,11 @@ def main_app():
             background: var(--clr-bg);
         }
 
-        #MainMenu, footer, header { visibility: hidden; }
+        /* Sembunyikan hanya header bawaan Streamlit (bukan semua tag <header>,
+           agar judul bulan/tahun di kalender date picker tetap tampil) */
+        #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; }
+        div[data-baseweb="calendar"],
+        div[data-baseweb="calendar"] * { visibility: visible !important; }
 
         /* ── NEWS TICKER ─────────────────────────────── */
         .news-ticker {
@@ -5227,6 +5302,7 @@ def main_app():
                 """, unsafe_allow_html=True)
 
                 gf_col1, gf_col2, gf_col3 = st.columns([1.2, 2, 2])
+                gd_col1, gd_col2, gd_col3 = st.columns([1.2, 1.2, 2.8])
 
                 # ── Filter 1: Wilayah ────────────────────────────────────────
                 with gf_col1:
@@ -5258,6 +5334,10 @@ def main_app():
                     df_pi_base.drop(columns=["_cu"], inplace=True)
                 else:
                     filter_label = "🌏 Semua Wilayah"
+
+                # ── Filter tanggal From / To (khusus tab ini) ────────────────
+                df_pi_base, pi_period_label = tab_date_range_filter(
+                    df_pi_base, _date_col_for_filter, "pi", gd_col1, gd_col2)
 
                 # ── Filter 2: Nama Hotel (multiselect) ───────────────────────
                 with gf_col2:
@@ -5316,6 +5396,7 @@ def main_app():
                             font-size:0.82em;color:#0D7FCC;display:flex;gap:20px;align-items:center;flex-wrap:wrap;'>
                     <span>🔎 <b>Filter aktif</b></span>
                     <span>Wilayah: <b>{filter_label}</b></span>
+                    <span>Periode: <b>{pi_period_label}</b></span>
                     <span>Hotel: <b>{hotel_label}</b></span>
                     <span>Menampilkan <b>{filtered_records:,}</b> dari <b>{total_records:,}</b> records
                         <span style='background:#1BA0E2;color:white;border-radius:20px;
@@ -5760,6 +5841,7 @@ def main_app():
                 _lbl = ("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;"
                         "letter-spacing:0.08em;margin-bottom:6px;'>{}</div>")
                 rf_col1, rf_col2, rf_col3 = st.columns([1.2, 2, 2])
+                rd_col1, rd_col2, rd_col3 = st.columns([1.2, 1.2, 2.8])
 
                 # ── Filter 1: Wilayah ──
                 with rf_col1:
@@ -5783,6 +5865,10 @@ def main_app():
                         df_ri_base, ri_filter_label = df_ri_base[~_dom], "🌐 Internasional"
                 else:
                     ri_filter_label = "🌏 Semua Wilayah"
+
+                # ── Filter tanggal From / To (khusus tab ini) ──
+                df_ri_base, ri_period_label = tab_date_range_filter(
+                    df_ri_base, _date_col_for_filter, "ri", rd_col1, rd_col2)
 
                 # ── Filter 2: Hotel ──
                 with rf_col2:
@@ -5831,6 +5917,7 @@ def main_app():
                             font-size:0.82em;color:#0D7FCC;display:flex;gap:20px;align-items:center;flex-wrap:wrap;'>
                     <span>🔎 <b>Filter aktif</b></span>
                     <span>Wilayah: <b>{ri_filter_label}</b></span>
+                    <span>Periode: <b>{ri_period_label}</b></span>
                     <span>Hotel: <b>{ri_hotel_label}</b></span>
                     <span>Menampilkan <b>{ri_filtered:,}</b> dari <b>{ri_total_records:,}</b> records (room night &gt; 0)
                         <span style='background:#1BA0E2;color:white;border-radius:20px;
