@@ -30,7 +30,6 @@ from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-import gdown
 import xml.etree.ElementTree as ET
 
 # =====================================
@@ -355,42 +354,100 @@ def get_greeting():
     return greet, now
 
 
-@st.cache_data(show_spinner=False, ttl=600)  # cache kedaluwarsa otomatis tiap 10 menit, biar file baru di Drive ikut kebaca
-def load_drive_data(folder_id, drop_cols):
-    shutil.rmtree("data_temp", ignore_errors=True)
-    os.makedirs("data_temp", exist_ok=True)
+# =====================================================================
+# GOOGLE DRIVE LOADER VIA SERVICE ACCOUNT (menggantikan gdown)
+# Butuh: google-api-python-client, google-auth di requirements.txt
+# Secrets: [gcp_service_account] dan [drive_folders]
+# =====================================================================
+import io
+import re
 
-    gdown.download_folder(
-        id=folder_id,
-        output="data_temp",
-        quiet=True,
-        use_cookies=False
+import pandas as pd
+import streamlit as st
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+
+_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]  # hanya baca
+
+_MIME_FOLDER = "application/vnd.google-apps.folder"
+_MIME_GSHEET = "application/vnd.google-apps.spreadsheet"
+_MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_MIME_XLS = "application/vnd.ms-excel"
+
+_DRIVE_ID_RE = re.compile(r"[A-Za-z0-9_-]{10,100}")
+
+
+@st.cache_resource
+def _drive_service():
+    """Klien Drive API yang diautentikasi dengan service account dari st.secrets."""
+    creds = service_account.Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]), scopes=_DRIVE_SCOPES
     )
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
 
-    files = [
-        f for f in os.listdir("data_temp")
-        if f.endswith((".xlsx", ".xls"))
-    ]
 
+def _list_children(service, folder_id):
+    """Daftar semua item (bukan sampah) di dalam satu folder, dengan paginasi."""
+    items, page_token = [], None
+    while True:
+        resp = service.files().list(
+            q=f"'{folder_id}' in parents and trashed = false",
+            fields="nextPageToken, files(id, name, mimeType)",
+            pageSize=1000,
+            pageToken=page_token,
+            supportsAllDrives=True,          # supaya Shared Drive juga terbaca
+            includeItemsFromAllDrives=True,
+        ).execute()
+        items.extend(resp.get("files", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            return items
+
+
+def _collect_excel_files(service, folder_id, depth=0, max_depth=5):
+    """Cari file Excel / Google Sheets secara rekursif (meniru gdown.download_folder)."""
+    found = []
+    for item in _list_children(service, folder_id):
+        mime, name = item["mimeType"], item["name"].lower()
+        if mime == _MIME_FOLDER:
+            if depth < max_depth:
+                found.extend(_collect_excel_files(service, item["id"], depth + 1, max_depth))
+        elif mime in (_MIME_XLSX, _MIME_XLS, _MIME_GSHEET) or name.endswith((".xlsx", ".xls")):
+            found.append(item)
+    return found
+
+
+def _download_to_memory(service, item):
+    """Unduh file ke RAM (tidak ada file sementara di disk server)."""
+    if item["mimeType"] == _MIME_GSHEET:
+        request = service.files().export_media(fileId=item["id"], mimeType=_MIME_XLSX)
+    else:
+        request = service.files().get_media(fileId=item["id"], supportsAllDrives=True)
+    buf = io.BytesIO()
+    downloader = MediaIoBaseDownload(buf, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    buf.seek(0)
+    return buf
+
+
+@st.cache_data(show_spinner=False, ttl=600)  # tetap refresh otomatis tiap 10 menit
+def load_drive_data(folder_id, drop_cols):
+    if not _DRIVE_ID_RE.fullmatch(str(folder_id)):
+        raise ValueError("Folder ID tidak valid.")
+
+    service = _drive_service()
     dfs = []
-
-    for f in files:
-        df = pd.read_excel(os.path.join("data_temp", f))
-
-        # drop kolom tidak perlu
-        df = df.drop(
-            columns=[c for c in drop_cols if c in df.columns],
-            errors="ignore"
-        )
-
-        # 🔹 TRIM & CLEAN STRING DATA
-        df = trim_string_columns(df)
-
+    for item in _collect_excel_files(service, folder_id):
+        df = pd.read_excel(_download_to_memory(service, item))
+        df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
+        df = trim_string_columns(df)  # fungsi yang sudah ada di file utama
         dfs.append(df)
 
     if not dfs:
         return pd.DataFrame()
-
     return pd.concat(dfs, ignore_index=True)
 
 @st.cache_data(show_spinner=False)
@@ -3498,13 +3555,7 @@ def main_app():
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
         # Drive options
-        drive_options = {
-            "2023": "1xDFRdGLDiiScIwW9gTucRyeFCmuqNyq_",
-            "2024": "16ZMZ42BLN4GPbYKAd5h75ocbxFuyc85V",
-            "2025": "1chxbGHfk9hHNPZ8vlU6AqRVUKH1jEnxF",
-            "2026": "14CbafYeVrKUXWBE1LPUFlRXHeXGXAaO4",
-            "2024-2025": "1HBwSB9_PXn7sCYPODYnaQPc7c5724-Ix",
-        }
+        drive_options = dict(st.secrets["drive_folders"])  # ID folder disimpan di Secrets, bukan di kode
         
         selected_period = st.selectbox(
             "Select Data Period",
