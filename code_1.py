@@ -3016,7 +3016,7 @@ def login_page():
         <div>
             <div class="lp-divider"></div>
             <div class="lp-headline">Welcome to<br><b>MTRAX</b><br>Analytics</div>
-            <div class="lp-sub">Corporate Travel Analytics Platform<br>for Pertamina Group</div>
+            <div class="lp-sub">Corporate Travel Analytics Platform<br>for Business Travel</div>
         </div>
     </div>
     <div class="lp-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2025 MTRAX.</a> All rights reserved.</div>
