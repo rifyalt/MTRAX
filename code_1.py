@@ -2837,9 +2837,9 @@ def tab_dashboard(df):
 
 # ---------------------------------------------------------------- tab: Price Intelligence
 def tab_price(df, pmap):
-    ui.page_title("Price Intelligence", "Konsentrasi spend Pareto 80/20 · benchmark rate hotel · simulator negosiasi")
+    ui.page_title("Price Intelligence", "Konsentrasi Pareto 80/20 · benchmark rate hotel · simulator negosiasi")
     with st.container(border=True):
-        c1, c2, c3, c4 = st.columns([1.3, 2, 1.2, 1.5])
+        c1, c2, c3, c5, c4 = st.columns([1.3, 1.8, 1, 1.1, 1.4])
         with c1:
             wil = ui.choice("Wilayah", ["Indonesia", "Internasional"], key="pi_wil")
         d = _market(df, wil)
@@ -2848,6 +2848,9 @@ def tab_price(df, pmap):
                                     placeholder="Semua hotel", key="pi_hotels")
         with c3:
             dim = st.selectbox("Dimensi Pareto", ["Hotel", "Kota"], key="pi_dim")
+        with c5:
+            basis = st.selectbox("Basis Pareto", ["Room night", "Spend"], key="pi_basis",
+                                 help="Peringkat dan kurva 80/20 dihitung dari total room night atau total spend")
         with c4:
             st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
             merge = st.checkbox("Gabungkan properti yang sama", value=True, key="pi_merge", disabled=dim != "Hotel")
@@ -2862,38 +2865,47 @@ def tab_price(df, pmap):
                            Kota=("City", lambda s: s.mode().iat[0] if not s.mode().empty else ""),
                            Bookings=("Travel Request Number", "nunique") if "Travel Request Number" in d else
                            ("Invoice Amount", "size")).reset_index()
-    g = g.sort_values("Spend", ascending=False).reset_index(drop=True)
-    total = g["Spend"].sum()
+    by_rn = basis == "Room night"
+    mcol = "RN" if by_rn else "Spend"
+    mname = "room night" if by_rn else "spend"
+    fmt_m = ui.fmt_int if by_rn else ui.fmt_big
+    share = "RN %" if by_rn else "Spend %"
+    g = g.sort_values([mcol, "Spend" if by_rn else "RN"], ascending=False).reset_index(drop=True)
+    total = g[mcol].sum()
     g["Avg rate / malam"] = g["Spend"] / g["RN"].replace(0, np.nan)
-    g["Spend %"] = g["Spend"] / total * 100
-    g["Kumulatif %"] = g["Spend %"].cumsum().clip(upper=100)
+    g[share] = g[mcol] / total * 100 if total else 0.0
+    g["Kumulatif %"] = g[share].cumsum().clip(upper=100)
     n20 = max(1, int(len(g) * 0.2))
-    top_spend = g["Spend"].head(n20).sum()
+    top_m = g[mcol].head(n20).sum()
     ent = "properti" if dim == "Hotel" else "kota"
-    ui.kpi_row([ui.kpi(f"Total spend · {wil}", ui.fmt_big(total), _period_label(d), dark=True),
+    ui.kpi_row([ui.kpi(f"Total {mname} · {wil}", fmt_m(total), _period_label(d), dark=True),
                 ui.kpi("Top 20%", ui.fmt_int(n20), f"dari {ui.fmt_int(len(g))} {ent}"),
-                ui.kpi("Kontribusi top 20%", ui.fmt_pct(top_spend / total * 100), "dari total spend"),
-                ui.kpi("Sisa 80%", ui.fmt_big(total - top_spend), f"{ui.fmt_int(len(g) - n20)} {ent}")])
+                ui.kpi("Kontribusi top 20%", ui.fmt_pct(top_m / total * 100 if total else 0), f"dari total {mname}"),
+                ui.kpi("Sisa 80%", fmt_m(total - top_m), f"{ui.fmt_int(len(g) - n20)} {ent}")])
     with st.container(border=True):
-        ui.section("Konsentrasi spend — Pareto 80/20", "Batang biru tua = top 20% · garis = persentase kumulatif")
-        _pareto_fig(list(g[key]), g["Spend"].to_numpy(), n20, "pi_pareto", "Spend (Rp)")
+        ui.section(f"Konsentrasi {mname} — Pareto 80/20", "Batang biru tua = top 20% · garis = persentase kumulatif")
+        _pareto_fig(list(g[key]), g[mcol].to_numpy(), n20, "pi_pareto", "Room nights" if by_rn else "Spend (Rp)")
     with st.container(border=True):
         h1, h2 = st.columns([4, 1])
         with h1:
-            ui.section("Top contributors", f"Top 20% {ent} dengan spend terbesar")
-        top = g.head(n20).rename(columns={key: "Hotel / properti" if dim == "Hotel" else "Kota"})
-        cols = [top.columns[0]] + (["Kota"] if dim == "Hotel" else []) + ["Spend", "RN", "Bookings", "Avg rate / malam",
-                                                                            "Spend %", "Kumulatif %"]
+            ui.section("Top contributors", f"Top 20% {ent} dengan {mname} terbesar")
+        top = g.head(n20)
+        if dim != "Hotel":
+            top = top.drop(columns=["Kota"])   # kolom 'Kota' bantu hanya untuk dimensi Hotel (hindari kolom kembar)
+        top = top.rename(columns={key: "Hotel / properti" if dim == "Hotel" else "Kota"})
+        order_cols = ["RN", "Spend"] if by_rn else ["Spend", "RN"]
+        cols = [top.columns[0]] + (["Kota"] if dim == "Hotel" else []) + order_cols + ["Bookings", "Avg rate / malam",
+                                                                                     share, "Kumulatif %"]
         top = top[cols].rename(columns={"RN": "Room nights", "Spend": "Spend (Rp)"})
         with h2:
-            _dl("Unduh Excel", top, "Top contributors", "pareto_spend", "pi_dl",
+            _dl("Unduh Excel", top, "Top contributors", "pareto_room_night" if by_rn else "pareto_spend", "pi_dl",
                 money_cols=("Spend (Rp)", "Avg rate / malam"), int_cols=("Room nights", "Bookings"),
-                pct_cols=("Spend %", "Kumulatif %"))
+                pct_cols=(share, "Kumulatif %"))
         show = top.copy()
         show["Spend (Rp)"] = show["Spend (Rp)"].map(ui.fmt_big)
         show["Room nights"] = show["Room nights"].map(ui.fmt_int)
         show["Avg rate / malam"] = show["Avg rate / malam"].map(ui.fmt_rp)
-        show["Spend %"] = show["Spend %"].map(ui.fmt_pct)
+        show[share] = show[share].map(ui.fmt_pct)
         show["Kumulatif %"] = show["Kumulatif %"].map(ui.fmt_pct)
         show.index = show.index + 1
         st.dataframe(show, width="stretch", height=min(420, 38 * len(show) + 40))
@@ -2904,8 +2916,9 @@ def tab_price(df, pmap):
         hd = d.copy()
         hd["_rate"] = hd["Invoice Amount"] / hd["Number of Rooms Night"].replace(0, np.nan)
         hd = hd[hd["_rate"].notna()]
+        mval = "Number of Rooms Night" if by_rn else "Invoice Amount"
         order = list(g[key]) if dim == "Hotel" else list(hd.groupby("Hotel / Properti" if "Hotel / Properti" in hd
-                                                                     else "Hotel Name")["Invoice Amount"].sum()
+                                                                     else "Hotel Name")[mval].sum()
                                                          .sort_values(ascending=False).index)
         hcol = key if dim == "Hotel" else ("Hotel / Properti" if "Hotel / Properti" in hd else "Hotel Name")
         with h2:
