@@ -133,6 +133,18 @@ section[data-testid="stSidebar"] .block-container {{ padding-top:1.25rem; }}
 .stTabs [data-baseweb="tab-highlight"] {{ background-color:var(--p3) !important; height:2px !important; }}
 .stTabs [data-baseweb="tab-border"] {{ display:none; }}
 
+/* Navigasi halaman (radio bergaya tab: hanya halaman aktif yang dihitung). Mendukung DOM radio lama & baru. */
+.st-key-mx_nav [role="radiogroup"] {{ gap:2px !important; border-bottom:1px solid var(--line); flex-wrap:wrap; }}
+.st-key-mx_nav label[data-testid="stRadioOption"], .st-key-mx_nav label[data-baseweb="radio"] {{
+  padding:10px 12px 9px !important; margin:0 !important; border-bottom:2px solid transparent; border-radius:0;
+  cursor:pointer; transition:color .15s, border-color .15s; }}
+.st-key-mx_nav label[data-testid="stRadioOption"] > div > div:first-child:not([data-testid]),
+.st-key-mx_nav label[data-baseweb="radio"] > div:first-child {{ display:none !important; }}
+.st-key-mx_nav label p {{ font-size:14px; color:var(--muted); margin:0; }}
+.st-key-mx_nav label:hover p {{ color:var(--ink); }}
+.st-key-mx_nav label[data-selected="true"], .st-key-mx_nav label:has(input:checked) {{ border-bottom-color:var(--action); }}
+.st-key-mx_nav label[data-selected="true"] p, .st-key-mx_nav label:has(input:checked) p {{ color:var(--action); font-weight:600; }}
+
 /* Tombol */
 .stButton > button, .stDownloadButton > button, div[data-testid="stFormSubmitButton"] > button {{
   border-radius:8px; font-weight:500; transition:background .15s, border-color .15s, box-shadow .15s, transform .15s; }}
