@@ -3507,6 +3507,7 @@ def tab_laporan(df):
                                       standardize_name, _normalize_city_key,
                                       carry_forward=st.session_state.get("ca_carry", True))
             b = ca.prepare_bookings(r, standardize_name, _normalize_city_key)
+            corp, _ = ca.harmonize_corp_names(b, corp)
             corp = ca.align_corp_cities(b, corp)
             mm = ca.match_bookings(b, corp)
             pools = ca.market_pools(b)
