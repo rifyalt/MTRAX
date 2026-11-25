@@ -778,47 +778,48 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
     import plotly.graph_objects as go
     import streamlit as st
 
-    ui.page_title("Gross Potential Cost Avoidance",
-                  "Rate dibayar (Invoice Amount ÷ room nights, dalam Rupiah) dibandingkan corporate rate per hotel, "
-                  "tipe kamar dan meal plan")
-
-    # ---------- file corp rate ----------
+    # ---------- judul + toolbar (pengaturan & catatan disimpan di popover agar halaman ringkas) ----------
     cp = corp_path()
-    with st.expander("Daftar corporate rate", expanded=not cp.exists(), icon=":material/description:"):
-        c1, c2 = st.columns([3, 1])
-        with c1:
-            if cp.exists():
-                ts = datetime.fromtimestamp(cp.stat().st_mtime).strftime("%d %b %Y %H:%M")
-                st.success(f"File aktif: corp_rate.xlsx · diperbarui {ts}")
-            else:
-                st.info("Belum ada daftar corp rate. Unggah file sesuai template.")
-            if can_edit:
-                up = st.file_uploader("Unggah / ganti daftar corp rate (.xlsx)", type=["xlsx"], key="ca_corp_up")
-                if up is not None and st.button("Simpan daftar corp rate", key="ca_corp_save"):
-                    tmp = cp.with_suffix(".tmp")
-                    tmp.write_bytes(up.getvalue())
-                    os.chmod(tmp, 0o600)
-                    os.replace(tmp, cp)
-                    st.cache_data.clear()
-                    st.success("Daftar corp rate disimpan.")
-                    st.rerun()
-            else:
-                st.caption("Hanya Super Admin & Admin yang bisa mengganti daftar corp rate.")
-        with c2:
-            st.download_button("Template", corp_template(), file_name="template_corp_rate.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               key="ca_tpl")
-        st.caption("Format: Nama Hotel · Kota/Kabupaten · Provinsi · Type Room · Meal Plan · Corporate Rate 2024, "
-                   "2025, 2026, … (satu kolom per tahun). Lihat sheet Petunjuk di template.")
-        o1, o2 = st.columns(2)
-        with o1:
-            basis = st.selectbox("Basis corp rate tanpa tanda '++'",
-                                 ["Nett (sudah pajak & service)", "Belum pajak — tambah 21%"], key="ca_basis")
-        with o2:
-            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            carry = st.checkbox("Tahun kosong pakai rate tahun sebelumnya", value=True, key="ca_carry")
+    h1, h2 = st.columns([5, 4], vertical_alignment="bottom")
+    with h1:
+        ui.page_title("Gross Potential Cost Avoidance",
+                      "Rate dibayar (Invoice Amount ÷ room nights) dibandingkan corporate rate per hotel, "
+                      "tipe kamar dan meal plan")
+    with h2:
+        t1, t2, t3 = st.columns(3)
+    with t1:
+        pop_corp = st.popover("Corp rate", icon=":material/tune:", width="stretch")
+    with pop_corp:
+        st.markdown("**Daftar corporate rate**")
+        if cp.exists():
+            ts = datetime.fromtimestamp(cp.stat().st_mtime).strftime("%d %b %Y %H:%M")
+            st.caption(f"File aktif: corp_rate.xlsx · diperbarui {ts}")
+        else:
+            st.caption("Belum ada daftar corp rate.")
+        if can_edit:
+            up = st.file_uploader("Unggah / ganti daftar corp rate (.xlsx)", type=["xlsx"], key="ca_corp_up")
+            if up is not None and st.button("Simpan daftar corp rate", key="ca_corp_save", type="primary"):
+                tmp = cp.with_suffix(".tmp")
+                tmp.write_bytes(up.getvalue())
+                os.chmod(tmp, 0o600)
+                os.replace(tmp, cp)
+                st.cache_data.clear()
+                st.success("Daftar corp rate disimpan.")
+                st.rerun()
+        else:
+            st.caption("Hanya Super Admin & Admin yang bisa mengganti daftar corp rate.")
+        basis = st.selectbox("Basis corp rate tanpa tanda '++'",
+                             ["Nett (sudah pajak & service)", "Belum pajak — tambah 21%"], key="ca_basis")
+        carry = st.checkbox("Tahun kosong pakai rate tahun sebelumnya", value=True, key="ca_carry")
+        st.caption("Format: Nama Hotel · Kota/Kabupaten · Provinsi · Type Room · Meal Plan · Corporate Rate "
+                   "<tahun> (satu kolom per tahun).")
+        st.download_button("Template", corp_template(), file_name="template_corp_rate.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ca_tpl")
 
     if not cp.exists():
+        ui.note("<b>Belum ada daftar corporate rate.</b> " + (
+            "Buka <b>Corp rate</b> di kanan atas untuk mengunggah file sesuai template." if can_edit else
+            "Minta Super Admin atau Admin mengunggah daftar corp rate."))
         return
     try:
         corp_raw = read_corp_file(cp)
@@ -832,8 +833,9 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
     for msg in errors:
         st.error(msg)
     notes = [i for i in issues if i not in errors]
-    if notes:
-        with st.expander("Catatan pembacaan daftar corp rate", icon=":material/info:"):
+    with t2:
+        with st.popover("Catatan data", icon=":material/info:", width="stretch", disabled=not notes):
+            st.markdown("**Catatan pembacaan daftar corp rate**")
             st.markdown("\n".join(f"- {n}" for n in notes))
     b = prepare_bookings(df_all, standardize_name, normalize_city)
     if b.empty or corp.empty:
@@ -842,36 +844,45 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
     corp, name_changes = harmonize_corp_names(b, corp)
     corp = align_corp_cities(b, corp)
     n_all, rn_all = len(b), b["Number of Rooms Night"].sum()
+    n_hotel = corp["_hotel_key"].nunique()
+    n_in = int(corp.drop_duplicates("_hotel_key")["_hotel_key"].isin(set(b["_hotel_key"])).sum())
     b, corp = breakfast_only(b, corp)
-    ui.note(f"Analisis ini hanya untuk booking <b>termasuk sarapan</b>: {len(b):,} dari {n_all:,} booking · "
-            f"{b['Number of Rooms Night'].sum():,.0f} dari {rn_all:,.0f} room nights. ".replace(",", ".") +
-            "Booking Room Only dan booking yang meal plan-nya tidak tertulis tidak dihitung.")
+    with t3:
+        with st.popover("Nama hotel", icon=":material/sell:", width="stretch", disabled=name_changes.empty):
+            st.markdown(f"**Penyeragaman nama hotel** · {len(name_changes):,} nama master disesuaikan".replace(",", "."))
+            st.caption("Nama di master corp rate diseragamkan dengan hotel_name_standardizer dan nama di invoice. "
+                       f"'mirip' = disamakan otomatis (kemiripan ≥ {NAME_MATCH_MIN:.2f}, kota sama). "
+                       "Perbaiki kamus standardizer bila ada yang keliru.")
+            st.dataframe(name_changes, hide_index=True, width="stretch", height=min(360, 36 * len(name_changes) + 40))
+            if can_download and not name_changes.empty:
+                st.download_button("Unduh daftar penyeragaman", _excel(name_changes, "Penyeragaman nama", excel_fn),
+                                   file_name=f"penyeragaman_nama_hotel_{datetime.now():%Y%m%d}.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   key="ca_dl_names")
+
+    # ---------- satu kartu cakupan data ----------
+    rn_bf = b["Number of Rooms Night"].sum()
+    pct = lambda x, t: f"{x / t * 100:.0f}%" if t else "-"  # noqa: E731
+    f = lambda v: f"{v:,.0f}".replace(",", ".")  # noqa: E731
+    ui.scope_bar([
+        ("Corp rate aktif", datetime.fromtimestamp(cp.stat().st_mtime).strftime("%d %b %Y"),
+         f"{f(n_hotel)} hotel kontrak"),
+        ("Hotel kontrak ada di invoice", f"{f(n_in)} / {f(n_hotel)}", pct(n_in, n_hotel)),
+        ("Booking dihitung", f"{f(len(b))} / {f(n_all)}", pct(len(b), n_all)),
+        ("Room nights dihitung", f"{f(rn_bf)} / {f(rn_all)}", pct(rn_bf, rn_all)),
+    ], "Hanya booking <b>termasuk sarapan</b>. Booking Room Only dan yang meal plan-nya tidak tertulis tidak dihitung.")
     if b.empty or corp.empty:
         st.info("Belum ada booking termasuk sarapan yang bisa dibandingkan dengan corp rate.")
         return
     m = match_bookings(b, corp)
     pools = market_pools(b)
     summary = summarize_matched(m, pools)
-    if not name_changes.empty:
-        n_hotel = corp["_hotel_key"].nunique()
-        n_in = corp["_hotel_key"].isin(set(b["_hotel_key"])).groupby(corp["_hotel_key"]).first().sum()
-        with st.expander(icon=":material/sell:", label=f"Penyeragaman nama hotel · {len(name_changes):,} nama master disesuaikan · "
-                         f"{int(n_in):,} dari {n_hotel:,} hotel kontrak ada di invoice".replace(",", ".")):
-            st.caption("Nama hotel di master corp rate diseragamkan dengan hotel_name_standardizer dan nama hotel di "
-                       f"invoice. 'mirip' = disamakan otomatis karena kemiripan nama ≥ {NAME_MATCH_MIN:.2f} di kota yang "
-                       "sama; cek daftar ini dan perbaiki kamus standardizer bila ada yang keliru.")
-            st.dataframe(name_changes, hide_index=True, width="stretch", height=min(400, 36 * len(name_changes) + 40))
-            if can_download:
-                st.download_button("Unduh daftar penyeragaman", _excel(name_changes, "Penyeragaman nama", excel_fn),
-                                   file_name=f"penyeragaman_nama_hotel_{datetime.now():%Y%m%d}.xlsx",
-                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                   key="ca_dl_names")
 
     sub1, sub2 = st.tabs(["Ringkasan", "Analisis lanjutan"])
 
     # ================= RINGKASAN =================
     with sub1:
-        topn = st.selectbox("Top hotel (room nights)", [25, 50, 100], index=2, key="ca_topn")
+        topn = st.columns([1, 4])[0].selectbox("Top hotel (room nights)", [25, 50, 100], index=2, key="ca_topn")
         s = top_hotels(summary, topn)
         if s.empty:
             st.info("Belum ada booking yang cocok dengan daftar corp rate.")
