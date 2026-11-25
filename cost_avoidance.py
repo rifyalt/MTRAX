@@ -419,6 +419,17 @@ def harmonize_corp_names(b: pd.DataFrame, c: pd.DataFrame) -> tuple[pd.DataFrame
     return c, ch.sort_values(["Cara", "Nama di master corp rate"]).reset_index(drop=True)
 
 
+ANALYSIS_MEAL = "Breakfast Included"   # analisis Cost Avoidance hanya untuk booking termasuk sarapan
+
+
+def breakfast_only(b: pd.DataFrame, c: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Booking termasuk sarapan saja, dan corp rate yang berlaku untuk sarapan
+    (Meal Plan 'Breakfast' atau kosong). Corp rate khusus Room Only tidak dipakai."""
+    bb = b[b["_meal"] == ANALYSIS_MEAL].reset_index(drop=True) if not b.empty else b
+    cc = c[c["_meal"].isin([ANALYSIS_MEAL, MEAL_ANY])].reset_index(drop=True) if not c.empty else c
+    return bb, cc
+
+
 def align_corp_cities(b: pd.DataFrame, c: pd.DataFrame) -> pd.DataFrame:
     """Kota di daftar corp rate sering ditulis beda dengan invoice (Jakarta Selatan vs Jakarta, Badung vs Bali).
     Untuk hotel yang ada di invoice, kota corp rate disamakan dengan kota di invoice bila:
@@ -830,6 +841,14 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
         return
     corp, name_changes = harmonize_corp_names(b, corp)
     corp = align_corp_cities(b, corp)
+    n_all, rn_all = len(b), b["Number of Rooms Night"].sum()
+    b, corp = breakfast_only(b, corp)
+    ui.note(f"🍳 Analisis ini hanya untuk booking <b>termasuk sarapan</b>: {len(b):,} dari {n_all:,} booking · "
+            f"{b['Number of Rooms Night'].sum():,.0f} dari {rn_all:,.0f} room nights. ".replace(",", ".") +
+            "Booking Room Only dan booking yang meal plan-nya tidak tertulis tidak dihitung.")
+    if b.empty or corp.empty:
+        st.info("Belum ada booking termasuk sarapan yang bisa dibandingkan dengan corp rate.")
+        return
     m = match_bookings(b, corp)
     pools = market_pools(b)
     summary = summarize_matched(m, pools)
@@ -917,9 +936,17 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                 return list(tone) if col.name in ("Corp rate", "Daya saing") else [""] * len(col)
 
             st.dataframe(show.style.apply(_hl, axis=0), width="stretch", height=min(520, 36 * len(show) + 40))
-            st.caption(f"<span style='color:{COMPETITIVE_GREEN};font-weight:600'>Hijau</span> = corp rate Kompetitif · "
-                       f"<span style='color:{NOT_COMPETITIVE_RED};font-weight:600'>Merah</span> = Tidak kompetitif · "
-                       "hitam = Perlu ditinjau.", unsafe_allow_html=True)
+            R = STATUS_RULES
+            ui.note(
+                "<b>Status daya saing corp rate</b><br>"
+                f"• <span style='color:{COMPETITIVE_GREEN};font-weight:600'>Kompetitif (hijau)</span>: malam &lt; corp "
+                f"di bawah {R['below_tinjau']}% dan posisi paling tinggi P{R['pos_tinjau']}.<br>"
+                f"• <span style='color:{NOT_COMPETITIVE_RED};font-weight:600'>Tidak kompetitif (merah)</span>: malam "
+                f"&lt; corp di atas {R['below_tidak']}%, atau posisi di atas P{R['pos_tidak']}.<br>"
+                "• <b>Perlu ditinjau (hitam)</b>: di antara keduanya.<br>"
+                "<span style='color:#5A6B7A'>Malam &lt; corp = porsi malam yang dibayar lebih murah dari corp rate. "
+                "Posisi kota = letak corp rate di antara rate yang dibayar untuk tipe kamar yang sama di kota itu "
+                "(P10 = lebih murah dari 90% rate pasar).</span>")
             if can_download:
                 st.download_button("⬇️ Unduh Excel", _excel(out.rename(columns={"Corp": "Corp rate", "RN": "Room nights"}),
                                    "Cost Avoidance", excel_fn,
