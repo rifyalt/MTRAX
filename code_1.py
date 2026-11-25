@@ -2986,8 +2986,14 @@ def tab_dashboard(df):
     if "Travel Request Number" in d:
         per_tr = d.groupby("Travel Request Number").size()
         multi = ui.fmt_pct((per_tr > 1).mean() * 100, digits=0)
-    bf = ui.fmt_pct(d["Meal Plan"].astype(str).str.lower().str.contains("breakfast").mean() * 100, digits=0) \
-        if "Meal Plan" in d else "-"
+    bf = "-"
+    if "Meal Plan" in d or "Room Category" in d:
+        import cost_avoidance as _ca
+        meal = d["Meal Plan"].map(_ca.norm_meal) if "Meal Plan" in d else pd.Series("Tidak diketahui", index=d.index)
+        if "Room Category" in d:
+            meal = meal.where(meal != "Tidak diketahui", d["Room Category"].map(_ca.norm_meal))
+        known = meal != "Tidak diketahui"
+        bf = ui.fmt_pct((meal[known] == "Breakfast Included").mean() * 100, digits=0) if known.any() else "-"
     ui.mini_row([("Kota", ui.fmt_int(d["City"].nunique() if "City" in d else 0)),
                  ("Negara", ui.fmt_int(d["Country"].nunique() if "Country" in d else 0)),
                  ("Multi-booking", multi), ("Breakfast included", bf)])
