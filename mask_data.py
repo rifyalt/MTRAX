@@ -54,6 +54,12 @@ KEEP_COLUMNS = [
     "Invoice Amount",
 ]
 
+# nama lain kolom di file sumber (dibandingkan tanpa beda huruf/spasi); nama yang DIAWALI teks ini juga diterima
+COLUMN_ALIASES = {
+    "Meal Plan": ["meal plan (room only / breakfast included)", "meal plan", "meal"],
+    "Room Category": ["room category", "room type"],
+}
+
 # kolom -> awalan kode
 MASK_COLUMNS = {
     "Travel Request Number": "TR",
@@ -87,6 +93,11 @@ def select_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list, list]:
     keep, missing = {}, []
     for target in KEEP_COLUMNS:
         src = lookup.get(_norm_col(target))
+        for alias in COLUMN_ALIASES.get(target, []):
+            if src is not None:
+                break
+            src = lookup.get(alias) or next((orig for n, orig in lookup.items()
+                                             if n.startswith(alias) and orig not in keep), None)
         if src is None:
             missing.append(target)
         else:
