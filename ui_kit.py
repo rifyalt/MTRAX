@@ -12,6 +12,7 @@ kontras WCAG AA (4,5:1): POS_TEXT, WARN_TEXT, HILITE_DARK.
 from __future__ import annotations
 
 import base64
+import functools
 import html
 import os
 
@@ -224,7 +225,26 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 
 # ---------------------------------------------------------------- komponen
 _HERE = os.path.dirname(os.path.abspath(__file__))
-WORDMARK = os.path.join(_HERE, "assets", "mtrax_wordmark.png")   # tidak bergantung folder kerja server
+_ASSETS = os.path.join(_HERE, "assets")
+# nama file wordmark yang dikenali (urutan prioritas); file lain berisi kata "wordmark" juga dipakai
+WORDMARK_NAMES = ("mtrax_wordmark.png", "MTRAX_Wordmark_Gradien_Polos.png")
+
+
+def _find_wordmark() -> str:
+    for n in WORDMARK_NAMES:
+        p = os.path.join(_ASSETS, n)
+        if os.path.exists(p):
+            return p
+    try:
+        for n in sorted(os.listdir(_ASSETS)):
+            if "wordmark" in n.lower() and n.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+                return os.path.join(_ASSETS, n)
+    except Exception:
+        pass
+    return ""
+
+
+WORDMARK = _find_wordmark()
 
 
 def img_b64(path) -> str:
@@ -235,9 +255,36 @@ def img_b64(path) -> str:
         return ""
 
 
-def brand(logo_path=WORDMARK):
+@functools.lru_cache(maxsize=4)
+def wordmark_b64(height: int = 96) -> str:
+    """Wordmark yang sudah dirapikan: latar putih jadi transparan, tepi kosong dipotong, diperkecil.
+    Hasil di-cache supaya gambar besar tidak dikirim berulang ke browser."""
+    path = _find_wordmark()
+    if not path:
+        return ""
+    try:
+        from io import BytesIO
+        import numpy as np
+        from PIL import Image
+        im = Image.open(path).convert("RGBA")
+        a = np.array(im)
+        white = (a[:, :, 0] > 245) & (a[:, :, 1] > 245) & (a[:, :, 2] > 245)
+        a[white, 3] = 0
+        im = Image.fromarray(a)
+        if im.getbbox():
+            im = im.crop(im.getbbox())
+        if im.height > height:
+            im = im.resize((round(im.width * height / im.height), height), Image.LANCZOS)
+        buf = BytesIO()
+        im.save(buf, format="PNG", optimize=True)
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return img_b64(path)
+
+
+def brand():
     """Wordmark MTRAX di sidebar (fallback: teks)."""
-    b64 = img_b64(logo_path) if os.path.exists(logo_path) else ""
+    b64 = wordmark_b64()
     mark = (f'<img src="data:image/png;base64,{b64}" alt="MTRAX" class="mx-wordmark"/>' if b64
             else '<div class="t">MTRAX</div>')
     st.markdown(f'<div class="mx-brand">{mark}</div>', unsafe_allow_html=True)
