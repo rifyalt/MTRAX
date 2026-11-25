@@ -1,0 +1,13 @@
+[theme]
+base = "light"
+primaryColor = "#0D7FCC"
+backgroundColor = "#F0F0F0"
+secondaryBackgroundColor = "#F7F7F7"
+textColor = "#434343"
+font = "sans serif"
+borderColor = "#DEDEDE"
+baseRadius = "8px"
+chartCategoricalColors = ["#1BA0E2", "#98EA16", "#0D7FCC", "#FF5E1F", "#FFDC00", "#D61B54", "#1494C6", "#7A7A7A"]
+
+[server]
+maxUploadSize = 50
