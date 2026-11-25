@@ -21,27 +21,21 @@ from zoneinfo import ZoneInfo
 
 import plotly.graph_objects as go
 import plotly.express as px
-import networkx as nx
-import matplotlib.pyplot as plt
-
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 import xml.etree.ElementTree as ET
 
-# =====================================
-# OPTIONAL LSTM SUPPORT
-# =====================================
-try:
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import LSTM, Dense
-    from tensorflow.keras.preprocessing.sequence import TimeseriesGenerator
-    TENSORFLOW_AVAILABLE = True
-except Exception:
-    TENSORFLOW_AVAILABLE = False
+# Penyeragaman nama Hotel Name / Supplier Name (Meliá, Mövenpick, éL Hotel,
+# Courtyard by Marriott, + kamus data/unique_hotels.xlsx)
+from hotel_name_standardizer import standardize_hotel_columns, standardize_name
+
+# Anonimisasi: whitelist 13 kolom + kode acak TR/Booking ID (kunci baru tiap penarikan data)
+from mask_data import mask_dataframe, select_columns, KEEP_COLUMNS
+
+# Tab Cost Avoidance
+from cost_avoidance import render_cost_avoidance
 
 # =====================================
 # 2FA / TOTP SUPPORT
@@ -136,27 +130,31 @@ def _make_qr_b64(uri: str) -> str:
 
 def _load_totp_secrets() -> dict:
     """
-    Load TOTP secrets — semua user berbagi secret milik 'admin'.
-    Hanya satu QR / kode Authenticator yang perlu di-setup oleh admin.
-    Priority: secrets.toml [totp][admin] -> session_state (runtime-generated).
+    Secret TOTP PER PENGGUNA. Prioritas: secrets.toml [totp][<username>].
+    Bila belum ada, dibuat sementara di sesi pengguna itu sendiri (untuk halaman setup)
+    dan harus disimpan Admin ke secrets.toml. Tidak ada lagi secret bersama.
     """
-    # Ambil / generate satu shared secret dari admin
-    shared_secret = None
+    result = {}
+    for uname in USERS.keys():
+        own = _own_totp_secret(uname)
+        if own:
+            result[uname] = own
+        else:
+            key = f"_totp_secret_{uname}"
+            if key not in st.session_state:
+                st.session_state[key] = _generate_totp_secret()
+            result[uname] = st.session_state[key]
+    return result
+
+
+def _own_totp_secret(username: str):
+    """Secret TOTP milik user dari [totp][<username>], atau None."""
     try:
-        val = st.secrets["totp"]["admin"]
-        if val:
-            shared_secret = val
+        val = st.secrets["totp"].get(username)
+        return str(val).strip() if val else None
     except Exception:
-        pass
+        return None
 
-    if shared_secret is None:
-        key = "_totp_secret_admin"
-        if key not in st.session_state:
-            st.session_state[key] = _generate_totp_secret()
-        shared_secret = st.session_state[key]
-
-    # Semua user memakai secret yang sama (shared admin TOTP)
-    return {uname: shared_secret for uname in USERS.keys()}
 
 # ======================================
 # ADVANCED LOGIN SECURITY CONFIG
@@ -169,10 +167,47 @@ SESSION_TIMEOUT = st.secrets.get("security", {}).get("session_timeout_minutes", 
 
 def secure_compare(plain_password, stored_hash):
     """
-    Timing attack safe comparison
+    Verifikasi password. Mendukung hash Argon2id (disarankan, diawali "$argon2")
+    dan hash SHA-256 lama (64 karakter hex) agar migrasi bisa bertahap.
+    Buat hash Argon2: python -c "from argon2 import PasswordHasher; print(PasswordHasher().hash('PASSWORD'))"
     """
+    stored_hash = str(stored_hash or "")
+    if stored_hash.startswith("$argon2"):
+        try:
+            from argon2 import PasswordHasher
+            from argon2.exceptions import VerifyMismatchError, InvalidHashError
+            try:
+                return PasswordHasher().verify(stored_hash, plain_password)
+            except (VerifyMismatchError, InvalidHashError):
+                return False
+        except ImportError:
+            return False
     hashed_input = hashlib.sha256(plain_password.encode()).hexdigest()
     return hmac.compare_digest(hashed_input, stored_hash)
+
+
+@st.cache_resource
+def _login_lock_store():
+    """Penguncian login di sisi server per username (tidak reset walau halaman di-refresh)."""
+    return {}
+
+
+def _user_locked(username: str) -> float:
+    e = _login_lock_store().get(username)
+    return max(0.0, e["until"] - time.time()) if e else 0.0
+
+
+def _user_fail(username: str):
+    store = _login_lock_store()
+    e = store.setdefault(username, {"failed": 0, "until": 0.0})
+    e["failed"] += 1
+    if e["failed"] >= MAX_LOGIN_ATTEMPTS:
+        e["until"] = time.time() + LOCKOUT_SECONDS
+        e["failed"] = 0
+
+
+def _user_ok(username: str):
+    _login_lock_store().pop(username, None)
 
 def validate_username(username):
     """
@@ -320,6 +355,10 @@ def _try_restore_session_from_cookie():
     if result is None:
         return
     username, role = result
+    # Tolak token milik akun yang sudah dinonaktifkan/kedaluwarsa atau rolenya berubah
+    if username not in USERS or USERS[username]["role"] != role:
+        _revoke_session_token(token)
+        return
     st.session_state.login_attempts = 0
     st.session_state.lockout_until  = 0
     st.session_state.authenticated  = True
@@ -393,7 +432,7 @@ def _list_children(service, folder_id):
     while True:
         resp = service.files().list(
             q=f"'{folder_id}' in parents and trashed = false",
-            fields="nextPageToken, files(id, name, mimeType)",
+            fields="nextPageToken, files(id, name, mimeType, modifiedTime)",
             pageSize=1000,
             pageToken=page_token,
             supportsAllDrives=True,          # supaya Shared Drive juga terbaca
@@ -433,122 +472,175 @@ def _download_to_memory(service, item):
     return buf
 
 
-@st.cache_data(show_spinner=False, ttl=600)  # tetap refresh otomatis tiap 10 menit
+# ---------------------------------------------------------------------
+# PERCEPATAN PENARIKAN DATA
+#   1. Cache Parquet di disk VPS: setiap file Excel yang sudah dibaca disimpan
+#      sebagai .parquet, diberi penanda "modifiedTime" dari Drive. File yang
+#      tidak berubah tidak diunduh/dibaca ulang, dan cache tetap ada walau
+#      service di-restart. Folder cache (di luar folder Git), urutan prioritas:
+#        secrets [cache] dir  ->  env MTRAX_CACHE_DIR  ->  ~/.cache/mtrax/drive
+#   2. File yang perlu diunduh diproses paralel (beberapa sekaligus).
+#   3. Excel dibaca dengan engine "calamine" (jauh lebih cepat) bila
+#      python-calamine terpasang; jika tidak, otomatis kembali ke openpyxl.
+# requirements.txt: pyarrow, python-calamine  (keduanya opsional, ada fallback)
+# ---------------------------------------------------------------------
+import glob as _glob
+import threading as _threading
+from concurrent.futures import ThreadPoolExecutor as _ThreadPool
+
+DRIVE_CACHE_TTL = 30 * 60      # cek ulang daftar file Drive tiap 30 menit (murah: file lama dari Parquet)
+DRIVE_DOWNLOAD_WORKERS = 4     # jumlah file yang diunduh bersamaan
+_drive_thread_local = _threading.local()
+
+
+def _drive_cache_base():
+    base = ""
+    try:
+        base = str(dict(st.secrets.get("cache", {})).get("dir", "") or "")
+    except Exception:
+        base = ""
+    base = base or os.environ.get("MTRAX_CACHE_DIR", "") or os.path.expanduser("~/.cache/mtrax/drive")
+    return base
+
+
+def _drive_cache_dir(folder_id):
+    """Folder cache per folder Drive (izin 700). None jika tidak bisa dibuat -> tanpa cache disk."""
+    try:
+        path = os.path.join(_drive_cache_base(), str(folder_id))
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        return path if os.access(path, os.W_OK) else None
+    except Exception:
+        return None
+
+
+def _drive_creds():
+    return service_account.Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]), scopes=_DRIVE_SCOPES
+    )
+
+
+def _thread_drive_service(creds):
+    """Klien Drive per thread (klien googleapiclient tidak thread-safe)."""
+    svc = getattr(_drive_thread_local, "service", None)
+    if svc is None:
+        svc = build("drive", "v3", credentials=creds, cache_discovery=False)
+        _drive_thread_local.service = svc
+    return svc
+
+
+def _read_excel_fast(buf):
+    try:
+        return pd.read_excel(buf, engine="calamine")
+    except Exception:
+        buf.seek(0)
+        return pd.read_excel(buf)
+
+
+def _cache_stem(item):
+    stamp = re.sub(r"[^0-9A-Za-z]", "", str(item.get("modifiedTime", "")))
+    return f"{item['id']}_{stamp or 'nostamp'}"
+
+
+def _read_cached(path):
+    if path.endswith(".parquet"):
+        df = pd.read_parquet(path)
+        # Parquet mengembalikan None untuk sel kosong di kolom teks; samakan
+        # dengan hasil read_excel (np.nan) supaya logika lama (mis. "nan") tetap sama.
+        for col in df.select_dtypes(include=["object"]).columns:
+            df[col] = df[col].where(df[col].notna(), np.nan)
+        return df
+    return pd.read_pickle(path)
+
+
+def _write_cached(df, cache_dir, stem, file_id):
+    """Simpan atomik (tulis ke .tmp lalu rename). Parquet, atau pickle jika tipe data tidak didukung."""
+    for old in _glob.glob(os.path.join(cache_dir, f"{file_id}_*")):
+        try:
+            os.remove(old)                      # versi lama file yang sama
+        except OSError:
+            pass
+    for ext in (".parquet", ".pkl"):
+        final = os.path.join(cache_dir, stem + ext)
+        tmp = final + f".{os.getpid()}.{_threading.get_ident()}.tmp"
+        try:
+            if ext == ".parquet":
+                df.to_parquet(tmp, index=False)
+            else:
+                df.to_pickle(tmp)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, final)
+            return
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _load_drive_item(item, creds, cache_dir):
+    stem = _cache_stem(item)
+    if cache_dir:
+        for ext in (".parquet", ".pkl"):
+            path = os.path.join(cache_dir, stem + ext)
+            if os.path.exists(path):
+                try:
+                    return _read_cached(path)
+                except Exception:
+                    try:
+                        os.remove(path)          # cache rusak -> unduh ulang
+                    except OSError:
+                        pass
+    service = _thread_drive_service(creds)
+    df = _read_excel_fast(_download_to_memory(service, item))
+    # Whitelist 13 kolom SEBELUM disimpan ke cache disk: kolom lain tidak pernah tersimpan di VPS
+    df = select_columns(df)[0]
+    df = trim_string_columns(df)  # fungsi yang sudah ada di file utama
+    if cache_dir:
+        _write_cached(df, cache_dir, stem, item["id"])
+    return df
+
+
+def _prune_cache(cache_dir, items):
+    """Hapus cache untuk file yang sudah tidak ada di folder Drive."""
+    keep = {it["id"] for it in items}
+    for path in _glob.glob(os.path.join(cache_dir, "*")):
+        name = os.path.basename(path)
+        if name.endswith(".tmp"):
+            continue
+        if name.rsplit("_", 1)[0] not in keep:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+@st.cache_data(show_spinner=False, ttl=DRIVE_CACHE_TTL, max_entries=6)
 def load_drive_data(folder_id, drop_cols):
     if not _DRIVE_ID_RE.fullmatch(str(folder_id)):
         raise ValueError("Folder ID tidak valid.")
 
-    service = _drive_service()
-    dfs = []
-    for item in _collect_excel_files(service, folder_id):
-        df = pd.read_excel(_download_to_memory(service, item))
-        df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
-        df = trim_string_columns(df)  # fungsi yang sudah ada di file utama
-        dfs.append(df)
+    items = _collect_excel_files(_drive_service(), folder_id)
+    if not items:
+        return pd.DataFrame()
 
+    creds = _drive_creds()
+    cache_dir = _drive_cache_dir(folder_id)
+    workers = max(1, min(DRIVE_DOWNLOAD_WORKERS, len(items)))
+    if workers == 1:
+        dfs = [_load_drive_item(it, creds, cache_dir) for it in items]
+    else:
+        with _ThreadPool(max_workers=workers) as pool:
+            dfs = list(pool.map(lambda it: _load_drive_item(it, creds, cache_dir), items))
+    if cache_dir:
+        _prune_cache(cache_dir, items)
+
+    dfs = [df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore") for df in dfs]
+    dfs = [df for df in dfs if not df.empty]
     if not dfs:
         return pd.DataFrame()
-    return pd.concat(dfs, ignore_index=True)
-
-@st.cache_data(show_spinner=False)
-def build_employee_cohort(df):
-    required_cols = ["Employee Id", "Issue Time", "Travel Request Number"]
-    if not all(col in df.columns for col in required_cols):
-        return pd.DataFrame()
-
-    df = df.copy()
-    df["Issue Time"] = pd.to_datetime(df["Issue Time"], errors="coerce", dayfirst=True)
-    df = df.dropna(subset=["Issue Time", "Employee Id"])
-
-    df["OrderMonth"] = df["Issue Time"].dt.to_period("M")
-    
-    # Cohort = first booking month per employee
-    df["CohortMonth"] = (
-        df.groupby("Employee Id")["OrderMonth"]
-        .transform("min")
-    )
-
-    # Cohort index (bulan ke-n sejak first booking)
-    df["CohortIndex"] = (
-        df["OrderMonth"].astype(int) -
-        df["CohortMonth"].astype(int)
-    )
-
-    cohort = (
-        df.groupby(["CohortMonth", "CohortIndex"])["Travel Request Number"]
-        .nunique()
-        .reset_index()
-    )
-
-    cohort_pivot = cohort.pivot(
-        index="CohortMonth",
-        columns="CohortIndex",
-        values="Travel Request Number"
-    ).fillna(0)
-
-    cohort_pivot.index = cohort_pivot.index.astype(str)
-
-    return cohort_pivot
-
-
-#==========================#
-# FUNGSI PERSONA CLUSTERING (KMeans) — DI-CACHE
-# ── Perhitungan ini (parsing tanggal, agregasi, scaling, fit KMeans) tidak
-#    tergantung pada Employee Id mana yang dipilih user di dropdown, jadi
-#    hasilnya bisa dipakai ulang selama data sumber belum berubah. Tanpa cache,
-#    seluruh pipeline ini dihitung ulang setiap kali dropdown diganti, karena
-#    st.tabs() menjalankan ulang seluruh script di setiap interaksi widget. ──
-#==========================#
-@st.cache_data(show_spinner=False)
-def build_employee_persona_clusters(df_behavior_raw):
-    df_behavior = df_behavior_raw.copy()
-
-    df_behavior["Issue Time"] = pd.to_datetime(df_behavior["Issue Time"], errors="coerce", dayfirst=True)
-    df_behavior["Check in Date"] = pd.to_datetime(df_behavior["Check in Date"], errors="coerce", dayfirst=True)
-    df_behavior["Check out Date"] = pd.to_datetime(df_behavior["Check out Date"], errors="coerce", dayfirst=True)
-
-    df_behavior["Lead_Time"] = (df_behavior["Check in Date"] - df_behavior["Issue Time"]).dt.days
-    df_behavior["Last_Minute"] = df_behavior["Lead_Time"].apply(lambda x: 1 if pd.notnull(x) and x <= 2 else 0)
-    df_behavior["Weekend_Stay"] = df_behavior["Check in Date"].dt.weekday.apply(lambda x: 1 if pd.notnull(x) and x >= 5 else 0)
-
-    employee_features = df_behavior.groupby("Employee Id").agg(
-        Booking_Frequency=("Travel Request Number", "nunique"),
-        Avg_Lead_Time=("Lead_Time", "mean"),
-        Last_Minute_Ratio=("Last_Minute", "mean"),
-        Avg_Stay=("Number of Rooms Night", "mean"),
-        Weekend_Ratio=("Weekend_Stay", "mean")
-    ).reset_index()
-
-    employee_features = employee_features.fillna(0)
-
-    feature_cols = ["Booking_Frequency","Avg_Lead_Time","Last_Minute_Ratio","Avg_Stay","Weekend_Ratio"]
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(employee_features[feature_cols])
-
-    n_employee = len(employee_features)
-    if n_employee >= 4: n_cluster = 4
-    elif n_employee >= 2: n_cluster = 2
-    else: n_cluster = 1
-
-    kmeans = KMeans(n_clusters=n_cluster, random_state=42, n_init=10)
-    employee_features["Cluster"] = kmeans.fit_predict(X_scaled)
-
-    cluster_profile = employee_features.groupby("Cluster")[feature_cols].mean()
-
-    persona_map = {}
-    for cluster_id, row in cluster_profile.iterrows():
-        if row["Last_Minute_Ratio"] > 0.5: persona = "Last Minute Traveler"
-        elif row["Avg_Lead_Time"] > 14: persona = "Strategic Planner"
-        elif row["Weekend_Ratio"] > 0.4: persona = "Weekend Traveler"
-        elif row["Booking_Frequency"] > employee_features["Booking_Frequency"].median(): persona = "Frequent Traveler"
-        else: persona = "Regular Business Traveler"
-        persona_map[cluster_id] = persona
-
-    employee_features["Persona"] = employee_features["Cluster"].map(persona_map)
-
-    return employee_features, feature_cols
-
+    # Masking setelah SEMUA file digabung -> kode konsisten di seluruh data.
+    # Kunci acak baru setiap kali data ditarik ulang (cache habis / tombol 🔄).
+    return mask_dataframe(pd.concat(dfs, ignore_index=True))
 
 #==========================#
 # FUNGSI AUTO-CANONICAL MAPPING
@@ -698,799 +790,6 @@ def hotel_name_similarity(df, text_col="Hotel Name", threshold=0.75):
         )
 
     return result_df
-
-
-# =====================================================================
-# AI HOTEL MERGE — PENGGABUNGAN NAMA HOTEL DENGAN BANTUAN CLAUDE API
-# ---------------------------------------------------------------------
-# Alur:
-#   1. Ringkas data per nama hotel (kota, spend, room night, transaksi).
-#   2. Cari pasangan kandidat yang namanya mirip (per kota) dengan fuzzy match.
-#   3. Pasangan yang identik setelah normalisasi -> langsung SAMA (tanpa API).
-#   4. Sisanya dinilai Claude secara batch: SAMA / BEDA / RAGU + confidence.
-#   5. Grup berisi >= 3 nama dicek ulang oleh Claude agar tidak salah gabung.
-#   6. Nama hotel di seluruh dashboard diganti ke nama gabungan
-#      (spend & room night otomatis ikut tergabung di Pareto, Top Hotel, dll).
-#
-# Secrets (Streamlit Cloud -> App settings -> Secrets):
-#   ANTHROPIC_API_KEY = "sk-ant-api03-..."   # wajib
-#   APP_PASSWORD      = "..."                # opsional: konfirmasi sebelum
-#                                            # menjalankan analisa berbayar
-#
-# Tidak butuh library tambahan: API dipanggil lewat `requests`.
-# `rapidfuzz` dipakai kalau terinstall (lebih cepat), jika tidak -> difflib.
-# =====================================================================
-import unicodedata as _ud
-from difflib import SequenceMatcher as _SeqMatcher
-
-try:
-    from rapidfuzz import fuzz as _rf_fuzz
-    from rapidfuzz import process as _rf_process
-    RAPIDFUZZ_AVAILABLE = True
-except Exception:
-    RAPIDFUZZ_AVAILABLE = False
-
-AI_API_URL = "https://api.anthropic.com/v1/messages"
-AI_MODELS = {
-    "Claude Sonnet 5.5 (disarankan)": "claude-sonnet-5-5",
-    "Claude Opus 5.5 (paling teliti, lebih mahal)": "claude-opus-5-5",
-    "Claude Haiku 4.5 (paling hemat)": "claude-haiku-4-5-20251001",
-}
-
-_AI_GENERIC_WORDS = {
-    "hotel", "hotels", "the", "and", "by", "at", "of", "resort", "resorts",
-    "convention", "conventions", "center", "centre", "spa", "residence",
-    "residences", "suite", "suites", "managed", "international", "a", "an",
-}
-_AI_REPLACEMENTS = [
-    ("swiss belhotel", "swissbel"), ("swissbelhotel", "swissbel"),
-    ("swiss bel hotel", "swissbel"), ("swiss bel", "swissbel"),
-    ("four point ", "four points "),
-]
-
-_AI_SYSTEM_PROMPT = (
-    "Anda adalah analis data akomodasi korporat di Indonesia yang sangat memahami "
-    "brand, sub-brand, dan lokasi hotel. Tugas Anda menilai apakah nama-nama hotel "
-    "dari data transaksi merujuk ke PROPERTI FISIK YANG SAMA. Jawab hanya dengan JSON "
-    "yang valid tanpa teks lain, tanpa markdown."
-)
-
-
-def _ai_secret(key):
-    """Cari secret di mana pun letaknya di Secrets: top-level ATAU di dalam section
-    (mis. tidak sengaja tertulis di bawah [auth]). Tidak peka huruf besar/kecil.
-    Juga menerima nama alternatif, mis. [anthropic] api_key untuk ANTHROPIC_API_KEY."""
-    aliases = {
-        "ANTHROPIC_API_KEY": ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "ANTHROPIC_KEY", "API_KEY"],
-        "APP_PASSWORD": ["APP_PASSWORD", "AI_PASSWORD"],
-    }.get(key, [key])
-    wanted = [a.lower() for a in aliases]
-
-    def _search(node, depth=0, section=""):
-        try:
-            items = list(node.items())
-        except Exception:
-            return None
-        # 1) cocok langsung di level ini
-        for k, v in items:
-            if str(k).lower() in wanted and isinstance(v, (str, int, float)) and str(v).strip():
-                return str(v).strip().strip('"').strip("'")
-        # 2) section [anthropic] dengan api_key / key
-        if key == "ANTHROPIC_API_KEY" and section.lower() in ("anthropic", "claude"):
-            for k, v in items:
-                if str(k).lower() in ("api_key", "key", "apikey") and str(v).strip():
-                    return str(v).strip()
-        # 3) cari ke dalam section
-        if depth < 3:
-            for k, v in items:
-                if hasattr(v, "items"):
-                    found = _search(v, depth + 1, str(k))
-                    if found:
-                        return found
-        return None
-
-    try:
-        found = _search(st.secrets)
-        if found:
-            return found
-    except Exception:
-        pass
-    for a in aliases:
-        val = os.environ.get(a, "").strip()
-        if val:
-            return val
-    return None
-
-
-def _ai_secret_diagnostics():
-    """Daftar NAMA key/section di Secrets (tanpa nilai) untuk membantu debug."""
-    out = []
-    try:
-        for k, v in st.secrets.items():
-            if hasattr(v, "items"):
-                out.append(f"[{k}] → " + ", ".join(str(x) for x in v.keys()))
-            else:
-                out.append(f"{k} (top-level)")
-    except Exception as e:
-        out.append(f"Secrets tidak bisa dibaca: {e}")
-    return out
-
-
-def _ai_norm(name):
-    """Normalisasi nama hotel untuk pencocokan (bukan untuk ditampilkan)."""
-    s = _ud.normalize("NFKD", str(name)).encode("ascii", "ignore").decode().lower()
-    s = s.replace("&", " and ")
-    s = re.sub(r"[^a-z0-9 ]", " ", s)
-    s = " ".join(s.split()) + " "
-    for old, new in _AI_REPLACEMENTS:
-        s = s.replace(old, new)
-    toks = []
-    for t in s.split():
-        if t in _AI_GENERIC_WORDS:
-            continue
-        if len(t) > 4 and t.endswith("s") and not t.endswith("ss"):
-            t = t[:-1]  # bentuk jamak: points -> point, towers -> tower
-        toks.append(t)
-    return " ".join(toks)
-
-
-def _ai_pair_key(a, b):
-    a, b = str(a).strip().lower(), str(b).strip().lower()
-    return "||".join(sorted([a, b]))
-
-
-def _ai_token_set_score(na, nb):
-    """Skor 0-100 mirip token_set_ratio (fallback bila rapidfuzz tidak ada)."""
-    if not na or not nb:
-        return 0.0
-    if RAPIDFUZZ_AVAILABLE:
-        return float(max(_rf_fuzz.token_set_ratio(na, nb), _rf_fuzz.ratio(na, nb)))
-    ta, tb = set(na.split()), set(nb.split())
-    r = lambda x, y: _SeqMatcher(None, x, y).ratio() * 100 if x and y else 0.0
-    si = " ".join(sorted(ta & tb))
-    t2 = (si + " " + " ".join(sorted(ta - tb))).strip()
-    t3 = (si + " " + " ".join(sorted(tb - ta))).strip()
-    return max(r(" ".join(sorted(ta)), " ".join(sorted(tb))), r(si, t2), r(si, t3), r(t2, t3), r(na, nb))
-
-
-@st.cache_resource
-def _ai_store():
-    """Penyimpanan bersama untuk SEMUA user selama server Streamlit hidup.
-    Hilang kalau app restart -> gunakan tombol download/upload file JSON."""
-    return {
-        "decisions": {},     # pair_key -> {a, b, decision, confidence, reason, source, model, ts}
-        "mapping": {},       # nama asli -> nama gabungan
-        "enabled": True,     # terapkan ke seluruh dashboard
-        "min_conf": 0.80,
-        "last_run": None,
-        "usage": {"input_tokens": 0, "output_tokens": 0, "calls": 0},
-    }
-
-
-@st.cache_data(show_spinner=False)
-def ai_build_hotel_summary(df, hotel_col="Hotel Name"):
-    """Ringkasan per nama hotel ASLI: kota dominan, spend, room night, transaksi."""
-    if df is None or df.empty or hotel_col not in df.columns:
-        return pd.DataFrame(columns=["Hotel", "City", "Spend", "Room Night", "Transaksi"])
-
-    city_col = next((c for c in ["City", "City Destination"] if c in df.columns), None)
-    cols = [hotel_col] + [c for c in [city_col, "Invoice Amount", "Number of Rooms Night"] if c and c in df.columns]
-    d = df[cols].copy()
-    d[hotel_col] = d[hotel_col].astype(str).str.strip()
-    d = d[(d[hotel_col] != "") & (d[hotel_col].str.lower() != "nan")]
-
-    out = d.groupby(hotel_col).size().rename("Transaksi").to_frame()
-    out["Spend"] = (pd.to_numeric(d["Invoice Amount"], errors="coerce").groupby(d[hotel_col]).sum()
-                    if "Invoice Amount" in d.columns else 0.0)
-    out["Room Night"] = (pd.to_numeric(d["Number of Rooms Night"], errors="coerce").groupby(d[hotel_col]).sum()
-                         if "Number of Rooms Night" in d.columns else 0.0)
-    if city_col:
-        c = d.dropna(subset=[city_col])
-        c = c[c[city_col].astype(str).str.strip().str.lower() != "nan"]
-        city = (c.groupby([hotel_col, city_col]).size().reset_index(name="_n")
-                .sort_values("_n", ascending=False).drop_duplicates(hotel_col)
-                .set_index(hotel_col)[city_col])
-        out["City"] = city
-    else:
-        out["City"] = ""
-    out["City"] = out["City"].fillna("").astype(str)
-    out = out.reset_index().rename(columns={hotel_col: "Hotel"})
-    return out[["Hotel", "City", "Spend", "Room Night", "Transaksi"]].sort_values("Spend", ascending=False).reset_index(drop=True)
-
-
-@st.cache_data(show_spinner=False)
-def ai_candidate_pairs(summary, threshold=80, same_city_only=True):
-    """Pasangan nama mirip yang perlu dinilai. Return DataFrame terurut skor."""
-    if summary is None or len(summary) < 2:
-        return pd.DataFrame(columns=["a", "b", "city_a", "city_b", "score", "rule_same"])
-
-    s = summary.copy()
-    s["_norm"] = s["Hotel"].map(_ai_norm)
-    s["_sorted"] = s["_norm"].map(lambda x: " ".join(sorted(x.split())))
-    if same_city_only:
-        groups = [g for _, g in s.groupby(s["City"].str.strip().str.lower())]
-    else:
-        groups = [s]
-
-    rows = []
-    for g in groups:
-        n = len(g)
-        if n < 2:
-            continue
-        names = g["Hotel"].tolist()
-        norms = g["_norm"].tolist()
-        sorts = g["_sorted"].tolist()
-        cities = g["City"].tolist()
-        if RAPIDFUZZ_AVAILABLE:
-            mat = _rf_process.cdist(norms, norms, scorer=_rf_fuzz.token_set_ratio,
-                                    score_cutoff=threshold, dtype=np.uint8)
-            ii, jj = np.nonzero(np.triu(mat, k=1))
-            idx_pairs = zip(ii.tolist(), jj.tolist())
-        else:
-            idx_pairs = ((i, j) for i in range(n) for j in range(i + 1, n))
-        for i, j in idx_pairs:
-            if not norms[i] or not norms[j]:
-                continue
-            same = sorts[i] == sorts[j]
-            score = 100.0 if same else _ai_token_set_score(norms[i], norms[j])
-            if score >= threshold:
-                rows.append({"a": names[i], "b": names[j], "city_a": cities[i], "city_b": cities[j],
-                             "score": round(score, 1), "rule_same": bool(same)})
-
-    out = pd.DataFrame(rows, columns=["a", "b", "city_a", "city_b", "score", "rule_same"])
-    if not out.empty:
-        spend = summary.set_index("Hotel")["Spend"]
-        out["_w"] = out["a"].map(spend).fillna(0) + out["b"].map(spend).fillna(0)
-        out = out.sort_values(["score", "_w"], ascending=False).drop(columns="_w").reset_index(drop=True)
-    return out
-
-
-def _ai_call_claude(api_key, model, user_text, web_search=False, max_tokens=8000):
-    """Panggil Claude Messages API via requests. Return (text, usage)."""
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    messages = [{"role": "user", "content": user_text}]
-    body = {"model": model, "max_tokens": max_tokens, "system": _AI_SYSTEM_PROMPT, "messages": messages}
-    if web_search:
-        body["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
-
-    usage_total = {"input_tokens": 0, "output_tokens": 0}
-    for _turn in range(5):  # web search bisa berhenti dengan pause_turn -> lanjutkan
-        resp = None
-        for attempt in range(5):
-            try:
-                resp = requests.post(AI_API_URL, headers=headers, json=body, timeout=300)
-            except requests.RequestException as e:
-                if attempt == 4:
-                    raise RuntimeError(f"Gagal terhubung ke Claude API: {e}")
-                time.sleep(2 ** attempt)
-                continue
-            if resp.status_code in (429, 500, 502, 503, 504, 529):
-                time.sleep(min(60, 3 * (2 ** attempt)))
-                continue
-            break
-        if resp is None or resp.status_code != 200:
-            code = resp.status_code if resp is not None else "?"
-            detail = ""
-            try:
-                detail = resp.json().get("error", {}).get("message", "")
-            except Exception:
-                detail = resp.text[:300] if resp is not None else ""
-            if code == 401:
-                detail = "API key tidak valid. Periksa ANTHROPIC_API_KEY di Secrets."
-            raise RuntimeError(f"Claude API error {code}: {detail}")
-
-        data = resp.json()
-        u = data.get("usage", {}) or {}
-        usage_total["input_tokens"] += int(u.get("input_tokens", 0) or 0)
-        usage_total["output_tokens"] += int(u.get("output_tokens", 0) or 0)
-        if data.get("stop_reason") == "pause_turn":
-            messages = messages + [{"role": "assistant", "content": data.get("content", [])}]
-            body["messages"] = messages
-            continue
-        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
-        return text, usage_total
-    raise RuntimeError("Claude tidak menyelesaikan jawaban (terlalu banyak pause_turn).")
-
-
-def _ai_parse_json_list(text):
-    """Ambil JSON array dari jawaban Claude (toleran terhadap teks/markdown di sekitarnya)."""
-    t = (text or "").replace("```json", "").replace("```", "").strip()
-    start, end = t.find("["), t.rfind("]")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError("Jawaban Claude tidak berisi JSON array.")
-    return json.loads(t[start:end + 1])
-
-
-def _ai_pairs_prompt(batch):
-    items = [{"id": i + 1, "a": r["a"], "b": r["b"], "city_a": r["city_a"], "city_b": r["city_b"]}
-             for i, r in enumerate(batch)]
-    return (
-        "Nilai apakah setiap pasangan nama hotel berikut merujuk ke PROPERTI FISIK YANG SAMA.\n\n"
-        "Aturan:\n"
-        "- SAMA: hanya beda penulisan, urutan kata, typo, singkatan, huruf besar/kecil, tambahan kata "
-        "seperti 'Hotel', 'by <Brand>', '& Convention', '& Residence', atau properti yang sama setelah rebranding.\n"
-        "- BEDA: beda kota/area, beda sub-brand atau tier (mis. ibis vs ibis Styles vs ibis budget, "
-        "Santika vs Santika Premiere, Aston vs Aston Inn, Harris vs Harris Suites, Grand Mercure vs Mercure), "
-        "cabang berbeda di kota yang sama (mis. Grand Mercure Harmoni vs Grand Mercure Kemayoran), "
-        "atau hotel berbeda yang kebetulan namanya mirip.\n"
-        "- RAGU: informasi tidak cukup untuk memutuskan.\n"
-        "- Jika nama pendek bisa merujuk ke lebih dari satu cabang, pilih RAGU atau BEDA, bukan SAMA.\n\n"
-        "Jawab HANYA JSON array, satu objek per pasangan, format:\n"
-        '[{"id": 1, "decision": "SAMA", "confidence": 0.95, "reason": "alasan singkat maks 15 kata"}]\n'
-        "confidence 0-1. reason dalam Bahasa Indonesia.\n\n"
-        "Pasangan:\n" + json.dumps(items, ensure_ascii=False)
-    )
-
-
-def _ai_groups_prompt(groups):
-    items = [{"group_id": i + 1, "names": g} for i, g in enumerate(groups)]
-    return (
-        "Setiap grup berikut adalah hasil penggabungan otomatis nama hotel (per kota). "
-        "Periksa apakah SEMUA nama di dalam grup benar-benar properti fisik yang sama. "
-        "Jika ada yang berbeda properti, pecah grup menjadi beberapa sub-grup. "
-        "Setiap nama harus muncul tepat satu kali, tulis nama persis seperti input.\n\n"
-        "Jawab HANYA JSON array, format:\n"
-        '[{"group_id": 1, "subgroups": [["nama A", "nama B"], ["nama C"]]}]\n\n'
-        "Grup:\n" + json.dumps(items, ensure_ascii=False)
-    )
-
-
-def ai_build_mapping(summary, decisions, min_conf=0.8):
-    """Union-find dari keputusan SAMA -> (mapping dict, DataFrame grup)."""
-    names = summary["Hotel"].tolist()
-    lower_to_name = {n.strip().lower(): n for n in names}
-    parent = {n: n for n in names}
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    for d in decisions.values():
-        a = lower_to_name.get(str(d.get("a", "")).strip().lower())
-        b = lower_to_name.get(str(d.get("b", "")).strip().lower())
-        if not a or not b or a == b:
-            continue
-        ok = d.get("decision") == "SAMA" and (
-            d.get("source") in ("MANUAL", "RULE", "GROUPCHECK") or float(d.get("confidence", 0)) >= min_conf)
-        if ok:
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[rb] = ra
-
-    info = summary.set_index("Hotel")
-    groups = {}
-    for n in names:
-        groups.setdefault(find(n), []).append(n)
-
-    mapping, rows = {}, []
-    for members in groups.values():
-        if len(members) < 2:
-            continue
-        # nama tampilan = varian dengan spend terbesar (biasanya nama resmi), seri -> terpanjang
-        canonical = max(members, key=lambda m: (float(info.at[m, "Spend"] or 0), len(m)))
-        for m in members:
-            if m != canonical:
-                mapping[m] = canonical
-        sub = info.loc[members]
-        rows.append({
-            "Nama Gabungan": canonical,
-            "Kota": sub["City"].mode().iat[0] if not sub["City"].mode().empty else "",
-            "Jumlah Varian": len(members),
-            "Varian Nama": "; ".join(sorted(members, key=lambda m: -float(info.at[m, "Spend"] or 0))),
-            "Total Spend": float(sub["Spend"].sum()),
-            "Total Room Night": float(sub["Room Night"].sum()),
-            "Transaksi": int(sub["Transaksi"].sum()),
-        })
-    groups_df = pd.DataFrame(rows, columns=["Nama Gabungan", "Kota", "Jumlah Varian", "Varian Nama",
-                                            "Total Spend", "Total Room Night", "Transaksi"])
-    if not groups_df.empty:
-        groups_df = groups_df.sort_values("Total Spend", ascending=False).reset_index(drop=True)
-    return mapping, groups_df
-
-
-def ai_run_analysis(summary, pairs, api_key, model, web_search=False, batch_size=40,
-                    min_conf=0.8, group_check=True, progress=None, log=None):
-    """Nilai pasangan kandidat dengan Claude & simpan ke store. Return ringkasan run."""
-    store = _ai_store()
-    dec = store["decisions"]
-    now = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y-%m-%d %H:%M")
-    log = log or (lambda m: None)
-    stats = {"rule": 0, "cached": 0, "judged": 0, "calls": 0, "errors": 0,
-             "input_tokens": 0, "output_tokens": 0, "split_groups": 0}
-
-    todo = []
-    for r in pairs.to_dict("records"):
-        key = _ai_pair_key(r["a"], r["b"])
-        if key in dec:
-            stats["cached"] += 1
-            continue
-        if r["rule_same"]:
-            dec[key] = {"a": r["a"], "b": r["b"], "decision": "SAMA", "confidence": 1.0,
-                        "reason": "Nama identik setelah normalisasi", "source": "RULE", "model": "-", "ts": now}
-            stats["rule"] += 1
-            continue
-        todo.append(r)
-
-    batches = [todo[i:i + batch_size] for i in range(0, len(todo), batch_size)]
-    total_steps = len(batches) + (1 if group_check else 0)
-    log(f"{len(todo)} pasangan dikirim ke Claude dalam {len(batches)} panggilan "
-        f"({stats['cached']} dari cache, {stats['rule']} otomatis).")
-
-    for bi, batch in enumerate(batches):
-        try:
-            text, usage = _ai_call_claude(api_key, model, _ai_pairs_prompt(batch), web_search=web_search)
-            stats["calls"] += 1
-            stats["input_tokens"] += usage["input_tokens"]
-            stats["output_tokens"] += usage["output_tokens"]
-            result = {int(x.get("id", 0)): x for x in _ai_parse_json_list(text) if isinstance(x, dict)}
-            for i, r in enumerate(batch):
-                x = result.get(i + 1)
-                if not x:
-                    continue
-                decision = str(x.get("decision", "RAGU")).strip().upper()
-                if decision not in ("SAMA", "BEDA", "RAGU"):
-                    decision = "RAGU"
-                try:
-                    conf = max(0.0, min(1.0, float(x.get("confidence", 0.5))))
-                except (TypeError, ValueError):
-                    conf = 0.5
-                dec[_ai_pair_key(r["a"], r["b"])] = {
-                    "a": r["a"], "b": r["b"], "decision": decision, "confidence": conf,
-                    "reason": str(x.get("reason", ""))[:200], "source": "CLAUDE", "model": model, "ts": now}
-                stats["judged"] += 1
-        except Exception as e:
-            stats["errors"] += 1
-            log(f"⚠️ Batch {bi + 1} gagal: {e}")
-            if "401" in str(e) or "tidak valid" in str(e):
-                raise
-        if progress:
-            progress((bi + 1) / max(1, total_steps), f"Batch {bi + 1}/{len(batches)} selesai")
-
-    # ── Cek ulang grup besar agar tidak terjadi salah gabung berantai ──
-    if group_check:
-        _, groups_df = ai_build_mapping(summary, dec, min_conf)
-        big = [g.split("; ") for g in groups_df.loc[groups_df["Jumlah Varian"] >= 3, "Varian Nama"]]
-        if big:
-            log(f"Cek ulang {len(big)} grup berisi ≥3 nama...")
-        for gi in range(0, len(big), 15):
-            chunk = big[gi:gi + 15]
-            try:
-                text, usage = _ai_call_claude(api_key, model, _ai_groups_prompt(chunk), web_search=False)
-                stats["calls"] += 1
-                stats["input_tokens"] += usage["input_tokens"]
-                stats["output_tokens"] += usage["output_tokens"]
-                for x in _ai_parse_json_list(text):
-                    gid = int(x.get("group_id", 0)) - 1
-                    if gid < 0 or gid >= len(chunk):
-                        continue
-                    members = chunk[gid]
-                    lookup = {m.strip().lower(): m for m in members}
-                    subs, seen = [], set()
-                    for sg in x.get("subgroups", []) or []:
-                        clean = [lookup[s.strip().lower()] for s in sg
-                                 if isinstance(s, str) and s.strip().lower() in lookup
-                                 and s.strip().lower() not in seen]
-                        seen.update(c.lower() for c in clean)
-                        if clean:
-                            subs.append(clean)
-                    subs += [[m] for m in members if m.lower() not in seen]
-                    if len(subs) <= 1:
-                        continue
-                    stats["split_groups"] += 1
-                    where = {m: si for si, sg in enumerate(subs) for m in sg}
-                    # pasangan SAMA yang menyeberang sub-grup -> BEDA
-                    for k, d in dec.items():
-                        a, b = lookup.get(str(d["a"]).lower()), lookup.get(str(d["b"]).lower())
-                        if a and b and where[a] != where[b] and d["decision"] == "SAMA" and d["source"] != "MANUAL":
-                            d.update(decision="BEDA", source="GROUPCHECK", confidence=1.0,
-                                     reason="Dipisah saat cek ulang grup", ts=now)
-                    # anggota dalam satu sub-grup tetap terhubung
-                    for sg in subs:
-                        for m1, m2 in zip(sg, sg[1:]):
-                            k = _ai_pair_key(m1, m2)
-                            if dec.get(k, {}).get("source") != "MANUAL":
-                                dec[k] = {"a": m1, "b": m2, "decision": "SAMA", "confidence": 1.0,
-                                          "reason": "Dikonfirmasi saat cek ulang grup", "source": "GROUPCHECK",
-                                          "model": model, "ts": now}
-            except Exception as e:
-                stats["errors"] += 1
-                log(f"⚠️ Cek grup gagal: {e}")
-        if progress:
-            progress(1.0, "Cek grup selesai")
-
-    mapping, _ = ai_build_mapping(summary, dec, min_conf)
-    store["mapping"] = mapping
-    store["min_conf"] = min_conf
-    store["last_run"] = now
-    for k in ("input_tokens", "output_tokens"):
-        store["usage"][k] += stats[k]
-    store["usage"]["calls"] += stats["calls"]
-    return stats
-
-
-def ai_apply_hotel_merge(df, hotel_col="Hotel Name"):
-    """Ganti nama hotel ke nama gabungan (dipanggil sebelum filter & tab)."""
-    store = _ai_store()
-    mapping = store.get("mapping") or {}
-    if df is None or df.empty or not store.get("enabled", True) or not mapping or hotel_col not in df.columns:
-        return df
-    names = df[hotel_col].astype(str).str.strip()
-    new = names.map(mapping)
-    hit = new.notna()
-    if not hit.any():
-        return df
-    df = df.copy()
-    df["Hotel Name (Original)"] = df[hotel_col]
-    df.loc[hit, hotel_col] = new[hit]
-    if "Canonical Hotel Name" in df.columns:
-        targets = df[hotel_col].isin(set(mapping.values()))
-        df.loc[targets, "Canonical Hotel Name"] = df.loc[targets, hotel_col]
-    return df
-
-
-def _ai_export_json():
-    store = _ai_store()
-    payload = {"version": 1, "exported_at": datetime.now(ZoneInfo("Asia/Jakarta")).isoformat(),
-               "min_conf": store.get("min_conf", 0.8), "decisions": store["decisions"]}
-    return json.dumps(payload, ensure_ascii=False, indent=1).encode("utf-8")
-
-
-def _ai_import_json(raw, summary):
-    payload = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
-    decisions = payload.get("decisions", payload) if isinstance(payload, dict) else {}
-    store = _ai_store()
-    n = 0
-    for k, d in decisions.items():
-        if isinstance(d, dict) and {"a", "b", "decision"} <= set(d):
-            store["decisions"][_ai_pair_key(d["a"], d["b"])] = d
-            n += 1
-    store["min_conf"] = float(payload.get("min_conf", store.get("min_conf", 0.8))) if isinstance(payload, dict) else 0.8
-    store["mapping"], _ = ai_build_mapping(summary, store["decisions"], store["min_conf"])
-    return n
-
-
-def render_ai_hotel_merge_tab(summary):
-    """Isi tab 'AI Hotel Merge'. summary = ringkasan data SEBELUM digabung & sebelum filter."""
-    store = _ai_store()
-    role = st.session_state.get("role", "")
-    is_admin = role == "Admin"
-    api_key = _ai_secret("ANTHROPIC_API_KEY")
-    app_password = _ai_secret("APP_PASSWORD")
-
-    st.markdown("<div class='section-title'>🤖 AI Hotel Merge — Penggabungan Properti dengan Claude</div>",
-                unsafe_allow_html=True)
-    st.caption("Claude menilai nama hotel yang mirip: apakah properti yang sama (SAMA), berbeda (BEDA), "
-               "atau perlu dicek manual (RAGU). Hasil yang digabung otomatis dipakai di seluruh dashboard, "
-               "sehingga Spend dan Room Night properti yang sama dijumlahkan menjadi satu.")
-
-    if summary is None or summary.empty:
-        st.warning("Kolom 'Hotel Name' tidak tersedia pada data.")
-        return
-
-    mapping, groups_df = ai_build_mapping(summary, store["decisions"], store.get("min_conf", 0.8))
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Nama hotel unik (asli)", f"{len(summary):,}")
-    k2.metric("Properti setelah digabung", f"{len(summary) - len(mapping):,}")
-    k3.metric("Grup tergabung", f"{len(groups_df):,}")
-    k4.metric("Keputusan tersimpan", f"{len(store['decisions']):,}")
-
-    status_bits = [
-        "✅ API key terbaca" if api_key else "❌ ANTHROPIC_API_KEY belum ada di Secrets",
-        f"Terakhir dijalankan: {store['last_run'] or '-'}",
-        "Penggabungan: " + ("AKTIF di seluruh dashboard" if store.get("enabled", True) else "NONAKTIF"),
-    ]
-    st.markdown(f"<div style='font-size:0.82em;color:#0D7FCC;margin:4px 0 12px 0;'>{' · '.join(status_bits)}</div>",
-                unsafe_allow_html=True)
-
-    if not api_key and is_admin:
-        with st.expander("🔧 Diagnosa: kenapa API key tidak terbaca?", expanded=True):
-            st.markdown("Nama key yang terbaca dari Secrets (nilainya tidak ditampilkan):")
-            st.code("\n".join(_ai_secret_diagnostics()) or "(Secrets kosong)")
-            st.markdown(
-                "Pastikan ada baris `ANTHROPIC_API_KEY = \"sk-ant-...\"` di Secrets, klik **Save**, "
-                "lalu **Reboot app** dari menu ⋮ → Manage app. Jika nama key tidak muncul di daftar di atas, "
-                "berarti Secrets belum tersimpan di app yang sedang Anda buka.")
-
-    # ── Panel admin: pengaturan & menjalankan analisa ─────────────────
-    if is_admin:
-        enabled = st.toggle("Terapkan penggabungan AI ke seluruh dashboard", value=store.get("enabled", True),
-                            key="ai_merge_enabled",
-                            help="Jika aktif, nama hotel di semua tab diganti ke nama gabungan.")
-        if enabled != store.get("enabled", True):
-            store["enabled"] = enabled
-            st.rerun()
-
-        with st.expander("⚙️ Pengaturan analisa", expanded=not store["decisions"]):
-            c1, c2 = st.columns(2)
-            with c1:
-                model_label = st.selectbox("Model Claude", list(AI_MODELS.keys()), key="ai_model")
-                web_search = st.toggle("Izinkan Claude web search", value=False, key="ai_web_search",
-                                       help="Claude boleh cek alamat/info rebrand di internet. "
-                                            "Lebih akurat untuk kasus sulit, tapi lebih lambat dan mahal.")
-                same_city = st.toggle("Bandingkan hanya dalam kota yang sama", value=True, key="ai_same_city")
-                group_check = st.toggle("Cek ulang grup berisi ≥3 nama", value=True, key="ai_group_check")
-            with c2:
-                threshold = st.slider("Skor kemiripan minimal kandidat", 60, 95, 80, key="ai_fuzzy_threshold",
-                                      help="Makin rendah, makin banyak pasangan dikirim ke Claude (biaya naik).")
-                min_conf = st.slider("Confidence minimal untuk gabung otomatis", 0.50, 1.00,
-                                     float(store.get("min_conf", 0.8)), 0.05, key="ai_min_conf")
-                batch_size = st.number_input("Pasangan per panggilan API", 10, 80, 40, 10, key="ai_batch_size")
-                max_pairs = st.number_input("Batas pasangan per run", 50, 5000, 1500, 50, key="ai_max_pairs",
-                                            help="Pengaman biaya. Pasangan dengan skor tertinggi diproses lebih dulu.")
-
-        with st.spinner("Mencari pasangan kandidat..."):
-            pairs = ai_candidate_pairs(summary, threshold=threshold, same_city_only=same_city)
-        keys = pairs.apply(lambda r: _ai_pair_key(r["a"], r["b"]), axis=1) if not pairs.empty else pd.Series(dtype=str)
-        new_pairs = pairs[~keys.isin(store["decisions"].keys())] if not pairs.empty else pairs
-        to_api = new_pairs[~new_pairs["rule_same"]] if not new_pairs.empty else new_pairs
-        to_api = to_api.head(int(max_pairs))
-        n_calls = -(-len(to_api) // int(batch_size)) if len(to_api) else 0
-        st.info(f"Kandidat: **{len(pairs):,} pasangan** · sudah diputuskan: **{len(pairs) - len(new_pairs):,}** · "
-                f"otomatis (nama identik): **{int(new_pairs['rule_same'].sum()) if not new_pairs.empty else 0:,}** · "
-                f"akan dikirim ke Claude: **{len(to_api):,}** (±{n_calls} panggilan API)")
-
-        pw_ok = (not app_password) or st.session_state.get("_ai_pw_ok", False)
-        if app_password and not pw_ok:
-            pw = st.text_input("Password untuk menjalankan analisa AI (APP_PASSWORD)", type="password",
-                               key="ai_pw_input")
-            if pw:
-                if hmac.compare_digest(pw, app_password):
-                    st.session_state["_ai_pw_ok"] = True
-                    st.rerun()
-                else:
-                    st.error("Password salah.")
-
-        run_disabled = (not api_key) or (not pw_ok) or (new_pairs is None) or new_pairs.empty
-        cbtn1, cbtn2 = st.columns([1, 1])
-        with cbtn1:
-            run = st.button("🤖 Jalankan analisa Claude", type="primary", disabled=run_disabled,
-                            use_container_width=True, key="ai_run_btn")
-        with cbtn2:
-            if st.button("🔁 Hitung ulang dengan confidence baru", use_container_width=True,
-                         disabled=not store["decisions"], key="ai_rebuild_btn"):
-                store["min_conf"] = float(min_conf)
-                store["mapping"], _ = ai_build_mapping(summary, store["decisions"], store["min_conf"])
-                st.rerun()
-
-        if run:
-            selected = pd.concat([new_pairs[new_pairs["rule_same"]], to_api], ignore_index=True)
-            bar = st.progress(0.0, text="Memulai analisa...")
-            with st.status("Claude sedang menilai pasangan hotel...", expanded=True) as status:
-                try:
-                    stats = ai_run_analysis(
-                        summary, selected, api_key, AI_MODELS[model_label], web_search=web_search,
-                        batch_size=int(batch_size), min_conf=float(min_conf), group_check=group_check,
-                        progress=lambda p, t: bar.progress(min(1.0, p), text=t),
-                        log=lambda m: status.write(m))
-                    status.update(label="Analisa selesai ✅", state="complete")
-                    st.session_state["_ai_last_stats"] = stats
-                except Exception as e:
-                    status.update(label="Analisa gagal", state="error")
-                    st.error(str(e))
-            st.rerun()
-
-        stats = st.session_state.get("_ai_last_stats")
-        if stats:
-            st.success(f"Run terakhir: {stats['judged']} pasangan dinilai Claude, {stats['rule']} otomatis, "
-                       f"{stats['cached']} dari cache, {stats['calls']} panggilan API, "
-                       f"{stats['split_groups']} grup dipecah, {stats['errors']} error · "
-                       f"token input {stats['input_tokens']:,} / output {stats['output_tokens']:,}.")
-
-    # ── Hasil: grup yang digabung ─────────────────────────────────────
-    st.markdown("#### Properti yang digabung")
-    if groups_df.empty:
-        st.info("Belum ada hotel yang digabung." + ("" if is_admin else " Hubungi Admin untuk menjalankan analisa."))
-    else:
-        st.dataframe(groups_df.style.format({"Total Spend": "Rp{:,.0f}", "Total Room Night": "{:,.0f}"}),
-                     use_container_width=True, height=380)
-
-    # ── Top 20 setelah digabung ───────────────────────────────────────
-    if not groups_df.empty:
-        merged = summary.copy()
-        merged["Hotel"] = merged["Hotel"].map(lambda n: mapping.get(n, n))
-        merged = (merged.groupby("Hotel", as_index=False)[["Spend", "Room Night", "Transaksi"]].sum()
-                  .sort_values("Spend", ascending=False).reset_index(drop=True))
-        total = merged["Spend"].sum()
-        merged["Spend %"] = merged["Spend"] / total * 100 if total else 0
-        merged["Cumulative %"] = merged["Spend %"].cumsum()
-        merged.insert(0, "Rank", range(1, len(merged) + 1))
-        merged["Digabung"] = merged["Hotel"].isin(set(mapping.values())).map({True: "✔", False: ""})
-        with st.expander("📊 Top 20 hotel setelah digabung (semua data, sebelum filter)"):
-            st.dataframe(merged.head(20).style.format({"Spend": "Rp{:,.0f}", "Room Night": "{:,.0f}",
-                                                         "Spend %": "{:.2f}%", "Cumulative %": "{:.2f}%"}),
-                         use_container_width=True)
-
-    # ── Keputusan per pasangan + koreksi manual ───────────────────────
-    st.markdown("#### Keputusan per pasangan")
-    if not store["decisions"]:
-        st.caption("Belum ada keputusan.")
-    else:
-        dec_df = pd.DataFrame(store["decisions"].values())
-        valid = set(n.lower() for n in summary["Hotel"])
-        dec_df = dec_df[dec_df["a"].str.lower().isin(valid) & dec_df["b"].str.lower().isin(valid)]
-        dec_df = dec_df.rename(columns={"a": "Hotel A", "b": "Hotel B", "decision": "Keputusan",
-                                        "confidence": "Confidence", "reason": "Alasan", "source": "Sumber",
-                                        "model": "Model", "ts": "Waktu"})
-        order = {"RAGU": 0, "SAMA": 1, "BEDA": 2}
-        dec_df["_o"] = dec_df["Keputusan"].map(order).fillna(3)
-        dec_df = dec_df.sort_values(["_o", "Confidence"]).drop(columns="_o").reset_index(drop=True)
-        filt = st.radio("Tampilkan", ["Semua", "RAGU", "SAMA", "BEDA"], horizontal=True, key="ai_dec_filter")
-        view = dec_df if filt == "Semua" else dec_df[dec_df["Keputusan"] == filt]
-        view = view[["Hotel A", "Hotel B", "Keputusan", "Confidence", "Alasan", "Sumber", "Model", "Waktu"]]
-
-        if is_admin:
-            st.caption("Ubah kolom **Keputusan** untuk koreksi manual (mis. RAGU → SAMA), lalu klik Simpan koreksi.")
-            edited = st.data_editor(
-                view, use_container_width=True, height=420, hide_index=True, key="ai_dec_editor",
-                disabled=["Hotel A", "Hotel B", "Confidence", "Alasan", "Sumber", "Model", "Waktu"],
-                column_config={"Keputusan": st.column_config.SelectboxColumn(
-                    "Keputusan", options=["SAMA", "BEDA", "RAGU"], required=True),
-                    "Confidence": st.column_config.NumberColumn(format="%.2f")})
-            if st.button("💾 Simpan koreksi", key="ai_save_edits"):
-                changed = 0
-                now = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y-%m-%d %H:%M")
-                for (_, old), (_, new) in zip(view.iterrows(), edited.iterrows()):
-                    if old["Keputusan"] != new["Keputusan"]:
-                        k = _ai_pair_key(old["Hotel A"], old["Hotel B"])
-                        store["decisions"][k].update(decision=new["Keputusan"], source="MANUAL", confidence=1.0,
-                                                     reason=f"Koreksi manual oleh {st.session_state.get('username', '')}",
-                                                     ts=now)
-                        changed += 1
-                store["mapping"], _ = ai_build_mapping(summary, store["decisions"], store.get("min_conf", 0.8))
-                st.success(f"{changed} koreksi disimpan.")
-                st.rerun()
-        else:
-            st.dataframe(view, use_container_width=True, height=420, hide_index=True)
-
-    # ── Simpan / pulihkan (Streamlit Cloud tidak menyimpan file permanen) ──
-    st.markdown("#### Simpan & pulihkan hasil")
-    if is_admin:
-        st.caption("Hasil tersimpan selama server app hidup. Setelah app restart/reboot, hasil hilang. "
-                   "Download file JSON setiap selesai analisa, lalu upload lagi setelah restart "
-                   "supaya pasangan yang sama tidak dinilai (dan dibayar) ulang.")
-        d1, d2 = st.columns(2)
-        with d1:
-            st.download_button("⬇️ Download hasil keputusan (.json)", data=_ai_export_json(),
-                               file_name=f"ai_hotel_merge_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-                               mime="application/json", use_container_width=True, key="ai_dl_json",
-                               disabled=not store["decisions"])
-            if not groups_df.empty:
-                out = BytesIO()
-                with pd.ExcelWriter(out, engine="openpyxl") as xw:
-                    groups_df.to_excel(xw, index=False, sheet_name="Grup Digabung")
-                    pd.DataFrame(sorted(mapping.items()), columns=["Nama Asli", "Nama Gabungan"]).to_excel(
-                        xw, index=False, sheet_name="Mapping")
-                    pd.DataFrame(store["decisions"].values()).to_excel(xw, index=False, sheet_name="Keputusan")
-                out.seek(0)
-                st.download_button("⬇️ Download hasil (Excel)", data=out,
-                                   file_name=f"ai_hotel_merge_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                   use_container_width=True, key="ai_dl_xlsx")
-        with d2:
-            up = st.file_uploader("Upload file hasil (.json)", type=["json"], key="ai_upload_json")
-            if up is not None:
-                sig = hashlib.sha256(up.getvalue()).hexdigest()
-                if st.session_state.get("_ai_last_upload") != sig:
-                    try:
-                        n = _ai_import_json(up.getvalue(), summary)
-                        st.session_state["_ai_last_upload"] = sig
-                        st.success(f"{n} keputusan dipulihkan.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"File tidak valid: {e}")
-    else:
-        st.markdown("""
-        <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
-        border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>
-            🔒 Menjalankan analisa, koreksi, dan download hanya tersedia untuk <strong>Admin</strong>
-        </div>""", unsafe_allow_html=True)
 
 
 #==========================#
@@ -1695,9 +994,6 @@ def apply_property_merge(df: pd.DataFrame, prop_map: pd.DataFrame,
 def build_member_names(df: pd.DataFrame, key_col: str, hotel_col: str = "Hotel Name",
                        weight_col: str = None) -> pd.Series:
     """Series: key -> 'Nama A; Nama B' (diurutkan dari kontribusi terbesar)."""
-    # Jika nama hotel sudah digabung oleh AI, tampilkan nama ASLI-nya sebagai anggota
-    if hotel_col == "Hotel Name" and "Hotel Name (Original)" in df.columns:
-        df = df.drop(columns=[hotel_col]).rename(columns={"Hotel Name (Original)": hotel_col})
     tmp = df[[key_col, hotel_col]].copy()
     tmp[hotel_col] = tmp[hotel_col].astype(str).str.strip()
     if weight_col and weight_col in df.columns:
@@ -1800,64 +1096,297 @@ def trim_string_columns(df):
     return df_clean
 
 # ===============================
-# ── DEMO DATA MASKING (DITAMBAHKAN) ──
-# Menyamarkan data asli khusus untuk akun "demo", supaya data riil
-# perusahaan tidak pernah terlihat oleh pengguna demo. Berlaku otomatis
-# untuk seluruh periode data (2023, 2024, 2025, 2026, dan periode
-# berikutnya) karena diterapkan pada df_all setelah data di-load,
-# sebelum ditampilkan di tab manapun.
+# AKSES, AUDIT LOG, AKUN DEMO & KONVERSI MATA UANG
 #
-# Kolom yang disamarkan (sesuai permintaan) HANYA:
-#   - Travel Request Number
-#   - No Trip SAP
-#   - Employee Id
-#   - Company Code
-#   - Direktorat Pekerja
-#   - Cost Center Pekerja
-#   - Nama Perusahaan
+# Sumber data hanya berisi 13 kolom transaksi hotel (lihat mask_data.KEEP_COLUMNS),
+# tanpa nama / Employee Id / perusahaan / cost center. No. TR & Booking ID sudah
+# berupa kode acak saat data dimuat (mask_data.mask_dataframe).
 #
-# Nilai diganti dengan pseudonim yang konsisten (hash deterministik) —
-# nilai asli yang sama akan selalu menghasilkan pseudonim yang sama,
-# sehingga pola/relasi di data tetap terjaga untuk keperluan demo, tanpa
-# membocorkan data asli. Kolom lain di luar daftar ini TIDAK disamarkan.
+# Akun & role (lihat USER_ROLES):
+#   superadmin (Super Admin) : semua akses + audit log
+#   admin      (Admin)       : semua tab, unduh, upload Excel, kelola corp rate & target manual
+#   ssc        (Analyst)     : semua tab, unduh laporan agregat
+#   dtm        (Viewer)      : semua tab, unduh laporan agregat
+#   demo       (Demo)        : semua tab dengan nominal disamarkan, TANPA unduhan
+# Setiap unduhan dan login dicatat di audit log.
+#
+# Contoh secrets:
+#   [audit]
+#   path = "/var/lib/mtrax/audit.log"      # opsional
+#   [fx.rates]                              # kurs cadangan ke Rupiah
+#   USD = 16300
+#   SGD = 12150
+#   [fx]
+#   file = "/var/lib/mtrax/fx_rates.xlsx"   # opsional: kolom Bulan (YYYY-MM), Currency, Rate
+#   [access]
+#   login_required = false                  # SEMENTARA tanpa login (default: true)
+#   guest_role = "Viewer"                   # hak akses pengunjung: Viewer / Analyst / Demo / Admin / Super Admin
+#   [demo]
+#   enabled = true                          # default: true (akun demo tetap butuh [users.demo] password_hash)
+#   periods = ["2026"]
+#   expires = "2026-12-31"
 # ===============================
-_DEMO_MASK_SALT = "MTRAX_DEMO_MASK_v1"
 
-_DEMO_ID_MASK_COLUMNS = {
-    "Travel Request Number": "TRX",
-    "No Trip SAP": "SAP-TRIP",
-    "Employee Id": "EMP",
-    "Company Code": "COMP-CODE",
-    "Direktorat Pekerja": "DIREKTORAT",
-    "Cost Center Pekerja": "COST-CTR",
-    "Nama Perusahaan": "COMPANY",
-}
+def _audit_path() -> str:
+    p = ""
+    try:
+        p = str(dict(st.secrets.get("audit", {})).get("path", "") or "")
+    except Exception:
+        p = ""
+    p = p or os.environ.get("MTRAX_AUDIT_LOG", "") or os.path.expanduser("~/.local/share/mtrax/audit.log")
+    try:
+        os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
+    except Exception:
+        pass
+    return p
 
-def _demo_pseudonym(value, prefix, width=6):
-    """Ganti satu nilai dengan pseudonim deterministik (nilai asli yang sama
-    -> pseudonim yang sama), memakai hash SHA256 supaya nilai asli tidak
-    bisa direkonstruksi balik dari hasil masking."""
-    if pd.isna(value):
-        return value
-    raw = f"{_DEMO_MASK_SALT}|{prefix}|{str(value)}"
-    digest = hashlib.sha256(raw.encode()).hexdigest()[:width].upper()
-    return f"{prefix}-{digest}"
 
-def mask_dataframe_for_demo(df: pd.DataFrame) -> pd.DataFrame:
-    """Kembalikan salinan df dengan kolom-kolom sensitif (lihat
-    _DEMO_ID_MASK_COLUMNS) disamarkan. Dipanggil HANYA untuk user 'demo'
-    — tidak pernah dipanggil untuk admin/ssc/dtm, jadi tidak mempengaruhi
-    data yang mereka lihat."""
-    if df is None or df.empty:
-        return df
+def audit(event: str, **detail):
+    """Catat aktivitas (login, unduhan, upload) ke file audit & log server. Tanpa data transaksi."""
+    ip = ""
+    try:
+        ip = str(st.context.ip_address or "")
+    except Exception:
+        pass
+    rec = {
+        "waktu": datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y-%m-%d %H:%M:%S"),
+        "akun": str(detail.pop("user", None) or st.session_state.get("username", "")),
+        "role": str(detail.pop("role", None) or st.session_state.get("role", "")),
+        "event": event, "ip": ip, **{k: str(v) for k, v in detail.items()},
+    }
+    try:
+        line = json.dumps(rec, ensure_ascii=False, default=str)
+    except Exception:
+        return  # audit log tidak boleh menghentikan aplikasi
+    print(f"[AUDIT] {line}", flush=True)
+    try:
+        path = _audit_path()
+        new = not os.path.exists(path)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        if new:
+            os.chmod(path, 0o600)
+    except Exception:
+        pass
 
-    df_masked = df.copy()
 
-    for col, prefix in _DEMO_ID_MASK_COLUMNS.items():
-        if col in df_masked.columns:
-            df_masked[col] = df_masked[col].apply(lambda v: _demo_pseudonym(v, prefix))
+def read_audit_tail(n: int = 200) -> pd.DataFrame:
+    try:
+        with open(_audit_path(), encoding="utf-8") as f:
+            lines = f.readlines()[-n:]
+        return pd.DataFrame([json.loads(x) for x in lines if x.strip()]).iloc[::-1]
+    except Exception:
+        return pd.DataFrame()
 
-    return df_masked
+
+def _demo_config():
+    """Konfigurasi demo, atau None bila dimatikan ([demo] enabled = false) / kedaluwarsa.
+    Password demo diisi di [users.demo] password_hash (tidak ada password bawaan)."""
+    try:
+        cfg = dict(st.secrets.get("demo", {}))
+    except Exception:
+        cfg = {}
+    if not bool(cfg.get("enabled", True)):
+        return None
+    expires = str(cfg.get("expires", "")).strip()
+    if expires:
+        try:
+            today = datetime.now(ZoneInfo("Asia/Jakarta")).date()
+            if today > datetime.strptime(expires, "%Y-%m-%d").date():
+                return None
+        except ValueError:
+            return None
+    periods = cfg.get("periods") or []
+    return {"periods": [str(p) for p in periods]}
+
+
+def is_demo_user():
+    return st.session_state.get("role") == "Demo"
+
+
+def is_admin() -> bool:
+    """Super Admin & Admin: upload Excel, kelola corp rate & target manual renegosiasi."""
+    return st.session_state.get("role") in ("Super Admin", "Admin")
+
+
+def is_super_admin() -> bool:
+    return st.session_state.get("role") == "Super Admin"
+
+
+def can_download() -> bool:
+    """Semua akun kecuali Demo boleh mengunduh LAPORAN AGREGAT; setiap unduhan dicatat.
+    Demo tidak bisa mengunduh apa pun (tombol tidak ditampilkan & file tidak pernah dikirim)."""
+    return st.session_state.get("role") in ("Super Admin", "Admin", "Analyst", "Viewer")
+
+
+# ── Satu titik kontrol untuk SEMUA tombol download ──
+# Demo: tombol tidak dirender. Akun lain: unduhan dicatat di audit log.
+def _install_download_guard():
+    from streamlit.delta_generator import DeltaGenerator
+    if getattr(DeltaGenerator.download_button, "_mtrax_guard", False):
+        return
+    _orig_dg = DeltaGenerator.download_button
+    _orig_st = st.download_button
+
+    def _log(res, args, kwargs):
+        if res:
+            name = kwargs.get("file_name") or (args[2] if len(args) > 2 else "")
+            audit("unduh", file=name)
+        return res
+
+    def _dg_guard(self, *args, **kwargs):
+        if not can_download():
+            return False
+        return _log(_orig_dg(self, *args, **kwargs), args, kwargs)
+
+    def _st_guard(*args, **kwargs):
+        if not can_download():
+            return False
+        return _log(_orig_st(*args, **kwargs), args, kwargs)
+
+    _dg_guard._mtrax_guard = True
+    _st_guard._mtrax_guard = True
+    DeltaGenerator.download_button = _dg_guard
+    st.download_button = _st_guard
+
+
+_install_download_guard()
+
+
+def _demo_audit(event: str):
+    audit(f"demo_{event}", user="demo", role="Demo")
+
+
+DEMO_MAX_FAILED = 5
+DEMO_LOCK_SECONDS = 15 * 60
+
+
+@st.cache_resource
+def _demo_lock_store():
+    return {"failed": 0, "locked_until": 0.0}
+
+
+def demo_is_locked():
+    return time.time() < _demo_lock_store()["locked_until"]
+
+
+def demo_register_failure():
+    store = _demo_lock_store()
+    store["failed"] += 1
+    if store["failed"] >= DEMO_MAX_FAILED:
+        store["locked_until"] = time.time() + DEMO_LOCK_SECONDS
+        store["failed"] = 0
+        _demo_audit("locked")
+
+
+def demo_register_success():
+    _demo_lock_store()["failed"] = 0
+
+
+def prepare_demo_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    """Data demo: 13 kolom, kode acak, nominal dikali faktor acak (tidak bisa dihitung balik)."""
+    if _demo_config() is None or df is None or df.empty:
+        return pd.DataFrame()
+    out = mask_dataframe(df)
+    if "Invoice Amount" in out.columns:
+        rng = np.random.default_rng(secrets.randbits(64))
+        factor = (0.45 + rng.random() * 0.4) * (1 + rng.uniform(-0.12, 0.12, len(out)))
+        amount = pd.to_numeric(out["Invoice Amount"].astype(str).str.replace("$", "", regex=False)
+                               .str.replace(",", "", regex=False).str.strip(), errors="coerce")
+        out["Invoice Amount"] = np.round(amount.to_numpy(dtype=float) * factor, 0)
+    return out
+
+
+def _fx_monthly_table() -> pd.DataFrame:
+    path = ""
+    try:
+        path = str(dict(st.secrets.get("fx", {})).get("file", "") or "")
+    except Exception:
+        path = ""
+    path = path or os.environ.get("MTRAX_FX_FILE", "")
+    if not path or not os.path.exists(path):
+        return pd.DataFrame()
+    try:
+        t = pd.read_excel(path) if path.endswith(("xlsx", "xls")) else pd.read_csv(path)
+        t = t.rename(columns={c: str(c).strip().title() for c in t.columns})
+        t["Bulan"] = t["Bulan"].astype(str).str[:7]
+        t["Currency"] = t["Currency"].astype(str).str.upper().str.strip()
+        t["Rate"] = pd.to_numeric(t["Rate"], errors="coerce")
+        return t.dropna(subset=["Rate"])
+    except Exception:
+        return pd.DataFrame()
+
+
+def convert_currency_to_idr(df: pd.DataFrame):
+    """Invoice Amount -> Rupiah memakai kolom Currency.
+    Prioritas kurs: tabel bulanan [fx] file (per bulan Issue Time) -> [fx.rates] tetap.
+    Nilai asli disimpan di kolom 'Invoice Amount (Asli)'. Return (df, info)."""
+    info = {"converted": 0, "missing": 0, "missing_currencies": []}
+    if "Currency" not in df.columns or "Invoice Amount" not in df.columns:
+        return df, info
+    out = df.copy()
+    cur = out["Currency"].astype(str).str.upper().str.strip().replace({"NAN": "IDR", "": "IDR", "RP": "IDR"})
+    amount = pd.to_numeric(out["Invoice Amount"], errors="coerce")
+    rate = pd.Series(np.where(cur == "IDR", 1.0, np.nan), index=out.index)
+
+    monthly = _fx_monthly_table()
+    if not monthly.empty and "Issue Time" in out.columns:
+        month = pd.to_datetime(out["Issue Time"], errors="coerce", dayfirst=True).dt.strftime("%Y-%m")
+        key = pd.MultiIndex.from_arrays([month, cur])
+        lut = monthly.set_index(["Bulan", "Currency"])["Rate"]
+        lut = lut[~lut.index.duplicated()]
+        rate = rate.fillna(pd.Series(lut.reindex(key).to_numpy(), index=out.index))
+    try:
+        fixed = {str(k).upper(): float(v) for k, v in dict(dict(st.secrets.get("fx", {})).get("rates", {})).items()}
+    except Exception:
+        fixed = {}
+    if fixed:
+        rate = rate.fillna(cur.map(fixed))
+
+    out["Invoice Amount (Asli)"] = amount
+    out["Invoice Amount"] = amount * rate
+    non_idr = cur != "IDR"
+    info["converted"] = int((non_idr & rate.notna()).sum())
+    miss = non_idr & rate.isna() & amount.notna()
+    info["missing"] = int(miss.sum())
+    info["missing_currencies"] = sorted(cur[miss].unique().tolist())
+    return out, info
+
+
+# ── MODE TANPA LOGIN (sementara) ──
+# Aktif bila [access] login_required = false. Semua pengunjung masuk sebagai akun "tamu"
+# dengan role [access] guest_role (default Viewer). Semua unduhan tetap tercatat di audit log
+# beserta alamat IP. Kembalikan ke true untuk mengaktifkan login + 2FA lagi.
+GUEST_USERNAME = "tamu"
+_VALID_ROLES = ("Super Admin", "Admin", "Analyst", "Viewer", "Demo")
+
+
+def login_required() -> bool:
+    try:
+        return bool(dict(st.secrets.get("access", {})).get("login_required", True))
+    except Exception:
+        return True
+
+
+def guest_role() -> str:
+    try:
+        r = str(dict(st.secrets.get("access", {})).get("guest_role", "Viewer"))
+    except Exception:
+        r = "Viewer"
+    return r if r in _VALID_ROLES else "Viewer"
+
+
+def guest_login():
+    """Masuk otomatis tanpa password (hanya bila login_required = false)."""
+    st.session_state.authenticated = True
+    st.session_state.logged_in = True
+    st.session_state.username = GUEST_USERNAME
+    st.session_state.role = guest_role()
+    st.session_state.login_time = time.time()
+    st.session_state.pending_2fa = False
+    if not st.session_state.get("_guest_logged"):
+        st.session_state._guest_logged = True
+        audit("masuk_tanpa_login")
 
 # ===============================
 # SESSION STATE INIT
@@ -1883,34 +1412,54 @@ if "username" not in st.session_state:
 if "role" not in st.session_state:
     st.session_state.role = ""
 
-# ======================================
-# USER LOGIN
-# ======================================
 def hash_password(password: str) -> str:
-    """Hash password menggunakan SHA256"""
-    return hashlib.sha256(password.encode()).hexdigest()
+    """Hash password (Argon2id bila tersedia, fallback SHA-256)."""
+    try:
+        from argon2 import PasswordHasher
+        return PasswordHasher().hash(password)
+    except ImportError:
+        return hashlib.sha256(password.encode()).hexdigest()
 
-USERS = {
-    "admin": {
-        "password": st.secrets["auth"]["admin_password"],
-        "role": "Admin"
-    },
-    "ssc": {
-        "password": st.secrets["auth"]["ssc_password"],
-        "role": "Analyst"
-    },
-    "dtm": {
-        "password": st.secrets["auth"]["dtm_password"],
-        "role": "Viewer"
-    },
-    # ── DITAMBAHKAN: akun demo — password hardcode "demo123", tanpa 2FA,
-    # dan seluruh data yang dilihatnya otomatis disamarkan (lihat
-    # mask_dataframe_for_demo & pemanggilannya di main_app). ──
-    "demo": {
-        "password": hash_password("demo123"),
-        "role": "Demo"
-    },
+
+# Lima akun tetap. Role ditentukan oleh nama akun, bukan oleh isi secrets.
+USER_ROLES = {
+    "superadmin": "Super Admin",   # semua akses + audit log
+    "admin": "Admin",              # semua akses kecuali audit log
+    "ssc": "Analyst",              # lihat & unduh laporan
+    "dtm": "Viewer",               # lihat & unduh laporan
+    "demo": "Demo",                # lihat saja (nominal disamarkan), tanpa unduhan
 }
+
+
+def _load_users() -> dict:
+    """
+    Password tiap akun diambil dari secrets.toml:
+        [users.superadmin]
+        password_hash = "$argon2id$..."
+    Untuk sementara, akun lama juga dibaca dari [auth] (admin_password / ssc_password / dtm_password).
+    Akun demo hanya aktif bila password_hash-nya diisi dan [demo] enabled tidak false / belum kedaluwarsa.
+    """
+    try:
+        cfg = {str(k): dict(v) for k, v in dict(st.secrets.get("users", {})).items()}
+    except Exception:
+        cfg = {}
+    try:
+        legacy = dict(st.secrets.get("auth", {}))
+    except Exception:
+        legacy = {}
+    users = {}
+    for name, role in USER_ROLES.items():
+        pw = cfg.get(name, {}).get("password_hash") or legacy.get(f"{name}_password")
+        if not pw:
+            continue
+        if role == "Demo" and _demo_config() is None:
+            continue
+        users[name] = {"password": str(pw), "role": role}
+    return users
+
+
+USERS = _load_users()
+
 
 # ======================================
 # BMKG FUNCTIONS
@@ -2064,7 +1613,7 @@ def twofa_setup_page(username: str):
 
     totp_secrets = _load_totp_secrets()
     secret       = totp_secrets[username]
-    uri          = _provisioning_uri(secret, "admin")   # akun selalu MTRAX:admin
+    uri          = _provisioning_uri(secret, username)
     qr_b64       = _make_qr_b64(uri)
     fmt_secret   = " ".join([secret[i:i+4] for i in range(0, len(secret), 4)])
 
@@ -2261,7 +1810,7 @@ details[open] .save-summary::before{{transform:rotate(90deg);}}
         </div>
         <div class="step">
           <div class="sn">3</div>
-          <div class="st">Nama akun: <strong>admin@MTRAX</strong>, tipe: <em>Time-based</em>.</div>
+          <div class="st">Nama akun: <strong>MTRAX:{username}</strong>, tipe: <em>Time-based</em>.</div>
         </div>
         <div class="step">
           <div class="sn">4</div>
@@ -2343,29 +1892,50 @@ function copyKey(el) {{
         background: #ffffff !important;
     }
     div[data-testid="stTextInput"] input::placeholder { color: #d0b8d0 !important; letter-spacing: 0.30em !important; }
+    div[data-testid="stForm"] { border: none !important; padding: 0 !important; }
+    /* Tombol Verifikasi: merah #FF4B4B */
+    div[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"],
+    button[data-testid="stBaseButton-primaryFormSubmit"] {
+        background-color: #FF4B4B !important;
+        border: 1px solid #FF4B4B !important;
+        color: #FFFFFF !important;
+    }
+    div[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"]:hover,
+    button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
+        background-color: #FF3333 !important;
+        border-color: #FF3333 !important;
+    }
+    div[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"] p,
+    button[data-testid="stBaseButton-primaryFormSubmit"] p { color: #FFFFFF !important; }
+    div[data-testid="InputInstructions"] { display: none !important; }
     </style>
     """, unsafe_allow_html=True)
 
-    otp_input = st.text_input(
-        "Kode OTP dari Google Authenticator",
-        placeholder="● ● ● ● ● ●",
-        max_chars=6,
-        key="setup_otp_field"
-    )
+    # Dibungkus st.form: tekan Enter setelah mengetik OTP langsung memverifikasi & masuk.
+    with st.form("setup_otp_form", clear_on_submit=False, border=False):
+        otp_input = st.text_input(
+            "Kode OTP dari Google Authenticator",
+            placeholder="● ● ● ● ● ●",
+            max_chars=6,
+            key="setup_otp_field"
+        )
+        # Enter = tombol submit PERTAMA (Verifikasi), jadi Kembali diletakkan setelahnya.
+        col_v, col_c = st.columns([3, 2])
+        with col_v:
+            _verify = st.form_submit_button("✅  Verifikasi & Masuk", use_container_width=True, type="primary")
+        with col_c:
+            _back = st.form_submit_button("← Kembali", use_container_width=True)
 
-    col_v, col_c = st.columns([3, 2])
-    with col_v:
-        if st.button("✅  Verifikasi & Masuk", use_container_width=True, type="primary"):
-            if _totp_valid(secret, otp_input):
-                st.session_state.totp_enrolled[username] = True
-                _finish_login(username)
-            else:
-                st.error("❌ Kode salah atau sudah kedaluwarsa. Coba lagi.")
-    with col_c:
-        if st.button("← Kembali", use_container_width=True):
-            st.session_state.pending_2fa  = False
-            st.session_state.pending_user = ""
-            st.rerun()
+    if _back:
+        st.session_state.pending_2fa  = False
+        st.session_state.pending_user = ""
+        st.rerun()
+    elif _verify:
+        if _totp_valid(secret, otp_input):
+            st.session_state.totp_enrolled[username] = True
+            _finish_login(username)
+        else:
+            st.error("❌ Kode salah atau sudah kedaluwarsa. Coba lagi.")
 
 
 def twofa_verify_page(username: str):
@@ -2621,29 +2191,50 @@ body {{
         border-color: #1BA0E2 !important;
         box-shadow: 0 0 0 3px rgba(156,87,137,0.12) !important;
     }
+    div[data-testid="stForm"] { border: none !important; padding: 0 !important; }
+    /* Tombol Verifikasi: merah #FF4B4B */
+    div[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"],
+    button[data-testid="stBaseButton-primaryFormSubmit"] {
+        background-color: #FF4B4B !important;
+        border: 1px solid #FF4B4B !important;
+        color: #FFFFFF !important;
+    }
+    div[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"]:hover,
+    button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
+        background-color: #FF3333 !important;
+        border-color: #FF3333 !important;
+    }
+    div[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"] p,
+    button[data-testid="stBaseButton-primaryFormSubmit"] p { color: #FFFFFF !important; }
+    div[data-testid="InputInstructions"] { display: none !important; }
     </style>
     """, unsafe_allow_html=True)
 
-    otp_input = st.text_input(
-        "Kode OTP (6 digit)",
-        placeholder="● ● ● ● ● ●",
-        max_chars=6,
-        key="verify_otp_field"
-    )
+    # Dibungkus st.form: tekan Enter setelah mengetik OTP langsung memverifikasi & masuk.
+    with st.form("verify_otp_form", clear_on_submit=False, border=False):
+        otp_input = st.text_input(
+            "Kode OTP (6 digit)",
+            placeholder="● ● ● ● ● ●",
+            max_chars=6,
+            key="verify_otp_field"
+        )
+        # Enter = tombol submit PERTAMA (Verifikasi), jadi Kembali diletakkan setelahnya.
+        col_v, col_c = st.columns([3, 2])
+        with col_v:
+            _verify = st.form_submit_button("✅  Verifikasi & Masuk", use_container_width=True, type="primary")
+        with col_c:
+            _back = st.form_submit_button("← Kembali", use_container_width=True)
 
-    col_v, col_c = st.columns([3, 2])
-    with col_v:
-        if st.button("✅  Verifikasi & Masuk", use_container_width=True, type="primary"):
-            if _totp_valid(secret, otp_input):
-                _finish_login(username)
-            else:
-                st.error("❌ Kode salah atau sudah kedaluwarsa. Coba lagi.")
-                time.sleep(1)
-    with col_c:
-        if st.button("← Kembali", use_container_width=True):
-            st.session_state.pending_2fa  = False
-            st.session_state.pending_user = ""
-            st.rerun()
+    if _back:
+        st.session_state.pending_2fa  = False
+        st.session_state.pending_user = ""
+        st.rerun()
+    elif _verify:
+        if _totp_valid(secret, otp_input):
+            _finish_login(username)
+        else:
+            st.error("❌ Kode salah atau sudah kedaluwarsa. Coba lagi.")
+            time.sleep(1)
 
 
 def _finish_login(username: str):
@@ -2657,6 +2248,7 @@ def _finish_login(username: str):
     st.session_state.login_time     = time.time()
     st.session_state.pending_2fa    = False
     st.session_state.pending_user   = ""
+    audit("login", role=USERS[username]["role"])
     # Simpan token sesi di cookie browser supaya login tetap bertahan saat halaman di-reload (F5)
     _token = _create_session_token(username, USERS[username]["role"])
     st.session_state._session_token = _token
@@ -3019,7 +2611,7 @@ def login_page():
             <div class="lp-sub">Corporate Travel Analytics Platform<br>for Business Travel</div>
         </div>
     </div>
-    <div class="lp-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2025 MTRAX.</a> All rights reserved.</div>
+    <div class="lp-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2026 MTRAX.</a> All rights reserved.</div>
     """, unsafe_allow_html=True)
 
     # ── FLOATING CARD: dummy col (hidden) + form col
@@ -3058,12 +2650,24 @@ def login_page():
             if not validate_username(username):
                 st.error("Invalid username format.")
                 return
+            _wait = _user_locked(username)
+            if _wait > 0:
+                st.error(f"Akun dikunci sementara. Coba lagi dalam {int(_wait)} detik.")
+                return
+            _is_demo_login = username in USERS and USERS[username]["role"] == "Demo"
+            if _is_demo_login and demo_is_locked():
+                st.error("Akun demo sedang dikunci sementara. Coba lagi nanti.")
+                return
             if username in USERS:
                 if secure_compare(password, USERS[username]["password"]):
+                    _user_ok(username)
                     st.session_state.login_attempts = 0
                     st.session_state.lockout_until  = 0
-                    # ── DITAMBAHKAN: akun "demo" langsung masuk tanpa OTP 2FA ──
-                    if username == "demo":
+                    if _is_demo_login:
+                        demo_register_success()
+                    # Akun demo: 2FA hanya jika punya secret sendiri ([totp][demo]).
+                    if _is_demo_login and not _own_totp_secret(username):
+                        _demo_audit("login")
                         _finish_login(username)
                     else:
                         st.session_state.pending_2fa    = True
@@ -3072,6 +2676,11 @@ def login_page():
                         st.rerun()
                 else:
                     st.session_state.login_attempts += 1
+                    _user_fail(username)
+                    audit("login_gagal", user=username)
+                    if _is_demo_login:
+                        demo_register_failure()
+                        _demo_audit("failed login")
             else:
                 st.session_state.login_attempts += 1
 
@@ -3160,6 +2769,20 @@ def main_app():
         #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; }
         div[data-baseweb="calendar"],
         div[data-baseweb="calendar"] * { visibility: visible !important; }
+        /* Tombol untuk membuka kembali sidebar ada di dalam header, jadi tetap ditampilkan */
+        [data-testid="stExpandSidebarButton"],
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"],
+        [data-testid="stExpandSidebarButton"] *,
+        [data-testid="stSidebarCollapsedControl"] *,
+        [data-testid="collapsedControl"] * { visibility: visible !important; }
+
+        /* Cegah tampilan tergeser ke samping: wadah utama (sidebar + konten) tidak boleh
+           ikut tergulir horizontal saat isi konten sedikit lebih lebar dari layar
+           (gejala: sidebar terpotong di kiri & konten terpotong di kanan). */
+        .stApp, [data-testid="stAppViewContainer"] { overflow: clip !important; }
+        section[data-testid="stMain"], section.main { min-width: 0 !important; }
+        [data-testid="stSidebarContent"], [data-testid="stSidebarUserContent"] { overflow-x: hidden !important; }
 
         /* ── NEWS TICKER ─────────────────────────────── */
         .news-ticker {
@@ -3483,13 +3106,10 @@ def main_app():
     st.markdown(f"""
     <style>
 
-    /* Sidebar width */
-    section[data-testid="stSidebar"] {{
-        width: {sidebar_width}px !important;
-        min-width: {sidebar_width}px !important;
-        max-width: {sidebar_width}px !important;
-        transition: all 0.25s ease-in-out;
-    }}
+    /* Sidebar width: lebar dikunci HANYA di mode compact. Di mode expanded lebar
+       diatur Streamlit sendiri — memaksa width/min-width !important membuat
+       sidebar tidak bisa collapse/expand dengan benar (terpotong & tombol buka hilang). */
+    {f"section[data-testid='stSidebar'] {{ width:{sidebar_width}px !important; min-width:{sidebar_width}px !important; max-width:{sidebar_width}px !important; }}" if st.session_state.sidebar_mode == "compact" else ""}
 
     /* Hide labels in compact mode */
     {"section[data-testid='stSidebar'] label { display:none !important; }" if st.session_state.sidebar_mode == "compact" else ""}
@@ -3527,6 +3147,11 @@ def main_app():
             </div>
         """, unsafe_allow_html=True)
 
+        if not login_required():
+            st.warning(f"🔓 Mode tanpa login (sementara). Semua pengunjung masuk sebagai "
+                       f"'{GUEST_USERNAME}' dengan role {guest_role()}. Aktifkan lagi login di "
+                       f"secrets.toml: [access] login_required = true.")
+
         # ── 2FA Status Badge di Sidebar ──────────────────────────────
         _uname_side   = st.session_state.get("username", "")
         _enrolled     = st.session_state.totp_enrolled.get(_uname_side, False)
@@ -3535,10 +3160,7 @@ def main_app():
         # st.secrets["totp"][_uname_side] — hampir selalu False untuk user selain
         # 'admin' walau 2FA sebenarnya sudah aktif lewat secret bersama, sehingga
         # badge salah menampilkan "Setup Required" padahal 2FA sudah aktif.
-        try:
-            _from_toml = bool(st.secrets["totp"]["admin"])
-        except Exception:
-            _from_toml = False
+        _from_toml = bool(_own_totp_secret(_uname_side))
         _2fa_active = _enrolled or _from_toml
         _badge_color = "#3dab7a" if _2fa_active else "#e05a2b"
         _badge_text  = "Active ✅" if _2fa_active else "Setup Required"
@@ -3554,73 +3176,105 @@ def main_app():
         
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
-        # Drive options
-        drive_options = dict(st.secrets["drive_folders"])  # ID folder disimpan di Secrets, bukan di kode
+        if is_demo_user():
+            # Akun demo: data riil yang disamarkan, periode terbatas, tanpa upload/refresh.
+            st.info("🧪 Mode demo — nomor transaksi & nominal disamarkan. Download dinonaktifkan.")
+            _dcfg = _demo_config() or {"periods": []}
+            _all_folders = dict(st.secrets["drive_folders"])
+            _demo_periods = [p for p in _all_folders if not _dcfg["periods"] or p in _dcfg["periods"]]
+            if not _demo_periods:
+                st.warning("Tidak ada periode yang diizinkan untuk demo.")
+            else:
+                _demo_period = st.selectbox("Select Data Period", options=_demo_periods)
+                if st.button("Get Data", use_container_width=True, type="primary"):
+                    with st.spinner(f"Loading {_demo_period} data..."):
+                        try:
+                            _raw = load_drive_data(_all_folders[_demo_period],
+                                                   ["Unnamed: 0", "Travel Request Number.1"])
+                            st.session_state.df_all = prepare_demo_dataset(_raw)
+                            del _raw
+                            st.session_state.data_loaded = True
+                            st.session_state.data_period = _demo_period
+                            st.session_state._demo_masked = True
+                            st.session_state._id_masked = False
+                            st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
+                            _demo_audit(f"loaded period={_demo_period}")
+                            st.rerun()
+                        except Exception:
+                            st.error("Gagal memuat data demo.")
+        else:
+            # Drive options
+            drive_options = dict(st.secrets["drive_folders"])  # ID folder disimpan di Secrets, bukan di kode
         
-        selected_period = st.selectbox(
-            "Select Data Period",
-            options=list(drive_options.keys()),
-            help="Choose which year's data to load"
-        )
+            selected_period = st.selectbox(
+                "Select Data Period",
+                options=list(drive_options.keys()),
+                help="Choose which year's data to load"
+            )
         
-        _btn_col1, _btn_col2 = st.columns([2, 1])
-        with _btn_col1:
-            _get_data_clicked = st.button("Get Data", use_container_width=True, type="primary")
-        with _btn_col2:
-            _refresh_clicked = st.button("🔄", use_container_width=True,
-                                          help="Bersihkan cache & ambil ulang data terbaru dari Drive (pakai ini kalau ada file baru yang baru diupload ke folder Drive)")
+            _btn_col1, _btn_col2 = st.columns([2, 1])
+            with _btn_col1:
+                _get_data_clicked = st.button("Get Data", use_container_width=True, type="primary")
+            with _btn_col2:
+                _refresh_clicked = st.button("🔄", use_container_width=True,
+                                              help="Bersihkan cache & ambil ulang data terbaru dari Drive (pakai ini kalau ada file baru yang baru diupload ke folder Drive)")
 
-        if _refresh_clicked:
-            load_drive_data.clear()  # hapus cache lama supaya file baru di folder Drive ikut terbaca
-            st.toast("Cache dibersihkan. Klik 'Get Data' lagi untuk ambil data terbaru.", icon="🔄")
+            if _refresh_clicked:
+                load_drive_data.clear()  # hapus cache lama supaya file baru di folder Drive ikut terbaca
+                st.toast("Cache dibersihkan. Klik 'Get Data' lagi untuk ambil data terbaru.", icon="🔄")
 
-        if _get_data_clicked:
-            with st.spinner(f"Loading {selected_period} data..."):
-                progress_bar = st.progress(0)
-                try:
-                    folder_id = drive_options[selected_period]
-                    drop_cols = ["Unnamed: 0", "Travel Request Number.1"]
-                    
-                    progress_bar.progress(20)
-                    loaded_data = load_drive_data(folder_id, drop_cols)
-                    
-                    progress_bar.progress(100)
-                    st.session_state.df_all = loaded_data
-                    st.session_state.data_loaded = True
-                    st.session_state.data_period = selected_period
-                    
-                    st.success(f"✅ Loaded {len(loaded_data):,} records")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-        uploaded_files = st.file_uploader(
-            "Upload Excel Files",
-            type=["xlsx", "xls"],
-            accept_multiple_files=True,
-            help="Select multiple Excel files"
-        )
-
-        if uploaded_files:
-            if st.button("Process Uploaded Files", use_container_width=True):
-                with st.spinner("Processing..."):
+            if _get_data_clicked:
+                with st.spinner(f"Loading {selected_period} data..."):
+                    progress_bar = st.progress(0)
                     try:
-                        dfs = []
+                        folder_id = drive_options[selected_period]
                         drop_cols = ["Unnamed: 0", "Travel Request Number.1"]
-                        
-                        for file in uploaded_files:
-                            df = pd.read_excel(file)
-                            df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
-                            dfs.append(df)
-                        
-                        st.session_state.df_all = pd.concat(dfs, ignore_index=True)
+                    
+                        progress_bar.progress(20)
+                        loaded_data = load_drive_data(folder_id, drop_cols)
+                    
+                        progress_bar.progress(100)
+                        st.session_state.df_all = loaded_data
+                        st.session_state._id_masked = False
+                        st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
                         st.session_state.data_loaded = True
-                        st.session_state.data_period = "Manual Upload"
-                        
-                        st.success(f"✅ Processed {len(uploaded_files)} files")
+                        st.session_state.data_period = selected_period
+                    
+                        st.success(f"✅ Loaded {len(loaded_data):,} records")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
+
+            uploaded_files = st.file_uploader(
+                "Upload Excel Files (Admin)",
+                type=["xlsx", "xls"],
+                accept_multiple_files=True,
+                help="Hanya 13 kolom transaksi hotel yang dipakai; kolom lain otomatis dibuang."
+            ) if is_admin() else None
+
+            if uploaded_files:
+                if st.button("Process Uploaded Files", use_container_width=True):
+                    with st.spinner("Processing..."):
+                        try:
+                            dfs = []
+                            drop_cols = ["Unnamed: 0", "Travel Request Number.1"]
+                        
+                            for file in uploaded_files:
+                                df = pd.read_excel(file)
+                                df = select_columns(df)[0]
+                                dfs.append(trim_string_columns(df))
+
+                            st.session_state.df_all = mask_dataframe(pd.concat(dfs, ignore_index=True))
+                            audit("upload_manual", files=len(uploaded_files))
+                            st.session_state._id_masked = False
+                            st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
+                            st.session_state.data_loaded = True
+                            st.session_state.data_period = "Manual Upload"
+                        
+                            st.success(f"✅ Processed {len(uploaded_files)} files")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
 
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
@@ -3628,8 +3282,14 @@ def main_app():
         if st.session_state.data_loaded and not st.session_state.df_all.empty:
             period_info = f" ({st.session_state.data_period})" if st.session_state.data_period else ""
             st.success(f"✅ {len(st.session_state.df_all):,} records{period_info}")
+            _fx = st.session_state.get("_fx_info") or {}
+            if _fx.get("missing"):
+                st.warning(f"{_fx['missing']:,} booking dengan mata uang tanpa kurs "
+                           f"({', '.join(_fx.get('missing_currencies', []))}). Nilainya dikosongkan.")
         else:
             st.info("ℹ️ No data loaded")
+        st.caption("Sumber: 13 kolom transaksi hotel tanpa identitas pekerja. No. TR & Booking ID "
+                   "berupa kode acak yang berganti setiap data ditarik.")
 
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
@@ -3668,6 +3328,17 @@ def main_app():
     # ======================================
     df_all = st.session_state.df_all
 
+    # Penjaga: sesi demo hanya boleh memegang data yang sudah disamarkan.
+    if is_demo_user() and not st.session_state.get("_demo_masked"):
+        st.session_state.df_all = pd.DataFrame()
+        st.session_state.data_loaded = False
+        df_all = st.session_state.df_all
+    if is_demo_user():
+        # Sembunyikan tombol unduh/fullscreen bawaan tabel (lapisan tambahan, bukan kontrol utama)
+        st.markdown("<style>[data-testid='stElementToolbar'],[data-testid='stDownloadButton'],"
+                    ".stDownloadButton,.modebar,.modebar-container{display:none !important;}</style>",
+                    unsafe_allow_html=True)
+
     if not df_all.empty:
         # Helper functions
         def prepare_monthly_trend(df, date_col, value_col, agg="count"):
@@ -3694,121 +3365,102 @@ def main_app():
     # DATA CLEANING
     # ======================================
     if not df_all.empty:
-        # Bersihkan Invoice Amount
-        if "Invoice Amount" in df_all.columns:
-            df_all["Invoice Amount"] = pd.to_numeric(
-                df_all["Invoice Amount"].astype(str).str.replace("$", "").str.replace(",", ""),
-                errors="coerce"
-            )
+        # ======================================
+        # PEMROSESAN DATA SEKALI PER PEMUATAN
+        # Pembersihan, penyeragaman nama hotel, normalisasi kota, mapping
+        # perusahaan & peta penggabungan properti hanya dijalankan saat data
+        # baru dimuat (atau user berganti). Hasilnya disimpan di session,
+        # jadi klik filter/dropdown tidak lagi mengulang proses berat ini.
+        # ======================================
+        _prep_key = (st.session_state.get("_data_ver", 0), st.session_state.get("username", ""))
+        _prep = st.session_state.get("_prep")
+        if _prep is not None and _prep.get("key") == _prep_key:
+            df_all = st.session_state.df_all
+            hotel_mapping = _prep["hotel_mapping"]
+            property_merge_map = _prep["property_merge_map"]
+        else:
+            # Bersihkan Invoice Amount lalu konversi ke Rupiah (kolom Currency)
+            if "Invoice Amount" in df_all.columns:
+                df_all["Invoice Amount"] = pd.to_numeric(
+                    df_all["Invoice Amount"].astype(str).str.replace("$", "").str.replace(",", ""),
+                    errors="coerce"
+                )
+                df_all, st.session_state["_fx_info"] = convert_currency_to_idr(df_all)
         
-        # Bersihkan Number of Rooms Night
-        if "Number of Rooms Night" in df_all.columns:
-            df_all["Number of Rooms Night"] = pd.to_numeric(df_all["Number of Rooms Night"], errors="coerce")
+            # Bersihkan Number of Rooms Night
+            if "Number of Rooms Night" in df_all.columns:
+                df_all["Number of Rooms Night"] = pd.to_numeric(df_all["Number of Rooms Night"], errors="coerce")
         
-        # Convert dates
-        if "Check in Date" in df_all.columns:
-            df_all["Check in Date"] = pd.to_datetime(df_all["Check in Date"], errors="coerce", dayfirst=True)
+            # Convert dates
+            if "Check in Date" in df_all.columns:
+                df_all["Check in Date"] = pd.to_datetime(df_all["Check in Date"], errors="coerce", dayfirst=True)
         
-        if "Check out Date" in df_all.columns:
-            df_all["Check out Date"] = pd.to_datetime(df_all["Check out Date"], errors="coerce", dayfirst=True)
+            if "Check out Date" in df_all.columns:
+                df_all["Check out Date"] = pd.to_datetime(df_all["Check out Date"], errors="coerce", dayfirst=True)
         
-        if "Issue Time" in df_all.columns:
-            df_all["Issue Time"] = pd.to_datetime(df_all["Issue Time"], errors="coerce", dayfirst=True)
+            if "Issue Time" in df_all.columns:
+                df_all["Issue Time"] = pd.to_datetime(df_all["Issue Time"], errors="coerce", dayfirst=True)
 
-            # Mapping Company Code -> Nama Perusahaan
-        company_map = {
-            "1010": "PT Pertamina (Persero)",
-            "2022": "PT Pertamina Geothermal Energy",
-            "2033": "PT Pertamina Trans Kontinental",
-            "2034": "PT Pelita Air Service",
-            "2042": "PT Pertamina Retail",
-            "2059": "PT Pertamina Port And Logistics",
-            "2061": "PT Pertamina Energy Terminal",
-            "2119": "PT Nusantara Regas",
-            "2138": "PT Pertamina Lubricants",
-            "2147": "PT Pertamina International Shipping",
-            "2151": "PT Pertamina International EP",
-            "2183": "PT Pertamina Power Indonesia",
-            "2186": "PT Kilang Pertamina International",
-            "2205": "PT Kilang Pertamina Balikpapan",
-            "2222": "PT Pertamina Patra Niaga",
-            "5000": "PT Pertamina Hulu Energi",
-            "2060": "PT Pertamina Marine Solutions",
-            "2062": "PT Pertamina Marine Engineering",
-            "2110": "PT Pertamina Drilling Services Indonesia ",
-            "2052": "PT Pertamina Maintenance and Construction",
-            "2040": "PT Pertamina Pedeve Indonesia",
-            "2050": "PT Patra Logistik",
-        }
 
-        if "Company Code" in df_all.columns:
-            df_all["Company Code"] = df_all["Company Code"].astype(str).str.strip()
-            df_all["Nama Perusahaan"] = df_all["Company Code"].map(company_map).fillna("Lainnya / Unknown")
+            # ======================================
+            # PENYERAGAMAN NAMA HOTEL & SUPPLIER
+            # Aturan merek (Meliá, Mövenpick, éL Hotel, Marriott) + kamus standar
+            # data/unique_hotels.xlsx. Idempoten, aman dijalankan setiap rerun.
+            # ======================================
+            try:
+                df_all = standardize_hotel_columns(df_all)
+                st.session_state.df_all = df_all
+            except Exception as _e_std:
+                st.warning(f"Penyeragaman nama hotel dilewati: {_e_std}")
 
-        # ======================================
-        # AUTO-NORMALISASI
-        # ======================================
-        hotel_mapping = pd.DataFrame()  # default agar tidak NameError jika kolom "Hotel Name" tidak ada
-        if "Hotel Name" in df_all.columns:
-            df_all, hotel_mapping = auto_canonical_hotel_mapping(
-                df_all,
-                hotel_col="Hotel Name",
-                threshold=0.88
-            )
+            # ======================================
+            # AUTO-NORMALISASI
+            # ======================================
+            hotel_mapping = pd.DataFrame()  # default agar tidak NameError jika kolom "Hotel Name" tidak ada
+            if "Hotel Name" in df_all.columns:
+                df_all, hotel_mapping = auto_canonical_hotel_mapping(
+                    df_all,
+                    hotel_col="Hotel Name",
+                    threshold=0.88
+                )
 
-        # ======================================
-        # GLOBAL CITY STANDARDIZATION
-        # ======================================
+            # ======================================
+            # GLOBAL CITY STANDARDIZATION
+            # ======================================
 
-        if "City" in df_all.columns:
-            df_all["City"] = (
-                df_all["City"]
-                .astype(str)
-                .str.strip()
-                .str.replace(r"\s+", " ", regex=True)
-                .str.lower()
-                .str.title()
-            )
-            df_all.loc[df_all["City"] == "Nan", "City"] = np.nan
+            if "City" in df_all.columns:
+                df_all["City"] = (
+                    df_all["City"]
+                    .astype(str)
+                    .str.strip()
+                    .str.replace(r"\s+", " ", regex=True)
+                    .str.lower()
+                    .str.title()
+                )
+                df_all.loc[df_all["City"] == "Nan", "City"] = np.nan
 
-        if "City Destination" in df_all.columns:
-            df_all["City Destination"] = (
-                df_all["City Destination"]
-                .astype(str)
-                .str.strip()
-                .str.replace(r"\s+", " ", regex=True)
-                .str.lower()
-                .str.title()
-            )
-            df_all.loc[df_all["City Destination"] == "Nan", "City Destination"] = np.nan
+            if "City Destination" in df_all.columns:
+                df_all["City Destination"] = (
+                    df_all["City Destination"]
+                    .astype(str)
+                    .str.strip()
+                    .str.replace(r"\s+", " ", regex=True)
+                    .str.lower()
+                    .str.title()
+                )
+                df_all.loc[df_all["City Destination"] == "Nan", "City Destination"] = np.nan
 
-        # ======================================
-        # AI HOTEL MERGE (Claude) — terapkan nama gabungan ke seluruh dashboard
-        # Ringkasan dibuat dari nama ASLI sebelum digabung & sebelum filter,
-        # dipakai oleh tab "AI Hotel Merge". Nama asli disimpan di kolom
-        # "Hotel Name (Original)" dan tetap tampil di "Nama Hotel Tergabung".
-        # ======================================
-        _ai_hotel_summary = ai_build_hotel_summary(df_all, hotel_col="Hotel Name")
-        df_all = ai_apply_hotel_merge(df_all, hotel_col="Hotel Name")
+            # ======================================
+            # PETA PENGGABUNGAN PROPERTI HOTEL
+            # Dihitung dari data penuh (setelah standardisasi City & masking demo,
+            # sebelum filter global) agar pengelompokan stabil. Dipakai di tab
+            # Price Intelligence & Room Intelligence.
+            # ======================================
+            property_merge_map = get_property_merge_map(df_all, hotel_col="Hotel Name", city_col="City")
 
-        # ======================================
-        # ── DITAMBAHKAN: MASKING DATA UNTUK AKUN DEMO ──
-        # Berlaku untuk seluruh data yang sedang dimuat, periode berapapun
-        # (2023, 2024, 2025, 2026, dst.) — karena diterapkan di sini, setelah
-        # semua kolom turunan (Nama Perusahaan, Hotel Canonical, City, dll)
-        # selesai dibuat, dan sebelum data dipakai di filter/tab manapun.
-        # Untuk user selain "demo", baris ini tidak berpengaruh sama sekali.
-        # ======================================
-        if st.session_state.get("username") == "demo":
-            df_all = mask_dataframe_for_demo(df_all)
-
-        # ======================================
-        # PETA PENGGABUNGAN PROPERTI HOTEL
-        # Dihitung dari data penuh (setelah standardisasi City & masking demo,
-        # sebelum filter global) agar pengelompokan stabil. Dipakai di tab
-        # Price Intelligence & Room Intelligence.
-        # ======================================
-        property_merge_map = get_property_merge_map(df_all, hotel_col="Hotel Name", city_col="City")
+            st.session_state.df_all = df_all
+            st.session_state._prep = {"key": _prep_key, "hotel_mapping": hotel_mapping,
+                                      "property_merge_map": property_merge_map}
 
         # ======================================
         # GLOBAL FILTERS
@@ -3819,20 +3471,10 @@ def main_app():
 
         gcol1, gcol2, gcol3 = st.columns([2, 1.5, 1.5])
 
+        selected_companies = []  # kolom perusahaan tidak ada di sumber data
         with gcol1:
-            # Filter Nama Perusahaan
-            if "Nama Perusahaan" in df_all.columns:
-                company_options = sorted(df_all["Nama Perusahaan"].dropna().unique().tolist())
-                selected_companies = st.multiselect(
-                    "🏢 Nama Perusahaan",
-                    options=company_options,
-                    default=[],
-                    placeholder="Semua perusahaan",
-                    key="gf_company"
-                )
-            else:
-                selected_companies = []
-                st.info("Kolom 'Nama Perusahaan' tidak ditemukan.")
+            st.caption("Rentang tanggal di samping berlaku di seluruh tab. Nilai uang dalam Rupiah "
+                       "(invoice non-Rupiah sudah dikonversi).")
 
         # Tentukan kolom tanggal untuk filter (From / To)
         _date_col_for_filter = None
@@ -3948,460 +3590,20 @@ def main_app():
         st.markdown("<div class='divider' style='margin: 4px 0 18px 0;'></div>", unsafe_allow_html=True)
 
         # ======================================
-        # TAB SEMUA
         # ======================================
-
-        # Tabs
-        tab1, tab2, tab3, tab4, tab5, tab6, tab_room, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
-            "Value Creation",
+        # TAB
+        # ======================================
+        tab2, tab6, tab_cost, tab_room, tab7, tab8, tab9, tab10, tab11 = st.tabs([
             "Dashboard",
-            "Explorer",
-            "CRM",
-            "Network",
             "Price Intelligence",
+            "Cost Avoidance",
             "Room Intelligence",
             "Sankey Flow",
             "Top Hotel/City",
             "Dendrogram",
-            "Export",
             "Patra Jasa",
-            "🤖 AI Hotel Merge"
+            "Laporan",
         ])
-
-                # TAB 1: STRATEGIC VALUE CREATION
-        # ======================================
-        with tab1:
-
-            import streamlit.components.v1 as components
-
-            components.html("""
-<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 14px;
-    line-height: 1.6;
-    background: #fafafa;
-    color: #1a1a1a;
-    padding: 8px 4px 40px;
-    -webkit-font-smoothing: antialiased;
-  }
-
-  :root {
-    --purple : #1BA0E2;
-    --purp-l : rgba(156,87,137,0.08);
-    --purp-b : rgba(156,87,137,0.22);
-    --black  : #1a1a1a;
-    --grey   : #888888;
-    --grey-l : #e0e0e0;
-    --white  : #fafafa;
-    --surf   : #ffffff;
-    --bdr    : #e0e0e0;
-  }
-
-  /* ── Page Header ── */
-  .hdr {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-bottom: 18px; border-bottom: 1px solid var(--bdr);
-    margin-bottom: 28px;
-  }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .mark {
-    width: 34px; height: 34px; background: var(--purple);
-    border-radius: 6px; display: inline-flex;
-    align-items: center; justify-content: center;
-    font-family: 'Geist Mono', monospace;
-    font-size: 11px; font-weight: 600; color: #fff; letter-spacing: .04em;
-    flex-shrink: 0;
-  }
-  .brand-title {
-    font-size: 17px; font-weight: 600; color: var(--black);
-    letter-spacing: -.02em; line-height: 1.2; margin: 0;
-  }
-  .brand-sub { font-size: 12px; color: var(--grey); margin: 2px 0 0; }
-  .hdr-right { display: flex; align-items: center; gap: 8px; }
-  .mod-tag {
-    font-family: 'Geist Mono', monospace; font-size: 10px;
-    color: var(--grey); background: var(--grey-l);
-    padding: 4px 10px; border-radius: 4px; letter-spacing: .08em;
-  }
-  .live-badge {
-    display: inline-flex; align-items: center; gap: 6px;
-    border: 1px solid var(--bdr); border-radius: 100px;
-    padding: 4px 12px; font-size: 11px; color: var(--grey);
-    background: var(--surf);
-  }
-  .live-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--purple); display: inline-block;
-    animation: blink 2.4s ease infinite;
-  }
-  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-  /* ── Eyebrow ── */
-  .eyebrow {
-    display: flex; align-items: center; gap: 10px;
-    font-family: 'Geist Mono', monospace; font-size: 10px; font-weight: 500;
-    color: var(--grey); letter-spacing: .18em;
-    text-transform: uppercase; margin-bottom: 14px;
-  }
-  .eyebrow-ln { flex: 1; height: 1px; background: var(--bdr); }
-
-  /* ── 2×2 Pillar Grid ── */
-  .pgrid {
-    display: grid; grid-template-columns: 1fr 1fr;
-    border: 1px solid var(--bdr); border-radius: 10px;
-    overflow: hidden; background: var(--bdr); gap: 1px;
-    margin-bottom: 1px;
-  }
-  .pcard {
-    background: var(--surf); padding: 26px 24px;
-    position: relative; transition: background .18s ease;
-  }
-  .pcard:hover { background: #fdfdfd; }
-  .pcard::before {
-    content: ''; position: absolute;
-    top: 26px; bottom: 26px; left: 0; width: 2px;
-    background: var(--purple); opacity: 0; transition: opacity .2s ease;
-  }
-  .pcard:hover::before { opacity: 1; }
-  .card-top {
-    display: flex; align-items: flex-start;
-    justify-content: space-between; margin-bottom: 14px;
-  }
-  .card-icon { font-size: 18px; line-height: 1; }
-  .badge {
-    font-family: 'Geist Mono', monospace;
-    font-size: 9px; font-weight: 500; letter-spacing: .12em;
-    color: var(--purple); background: var(--purp-l);
-    border: 1px solid var(--purp-b);
-    padding: 3px 8px; border-radius: 3px;
-  }
-  .pcard h3 {
-    font-size: 14px; font-weight: 600; color: var(--black);
-    letter-spacing: -.015em; margin-bottom: 4px; line-height: 1.3;
-  }
-  .obj { font-size: 12px; color: var(--grey); margin-bottom: 18px; line-height: 1.55; }
-  .fl {
-    font-family: 'Geist Mono', monospace; font-size: 9px; font-weight: 500;
-    letter-spacing: .15em; text-transform: uppercase;
-    color: var(--purple); margin-bottom: 8px;
-  }
-  .dlist { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
-  .drow  { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--black); }
-  .ddot  {
-    width: 4px; height: 4px; border-radius: 50%;
-    background: var(--purple); flex-shrink: 0; display: inline-block;
-  }
-  .sep  { height: 1px; background: var(--grey-l); margin: 12px 0; }
-  .ilist { display: flex; flex-direction: column; gap: 5px; }
-  .irow {
-    display: flex; align-items: flex-start; gap: 8px;
-    font-size: 11.5px; color: var(--grey); line-height: 1.5;
-  }
-  .iarr { font-size: 8px; margin-top: 5px; flex-shrink: 0; color: var(--purple); opacity: .7; }
-
-  /* ── Card 5 ── */
-  .c5wrap {
-    border: 1px solid var(--bdr); border-top: none;
-    border-radius: 0 0 10px 10px; overflow: hidden; margin-bottom: 32px;
-  }
-  .c5hd {
-    background: #f5f5f5; border-bottom: 1px solid var(--bdr);
-    padding: 16px 24px; display: flex;
-    align-items: center; justify-content: space-between;
-  }
-  .c5hd-l { display: flex; align-items: center; gap: 10px; }
-  .c5hd h3 { font-size: 13px; font-weight: 600; color: var(--black); margin: 0; }
-  .c5hd .c5sub { font-size: 11px; color: var(--grey); }
-  .c5body {
-    display: grid; grid-template-columns: 1fr 1fr 1fr;
-    background: var(--bdr); gap: 1px;
-  }
-  .c5col { background: var(--surf); padding: 20px 24px; }
-
-  /* ── Executive Summary ── */
-  .exec { border: 1px solid var(--bdr); border-radius: 10px; overflow: hidden; }
-  .exec-hd {
-    background: var(--black); padding: 22px 26px;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .exec-hd h2 {
-    font-size: 16px; font-weight: 600; color: var(--white);
-    letter-spacing: -.02em; margin: 0;
-  }
-  .exec-hd .exec-sub { font-size: 11.5px; color: #888; margin: 3px 0 0; }
-  .exec-tag {
-    font-family: 'Geist Mono', monospace; font-size: 9.5px;
-    letter-spacing: .12em; color: var(--purple);
-    background: rgba(156,87,137,.15); border: 1px solid rgba(156,87,137,.3);
-    padding: 4px 11px; border-radius: 100px; text-transform: uppercase;
-    white-space: nowrap;
-  }
-  .pillars {
-    display: grid; grid-template-columns: repeat(4,1fr);
-    background: var(--bdr); gap: 1px;
-    border-bottom: 1px solid var(--bdr);
-  }
-  .pillar {
-    background: var(--surf); padding: 18px 18px 16px; position: relative;
-  }
-  .pillar::after {
-    content: ''; position: absolute;
-    bottom: 0; left: 18px; right: 18px; height: 1px;
-    background: var(--purple); opacity: 0; transition: opacity .2s;
-  }
-  .pillar:hover::after { opacity: .4; }
-  .p-icon { font-size: 16px; margin-bottom: 8px; display: block; }
-  .pillar p { font-size: 12px; color: var(--black); font-weight: 500; line-height: 1.45; margin: 0; }
-  .flow-bar {
-    background: var(--surf); padding: 18px 24px;
-    display: flex; align-items: center; justify-content: center;
-    border-top: 1px solid var(--bdr);
-  }
-  .fn { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .fn-lbl { font-size: 12px; font-weight: 600; color: var(--black); letter-spacing: -.01em; }
-  .fn-lbl.hi { color: var(--purple); }
-  .fn-sub {
-    font-family: 'Geist Mono', monospace; font-size: 9px;
-    color: var(--grey); letter-spacing: .06em;
-  }
-  .fsep { display: flex; align-items: center; margin: 0 18px; }
-  .fsep-ln { width: 28px; height: 1px; background: var(--grey-l); }
-  .fsep-arr { font-size: 9px; color: var(--purple); opacity: .6; }
-</style>
-</head>
-<body>
-
-  <!-- ── Page Header ── -->
-  <div class="hdr">
-    <div class="brand">
-      <div class="mark">MTX</div>
-      <div>
-        <p class="brand-title">Strategic Value Creation Framework</p>
-        <p class="brand-sub">Travel Analytics &amp; Procurement Intelligence</p>
-      </div>
-    </div>
-    <div class="hdr-right">
-      <span class="mod-tag">MODULE 08</span>
-      <span class="live-badge"><span class="live-dot"></span>5 Value Pillars</span>
-    </div>
-  </div>
-
-  <!-- ── Eyebrow ── -->
-  <div class="eyebrow"><span>Value Pillars</span><div class="eyebrow-ln"></div></div>
-
-  <!-- ── 2×2 Grid ── -->
-  <div class="pgrid">
-
-    <!-- 01 Financial -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">💰</span>
-        <span class="badge">01 · FINANCIAL</span>
-      </div>
-      <h3>Financial Optimization</h3>
-      <p class="obj">Mengurangi total travel spend dan meningkatkan efisiensi biaya operasional secara terukur.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Rate benchmarking antar hotel</div>
-        <div class="drow"><span class="ddot"></span>Price per night analysis</div>
-        <div class="drow"><span class="ddot"></span>Negotiation leverage berbasis volume room nights</div>
-        <div class="drow"><span class="ddot"></span>Last-minute booking cost impact</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Estimasi saving 5–15% dari negotiated rate</div>
-        <div class="irow"><span class="iarr">▶</span>Pengurangan overpricing hotel tidak terstandarisasi</div>
-        <div class="irow"><span class="iarr">▶</span>Kontrol budget lintas perusahaan</div>
-      </div>
-    </div>
-
-    <!-- 02 Operational -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">⚙️</span>
-        <span class="badge">02 · OPERATIONAL</span>
-      </div>
-      <h3>Operational Efficiency</h3>
-      <p class="obj">Meningkatkan kecepatan dan kualitas proses booking secara end-to-end.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Lead time monitoring</div>
-        <div class="drow"><span class="ddot"></span>Multi-booking behavior analysis</div>
-        <div class="drow"><span class="ddot"></span>Travel request pattern heatmap</div>
-        <div class="drow"><span class="ddot"></span>Automation &amp; canonical hotel mapping</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Mengurangi booking mendadak (≤2 hari)</div>
-        <div class="irow"><span class="iarr">▶</span>Mengurangi duplikasi nama hotel</div>
-        <div class="irow"><span class="iarr">▶</span>Meningkatkan data reliability untuk reporting</div>
-      </div>
-    </div>
-
-    <!-- 03 Procurement -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">🎯</span>
-        <span class="badge">03 · PROCUREMENT</span>
-      </div>
-      <h3>Strategic Procurement Intelligence</h3>
-      <p class="obj">Meningkatkan posisi tawar terhadap hotel dan vendor strategis.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Top 10 hotel concentration</div>
-        <div class="drow"><span class="ddot"></span>Volume aggregation per city</div>
-        <div class="drow"><span class="ddot"></span>Corporate usage clustering</div>
-        <div class="drow"><span class="ddot"></span>Canonical hotel normalization</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Centralized negotiation strategy</div>
-        <div class="irow"><span class="iarr">▶</span>Volume-based discount leverage</div>
-        <div class="irow"><span class="iarr">▶</span>Preferred hotel program optimization</div>
-      </div>
-    </div>
-
-    <!-- 04 Governance -->
-    <div class="pcard">
-      <div class="card-top">
-        <span class="card-icon">🛡️</span>
-        <span class="badge">04 · GOVERNANCE</span>
-      </div>
-      <h3>Risk &amp; Governance Control</h3>
-      <p class="obj">Menjamin kontrol dan keamanan data travel perusahaan secara sistemik.</p>
-      <div class="fl">Value Drivers</div>
-      <div class="dlist">
-        <div class="drow"><span class="ddot"></span>Role-based download restriction</div>
-        <div class="drow"><span class="ddot"></span>Admin-only data export</div>
-        <div class="drow"><span class="ddot"></span>Real-time monitoring dashboard</div>
-        <div class="drow"><span class="ddot"></span>2FA Google Authenticator (TOTP)</div>
-      </div>
-      <div class="sep"></div>
-      <div class="fl">Business Impact</div>
-      <div class="ilist">
-        <div class="irow"><span class="iarr">▶</span>Mencegah data leakage</div>
-        <div class="irow"><span class="iarr">▶</span>Meningkatkan compliance standar</div>
-        <div class="irow"><span class="iarr">▶</span>Governance berbasis sistem</div>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- ── Card 5 — Predictive ── -->
-  <div class="c5wrap">
-    <div class="c5hd">
-      <div class="c5hd-l">
-        <span style="font-size:17px;">🔮</span>
-        <div>
-          <h3>Predictive &amp; Future Intelligence</h3>
-          <span class="c5sub">Next Phase Development</span>
-        </div>
-      </div>
-      <span class="badge">05 · PREDICTIVE</span>
-    </div>
-    <div class="c5body">
-      <div class="c5col">
-        <div class="fl">Potential Development</div>
-        <div class="dlist" style="margin-top:10px;">
-          <div class="drow"><span class="ddot"></span>LSTM-based demand forecasting</div>
-          <div class="drow"><span class="ddot"></span>Hotel price anomaly detection</div>
-          <div class="drow"><span class="ddot"></span>Traveler segmentation (KMeans)</div>
-          <div class="drow"><span class="ddot"></span>Automated negotiation simulator</div>
-        </div>
-      </div>
-      <div class="c5col" style="border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;">
-        <div class="fl">Future Business Value</div>
-        <div class="ilist" style="margin-top:10px;">
-          <div class="irow"><span class="iarr">▶</span>Predictive budget planning yang akurat</div>
-          <div class="irow"><span class="iarr">▶</span>Early warning overpricing otomatis</div>
-          <div class="irow"><span class="iarr">▶</span>Smart hotel contract recommendation</div>
-        </div>
-      </div>
-      <div class="c5col">
-        <div class="fl">Technology Stack</div>
-        <div class="dlist" style="margin-top:10px;">
-          <div class="drow"><span class="ddot"></span>Deep Learning / LSTM</div>
-          <div class="drow"><span class="ddot"></span>Unsupervised Clustering</div>
-          <div class="drow"><span class="ddot"></span>Anomaly Detection Models</div>
-          <div class="drow"><span class="ddot"></span>Simulation Engine</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Executive Summary eyebrow ── -->
-  <div class="eyebrow" style="margin-top:4px;">
-    <span>Executive Summary</span><div class="eyebrow-ln"></div>
-  </div>
-
-  <!-- ── Executive Summary ── -->
-  <div class="exec">
-    <div class="exec-hd">
-      <div>
-        <h2>MTRAX Platform Overview</h2>
-        <p class="exec-sub">Lebih dari sekadar dashboard — sistem intelijen strategis untuk travel spend.</p>
-      </div>
-      <span class="exec-tag">Strategic Intelligence</span>
-    </div>
-
-    <div class="pillars">
-      <div class="pillar">
-        <span class="p-icon">🧠</span>
-        <p>Strategic Decision<br>Support System</p>
-      </div>
-      <div class="pillar" style="border-left:1px solid #e0e0e0;">
-        <span class="p-icon">⚡</span>
-        <p>Negotiation<br>Intelligence Engine</p>
-      </div>
-      <div class="pillar" style="border-left:1px solid #e0e0e0;">
-        <span class="p-icon">💡</span>
-        <p>Corporate Cost<br>Optimization Platform</p>
-      </div>
-      <div class="pillar" style="border-left:1px solid #e0e0e0;">
-        <span class="p-icon">🔐</span>
-        <p>Governance-Controlled<br>Analytics Ecosystem</p>
-      </div>
-    </div>
-
-    <div class="flow-bar">
-      <div class="fn">
-        <span class="fn-lbl">Insight</span>
-        <span class="fn-sub">Data → Analytics</span>
-      </div>
-      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-      <div class="fn">
-        <span class="fn-lbl">Strategy</span>
-        <span class="fn-sub">Pattern → Direction</span>
-      </div>
-      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-      <div class="fn">
-        <span class="fn-lbl">Negotiation Leverage</span>
-        <span class="fn-sub">Volume → Power</span>
-      </div>
-      <div class="fsep"><div class="fsep-ln"></div><span class="fsep-arr">›</span></div>
-      <div class="fn">
-        <span class="fn-lbl hi">Financial Impact</span>
-        <span class="fn-sub">Cost → Savings</span>
-      </div>
-    </div>
-  </div>
-
-</body>
-</html>
-""", height=1600, scrolling=True)
-
 
         # ======================================
         # TAB 2: DASHBOARD
@@ -4411,82 +3613,7 @@ def main_app():
         # ======================================
         # FILTER OVERVIEW — NAMA PERUSAHAAN
         # ======================================
-            company_col = "Nama Perusahaan"
-
-            if company_col in df_all.columns:
-                company_list = (
-                    df_all[company_col]
-                    .dropna()
-                    .astype(str)
-                    .sort_values()
-                    .unique()
-                    .tolist()
-                )
-
-                st.markdown("""
-                <style>
-                div[data-testid="stMultiSelect"] > label {
-                    font-size: 0.85em !important;
-                    color: #555 !important;
-                    font-weight: 400 !important;
-                    margin-bottom: 4px !important;
-                }
-                div[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
-                    border: 1px solid #e0e0e0 !important;
-                    border-radius: 6px !important;
-                    background: white !important;
-                    min-height: 38px !important;
-                    font-size: 0.875em !important;
-                }
-                div[data-testid="stMultiSelect"] [data-baseweb="select"] > div:focus-within {
-                    border-color: #1BA0E2 !important;
-                    box-shadow: 0 0 0 2px rgba(156,87,137,0.15) !important;
-                }
-                div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
-                    background: #1BA0E2 !important;
-                    border-radius: 50px !important;
-                    padding: 2px 10px !important;
-                    font-size: 0.78em !important;
-                    font-weight: 500 !important;
-                    color: white !important;
-                    border: none !important;
-                }
-                div[data-testid="stMultiSelect"] [data-baseweb="tag"] span[role="presentation"] {
-                    color: rgba(255,255,255,0.75) !important;
-                    font-size: 1.1em !important;
-                }
-                div[data-testid="stMultiSelect"] [role="option"]:hover {
-                    background: rgba(156,87,137,0.08) !important;
-                }
-                div[data-testid="stMultiSelect"] [aria-selected="true"] {
-                    background: rgba(156,87,137,0.12) !important;
-                    color: #1BA0E2 !important;
-                    font-weight: 500 !important;
-                }
-                </style>
-                """, unsafe_allow_html=True)
-
-                # BUG FIX: widget multiselect ini sebelumnya di-comment-out, sehingga
-                # baris `if selected_companies:` di bawah diam-diam memakai variabel
-                # `selected_companies` milik filter TAB 1 (key="gf_company") alih-alih
-                # filter miliknya sendiri. Akibatnya, dropdown filter perusahaan khusus
-                # Tab 2 (Dashboard) tidak pernah muncul, dan Tab 2 selalu ikut ter-filter
-                # oleh pilihan perusahaan dari Tab 1 tanpa bisa diatur independen di sini.
-                selected_companies_ov = st.multiselect(
-                    "Filter Overview berdasarkan Nama Perusahaan",
-                    options=company_list,
-                    default=[],
-                    placeholder="Semua perusahaan (pilih untuk filter spesifik)…",
-                    key="ov_company_tab2"
-                )
-
-                if selected_companies_ov:
-                    df_overview = df_all[df_all[company_col].isin(selected_companies_ov)]
-                else:
-                    df_overview = df_all.copy()
-            else:
-                st.warning("Kolom 'Nama Perusahaan' tidak ditemukan.")
-                df_overview = df_all.copy()
+            df_overview = df_all.copy()
 
             # ======================================
             # FILTER DOMESTIK & INTERNASIONAL
@@ -4577,12 +3704,13 @@ def main_app():
                     """, unsafe_allow_html=True)
 
             with col3:
-                if "Employee Id" in df_overview.columns:
-                    unique_travelers = df_overview["Employee Id"].nunique()
+                if "Invoice Amount" in df_overview.columns and "Number of Rooms Night" in df_overview.columns:
+                    _rn_sum = pd.to_numeric(df_overview["Number of Rooms Night"], errors="coerce").sum()
+                    _avg_rate = df_overview["Invoice Amount"].sum() / _rn_sum if _rn_sum else 0
                     st.markdown(f"""
                         <div class='metric-box'>
-                            <div class='metric-label'>Travelers</div>
-                            <div class='metric-value'>{unique_travelers:,}</div>
+                            <div class='metric-label'>Avg Rate / Night</div>
+                            <div class='metric-value'>{_avg_rate/1000:,.0f}k</div>
                         </div>
                     """, unsafe_allow_html=True)
 
@@ -4612,14 +3740,14 @@ def main_app():
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                if "Company Code" in df_overview.columns:
-                    unique_company = df_overview["Company Code"].nunique()
-                    st.metric("Companies", f"{unique_company:,}")
+                if "Meal Plan" in df_overview.columns and len(df_overview):
+                    _bf = df_overview["Meal Plan"].astype(str).str.lower().str.contains("breakfast").mean() * 100
+                    st.metric("Breakfast Included", f"{_bf:.0f}%")
 
             with col2:
-                if "Cost Center Pekerja" in df_overview.columns:
-                    unique_cc = df_overview["Cost Center Pekerja"].nunique()
-                    st.metric("Cost Centers", f"{unique_cc:,}")
+                if "Currency" in df_overview.columns:
+                    _non_idr = (df_overview["Currency"].astype(str).str.upper().str.strip() != "IDR").sum()
+                    st.metric("Booking non-IDR", f"{_non_idr:,}")
 
             with col3:
                 if "City" in df_overview.columns:
@@ -4812,8 +3940,9 @@ def main_app():
             col1, col2 = st.columns(2)
 
             with col1:
-                if "City Destination" in df_overview.columns:
-                    top_cities = df_overview["City Destination"].value_counts().head(10)
+                _city_c = "City Destination" if "City Destination" in df_overview.columns else "City"
+                if _city_c in df_overview.columns:
+                    top_cities = df_overview[_city_c].value_counts().head(10)
 
                     fig_cities = px.bar(
                         x=top_cities.values,
@@ -4844,8 +3973,9 @@ def main_app():
                     st.plotly_chart(fig_cities, use_container_width=True)
 
             with col2:
-                if "Country Destination" in df_overview.columns:
-                    top_countries = df_overview["Country Destination"].value_counts().head(10)
+                _ctry_c = "Country Destination" if "Country Destination" in df_overview.columns else "Country"
+                if _ctry_c in df_overview.columns:
+                    top_countries = df_overview[_ctry_c].value_counts().head(10)
 
                     fig_countries = px.pie(
                         values=top_countries.values,
@@ -4866,44 +3996,6 @@ def main_app():
             col1, col2 = st.columns(2)
 
             with col1:
-                if "Nama Perusahaan" in df_overview.columns and "Travel Request Number" in df_overview.columns:
-                    top_dir = (
-                        df_overview.groupby("Nama Perusahaan")["Travel Request Number"]
-                        .nunique()
-                        .sort_values(ascending=False)
-                        .head(10)
-                        .reset_index(name="Travel Requests")
-                    )
-
-                    fig_dir = px.bar(
-                        top_dir,
-                        x="Travel Requests",
-                        y="Nama Perusahaan",
-                        orientation="h",
-                        text="Travel Requests"
-                    )
-
-                    fig_dir.update_traces(
-                        marker_color="#1BA0E2",
-                        texttemplate="%{text:,}",
-                        textposition="outside",
-                        textfont=dict(size=11)
-                    )
-
-                    fig_dir.update_layout(
-                        height=380,
-                        title="Top 10 Directorates by Travel Requests",
-                        xaxis_title="Number of Travel Requests",
-                        yaxis_title="",
-                        yaxis=dict(autorange="reversed"),
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=10, r=40, t=50, b=10),
-                        showlegend=False
-                    )
-
-                    st.plotly_chart(fig_dir, use_container_width=True)
-
                 st.markdown("<div style='height:25px;'></div>", unsafe_allow_html=True)
 
                 if "Issue Time" in df_overview.columns and "Travel Request Number" in df_overview.columns:
@@ -4949,7 +4041,7 @@ def main_app():
                     )
                     output_tr_trend.seek(0)
 
-                    if st.session_state.get('role') == 'Admin':
+                    if can_download():
                         st.download_button(
                             label="⬇️ Download Data",
                             data=output_tr_trend,
@@ -4961,7 +4053,7 @@ def main_app():
                         <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
                         border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;
                         display:flex;align-items:center;gap:8px;'>
-                            <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
+                            <span>🔒</span><span>Download tidak tersedia untuk akun ini</span>
                         </div>""", unsafe_allow_html=True)
 
             with col2:
@@ -5053,7 +4145,7 @@ def main_app():
                     )
                     output_rn_trend.seek(0)
 
-                    if st.session_state.get('role') == 'Admin':
+                    if can_download():
                         st.download_button(
                             label="⬇️ Download Data",
                             data=output_rn_trend,
@@ -5065,7 +4157,7 @@ def main_app():
                         <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
                         border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;
                         display:flex;align-items:center;gap:8px;'>
-                            <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
+                            <span>🔒</span><span>Download tidak tersedia untuk akun ini</span>
                         </div>""", unsafe_allow_html=True)
                 else:
                     st.info("Column 'Issue Time' or 'Number of Rooms Night' not available.")
@@ -5077,897 +4169,6 @@ def main_app():
                         .astype(str).str.strip().str.lower().str.title()
                     )
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-        # ======================================
-        # TAB 3: EXPLORER
-        # ======================================
-        with tab3:
-            st.markdown("<div class='section-title'>Data Explorer</div>", unsafe_allow_html=True)
-
-            col1, col2 = st.columns([2, 1])
-
-            with col1:
-                search_term = st.text_input("🔍 Search", placeholder="Search in any column...")
-
-            with col2:
-                if "City Destination" in df_all.columns:
-                    cities = ["All"] + sorted(df_all["City Destination"].dropna().unique().tolist())
-                    selected_city = st.selectbox("Filter by City", cities)
-                else:
-                    selected_city = "All"
-
-            df_filtered = df_all.copy()
-
-            if search_term:
-                mask = df_filtered.astype(str).apply(
-                    lambda x: x.str.contains(search_term, case=False, na=False)
-                ).any(axis=1)
-                df_filtered = df_filtered[mask]
-
-            if selected_city != "All" and "City Destination" in df_filtered.columns:
-                df_filtered = df_filtered[df_filtered["City Destination"] == selected_city]
-
-            st.markdown(f"**Showing {len(df_filtered):,} of {len(df_all):,} records**")
-            st.dataframe(df_filtered, use_container_width=True, height=500)
-
-            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-            st.markdown("<div class='section-title'>Dataset Information</div>", unsafe_allow_html=True)
-
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.metric("Total Columns", len(df_all.columns))
-
-            with col2:
-                st.metric("Total Rows", f"{len(df_all):,}")
-
-            with col3:
-                missing_pct = (df_all.isnull().sum().sum() / (len(df_all) * len(df_all.columns))) * 100
-                st.metric("Missing Data", f"{missing_pct:.1f}%")
-
-            st.markdown("<div class='section-title'>Hotel Name Text Similarity Analysis</div>", unsafe_allow_html=True)
-
-            threshold = st.slider(
-                "Similarity Threshold",
-                min_value=0.70,
-                max_value=0.95,
-                value=0.85,
-                step=0.01,
-                help="Semakin tinggi, semakin ketat kemiripan"
-            )
-
-            if "Hotel Name" in df_all.columns:
-                with st.spinner("Analyzing hotel name similarity..."):
-                    sim_df = hotel_name_similarity(
-                        df_all,
-                        text_col="Hotel Name",
-                        threshold=threshold
-                    )
-
-                if not sim_df.empty:
-                    st.dataframe(sim_df, use_container_width=True, height=450)
-                    st.caption("🔎 Digunakan untuk mendeteksi potensi duplikasi nama hotel akibat perbedaan penulisan.")
-
-                    output = BytesIO()
-                    sim_df.to_excel(output, index=False, sheet_name="Hotel Name Similarity")
-                    output.seek(0)
-
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button(
-                            label="⬇️ Download Similarity Result (Excel)",
-                            data=output,
-                            file_name="hotel_name_similarity.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_hotel_similarity")
-                    else:
-                        st.markdown("""
-                        <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
-                        border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;
-                        display:flex;align-items:center;gap:8px;'>
-                            <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
-                        </div>""", unsafe_allow_html=True)
-                else:
-                    st.info("Tidak ditemukan hotel dengan tingkat kemiripan sesuai threshold.")
-            else:
-                st.warning("Kolom 'Hotel Name' tidak tersedia.")
-
-            st.markdown("### Canonical Hotel Mapping")
-
-            if not hotel_mapping.empty:
-                st.dataframe(
-                    hotel_mapping.sort_values("Canonical Hotel Name"),
-                    use_container_width=True,
-                    height=350
-                )
-
-                output = BytesIO()
-                hotel_mapping.to_excel(output, index=False, sheet_name="Hotel Canonical Mapping")
-                output.seek(0)
-
-                if st.session_state.get('role') == 'Admin':
-                    st.download_button(
-                        "⬇️ Download Canonical Mapping (Excel)",
-                        data=output,
-                        file_name="hotel_canonical_mapping.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_hotel_canonical_mapping")
-                else:
-                    st.markdown("""
-                    <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
-                    border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;
-                    display:flex;align-items:center;gap:8px;'>
-                        <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
-                    </div>""", unsafe_allow_html=True)
-            else:
-                st.info("Tidak ada mapping canonical yang terbentuk.")
-
-        # ======================================
-        # TAB 3: ANALYTICS — CRM
-        # ======================================
-        with tab4:
-
-            st.markdown("<div class='section-title'>CRM Analytics</div>", unsafe_allow_html=True)
-
-            df_crm = df_all.copy()
-
-            required_cols = ["Employee Id", "Travel Request Number", "Issue Time"]
-            if not all(col in df_crm.columns for col in required_cols):
-                st.warning("Data belum cukup untuk analisa CRM")
-            else:
-                df_crm["Issue Time"] = pd.to_datetime(df_crm["Issue Time"], errors="coerce", dayfirst=True)
-                df_crm = df_crm.dropna(subset=["Employee Id", "Issue Time"])
-
-                traveler_stats = (
-                    df_crm
-                    .groupby("Employee Id")
-                    .agg(
-                        total_tr=("Travel Request Number", "nunique"),
-                        total_booking=("Travel Request Number", "count"),
-                        last_booking=("Issue Time", "max"),
-                        first_booking=("Issue Time", "min")
-                    )
-                    .reset_index()
-                )
-
-                total_travelers = len(traveler_stats)
-                repeat_travelers = (traveler_stats["total_tr"] > 1).sum()
-                repeat_rate = repeat_travelers / total_travelers * 100
-                avg_booking = traveler_stats["total_booking"].mean()
-
-                col1, col2, col3, col4 = st.columns(4)
-
-                col1.metric("Active Travelers", f"{total_travelers:,}")
-                col2.metric("Repeat Traveler Rate", f"{repeat_rate:.1f}%")
-                col3.metric("Avg Booking / Traveler", f"{avg_booking:.1f}")
-                col4.metric("Repeat Travelers", f"{repeat_travelers:,}")
-
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-        with tab4:
-            st.markdown("<div class='section-title'>Employee Booking Cohort Analysis</div>", unsafe_allow_html=True)
-
-            cohort_df = build_employee_cohort(df_all)
-
-            if cohort_df.empty:
-                st.warning("Data tidak cukup untuk Cohort Analysis (butuh Employee Id & Issue Time).")
-            else:
-                cohort_pct = cohort_df.copy()
-                if 0 in cohort_pct.columns:
-                    base = cohort_pct[0].replace(0, np.nan)
-                    cohort_pct = cohort_pct.div(base, axis=0) * 100
-                else:
-                    base = cohort_pct.iloc[:, 0].replace(0, np.nan)
-                    cohort_pct = cohort_pct.div(base, axis=0) * 100
-
-                cohort_pct = cohort_pct.round(1)
-
-                text_matrix = cohort_pct.map(
-                    lambda v: f"{v:.1f}%" if not np.isnan(v) and v > 0 else ""
-                )
-
-                fig = px.imshow(
-                    cohort_pct,
-                    text_auto=False,
-                    aspect="auto",
-                    color_continuous_scale=["#ffffff", "#e0c7d8", "#1BA0E2"],
-                    zmin=0, zmax=100
-                )
-
-                fig.update_traces(
-                    text=text_matrix.values,
-                    texttemplate="%{text}",
-                    textfont=dict(size=10)
-                )
-
-                fig.update_layout(
-                    title=dict(
-                        text="Employee Booking Cohort Heatmap  "
-                             "<span style='color:#6a8fa0;font-size:11px;'>"
-                             "Retensi relatif terhadap bulan pertama booking (Bulan ke-0 = 100%)"
-                             "</span>",
-                        font=dict(size=13, color="#2a1a2a"),
-                        x=0, xanchor="left"
-                    ),
-                    xaxis_title="Bulan ke-n sejak booking pertama",
-                    yaxis_title="Cohort (Bulan Pertama Booking)",
-                    coloraxis_colorbar=dict(
-                        title=dict(text="%", font=dict(size=10, color="#6a8fa0")),
-                        ticksuffix="%",
-                        tickfont=dict(size=9, color="#6a8fa0"),
-                        len=0.8
-                    ),
-                    height=max(400, len(cohort_pct) * 36 + 120),
-                    plot_bgcolor="white",
-                    paper_bgcolor="white",
-                    margin=dict(l=60, r=40, t=70, b=60),
-                    font=dict(size=11, color="#2a1a2a")
-                )
-
-                st.plotly_chart(fig, use_container_width=True)
-
-                output = BytesIO()
-                cohort_df.reset_index().to_excel(output, index=False, sheet_name="Employee Cohort")
-                output.seek(0)
-
-                if st.session_state.get('role') == 'Admin':
-                    st.download_button(
-                        label="⬇️ Download Data",
-                        data=output,
-                        file_name="employee_booking_cohort.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_employee_cohort")
-                else:
-                    st.markdown("""
-                    <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
-                    border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;
-                    display:flex;align-items:center;gap:8px;'>
-                        <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
-                    </div>""", unsafe_allow_html=True)
-
-                with st.expander("📖 Panduan Membaca Cohort Heatmap", expanded=False):
-                    _cohort_narasi = (
-                        "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:4px;'>"
-                        "<div style='background:#f0f8ff;border-radius:9px;padding:14px 16px;border:1px solid #b8d9f0;'>"
-                        "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>&#128269; Apa itu Cohort Heatmap?</div>"
-                        "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.7;'>Cohort Heatmap mengelompokkan karyawan berdasarkan <b>bulan pertama kali mereka melakukan booking</b> (cohort). Nilai pada setiap sel adalah <b>persentase retensi</b>.</div></div>"
-                        "<div style='background:#f0f8ff;border-radius:9px;padding:14px 16px;border:1px solid #b8d9f0;'>"
-                        "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>&#127919; Kegunaan Analisis Ini</div>"
-                        "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.8;'>&#8226; <b>Pantau loyalitas traveler</b><br>&#8226; <b>Deteksi penurunan aktivitas</b><br>&#8226; <b>Evaluasi kebijakan travel</b><br>&#8226; <b>Benchmark antar periode</b></div></div>"
-                        "<div style='background:#f0f8ff;border-radius:9px;padding:14px 16px;border:1px solid #b8d9f0;'>"
-                        "<div style='font-weight:700;color:#6a1a5a;font-size:0.83em;margin-bottom:8px;'>&#128202; Cara Membaca</div>"
-                        "<div style='font-size:0.78em;color:#4a3a4a;line-height:1.8;'>&#8226; <b>Kolom 0</b> = bulan pertama &#8594; selalu <b>100%</b><br>&#8226; <b>Warna gelap</b> = retensi tinggi &#9989;<br>&#8226; <b>Warna terang</b> = retensi rendah &#9888;&#65039;</div></div>"
-                        "</div>"
-                    )
-                    st.markdown(_cohort_narasi, unsafe_allow_html=True)
-
-                today = df_crm["Issue Time"].max()
-
-                traveler_stats["Recency (Days)"] = (today - traveler_stats["last_booking"]).dt.days
-
-                if "Invoice Amount" in df_crm.columns:
-                    spend = (df_crm.groupby("Employee Id")["Invoice Amount"].sum().reset_index(name="Total Spend"))
-                    traveler_stats = traveler_stats.merge(spend, on="Employee Id", how="left")
-                else:
-                    traveler_stats["Total Spend"] = 0
-
-                def segment(row):
-                    if row["total_tr"] >= 10: return "High Value"
-                    elif row["total_tr"] >= 3: return "Medium Value"
-                    else: return "Low Value"
-
-                traveler_stats["Segment"] = traveler_stats.apply(segment, axis=1)
-
-                st.markdown("<div class='section-title'>Top Valuable Travelers</div>", unsafe_allow_html=True)
-
-                top_travelers = traveler_stats.sort_values(by=["total_tr", "Total Spend"], ascending=False).head(10)
-                display_cols = ["Employee Id", "total_tr", "total_booking", "Total Spend", "Segment"]
-                numeric_cols = ["total_tr", "total_booking", "Total Spend"]
-
-                st.dataframe(
-                    top_travelers[display_cols]
-                        .style
-                        .format({"Total Spend": lambda x: f"Rp{x:,.0f}" if pd.notnull(x) else "Rp 0"})
-                        .set_properties(subset=numeric_cols, **{"text-align": "right"}),
-                    use_container_width=True
-                )
-
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                if True:  # (sebelumnya "with tab4:" redundan — sudah berada di dalam tab4, cukup dihilangkan tanpa mengubah indentasi di bawahnya)
-                    st.markdown("### Behavioral Persona Clustering")
-
-                    df_behavior = df_all.copy()
-                    selected_data = pd.DataFrame()       # default agar aman jika kolom tidak lengkap
-                    selected_cluster = None              # default — dipakai di blok radar chart di bawah
-                    employee_features = pd.DataFrame()   # default — dipakai di blok radar/insight di bawah
-                    feature_cols = []                    # default — dipakai di blok radar/insight di bawah
-
-                    required_cols = ["Travel Request Number","Employee Id","Issue Time","Check in Date","Check out Date","Number of Rooms Night"]
-
-                    if all(col in df_behavior.columns for col in required_cols):
-
-                        # PERBAIKAN PERFORMA: pipeline clustering (parsing tanggal, groupby,
-                        # scaling, fit KMeans) dipindah ke fungsi ber-cache — hasilnya sama
-                        # persis berapa pun kali dropdown Employee Id di bawah ini diganti,
-                        # jadi tidak perlu dihitung ulang setiap kali (sebelumnya inilah yang
-                        # membuat mengganti Employee Id terasa memicu render ulang seluruh halaman).
-                        _df_behavior_slim = df_behavior[required_cols].copy()
-                        employee_features, feature_cols = build_employee_persona_clusters(_df_behavior_slim)
-
-                        # PERBAIKAN: dropdown Employee Id diganti free-text search sesuai permintaan —
-                        # user mengetik (sebagian/seluruh) Employee Id, bukan memilih dari daftar dropdown.
-                        _emp_search = st.text_input(
-                            "🔍 Cari Employee Id",
-                            value="",
-                            placeholder="Ketik Employee ID (boleh sebagian)...",
-                            key="persona_employee_search"
-                        )
-
-                        selected_data = pd.DataFrame()
-
-                        if not _emp_search.strip():
-                            st.info("ℹ️ Ketik Employee ID di atas untuk melihat profil persona-nya.")
-                        else:
-                            _emp_matches = employee_features[
-                                employee_features["Employee Id"].astype(str)
-                                .str.contains(_emp_search.strip(), case=False, na=False, regex=False)
-                            ]
-
-                            if _emp_matches.empty:
-                                st.warning(f"⚠️ Employee Id yang mengandung \"{_emp_search.strip()}\" tidak ditemukan.")
-                            elif len(_emp_matches) == 1:
-                                selected_data = _emp_matches
-                                selected_employee = selected_data["Employee Id"].values[0]
-                                selected_cluster = selected_data["Cluster"].values[0]
-                                selected_persona = selected_data["Persona"].values[0]
-                                st.success(f"Employee Id: {selected_employee} — Persona: {selected_persona}")
-                            else:
-                                st.info(
-                                    f"🔎 Ditemukan {len(_emp_matches)} Employee Id yang cocok — "
-                                    f"perjelas ketikan Anda untuk mempersempit ke satu hasil."
-                                )
-                                _preview_cols = [c for c in ["Employee Id", "Persona", "Booking_Frequency"] if c in _emp_matches.columns]
-                                st.dataframe(
-                                    _emp_matches[_preview_cols].head(15),
-                                    use_container_width=True, hide_index=True
-                                )
-                                if len(_emp_matches) > 15:
-                                    st.caption(f"Menampilkan 15 dari {len(_emp_matches)} hasil.")
-
-                if not selected_data.empty:
-                    st.markdown("""
-                    <style>
-                    .metric-card{background:white;padding:20px 16px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.08);text-align:center;transition:all 0.3s ease;margin-bottom:12px;border:1px solid #f0f0f0;border-top:3px solid #1BA0E2;}
-                    .metric-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(156,87,137,0.12);}
-                    .metric-value{font-size:32px;font-weight:700;margin:8px 0;color:#1BA0E2;}
-                    .metric-label{font-size:11px;color:#888888;text-transform:uppercase;letter-spacing:1px;font-weight:500;}
-                    .insight-card{background:white;border-radius:6px;padding:16px;margin-bottom:10px;border-left:4px solid;box-shadow:0 1px 4px rgba(0,0,0,0.05);font-size:14px;line-height:1.6;}
-                    .insight-success{border-left-color:#10b981;background:linear-gradient(to right,#ecfdf5,white);}
-                    .insight-warning{border-left-color:#f59e0b;background:linear-gradient(to right,#fffbeb,white);}
-                    .insight-info{border-left-color:#1BA0E2;background:linear-gradient(to right,#f8f4f7,white);}
-                    .insight-error{border-left-color:#ef4444;background:linear-gradient(to right,#fef2f2,white);}
-                    .persona-badge{background:linear-gradient(135deg,#1BA0E2 0%,#75caf0 100%);padding:24px;border-radius:8px;text-align:center;color:white;font-size:19px;font-weight:600;box-shadow:0 4px 16px rgba(156,87,137,0.2);margin:15px 0;}
-                    .section-header{font-size:18px;font-weight:600;color:#1a1a1a;margin:30px 0 18px 0;padding-bottom:8px;border-bottom:2px solid #1BA0E2;}
-                    .progress-container{background:#f0f0f0;height:6px;border-radius:3px;overflow:hidden;margin-top:6px;}
-                    .progress-bar{height:100%;border-radius:3px;transition:width 0.4s ease;}
-                    .breakdown-card{background:white;padding:12px 14px;border-radius:6px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04);border:1px solid #f0f0f0;}
-                    </style>
-                    """, unsafe_allow_html=True)
-
-                    col1, col2 = st.columns([1, 1.4], gap="large")
-
-                    with col1:
-                        st.markdown('<div class="section-header">📊 Behavioral Overview</div>', unsafe_allow_html=True)
-                        bf = selected_data["Booking_Frequency"].values[0]
-                        lead = selected_data["Avg_Lead_Time"].values[0]
-                        lf = selected_data["Last_Minute_Ratio"].values[0]
-                        weekend = selected_data["Weekend_Ratio"].values[0]
-                        stay = selected_data["Avg_Stay"].values[0]
-
-                        st.markdown('<div class="section-header">Key Performance Indicators</div>', unsafe_allow_html=True)
-                        m1, m2 = st.columns(2)
-                        with m1:
-                            st.markdown(f'<div class="metric-card"><div class="metric-label">Booking Frequency</div><div class="metric-value">{round(bf,1)}</div></div>', unsafe_allow_html=True)
-                        with m2:
-                            st.markdown(f'<div class="metric-card"><div class="metric-label">Lead Time (Days)</div><div class="metric-value">{round(lead,1)}</div></div>', unsafe_allow_html=True)
-                        m3, m4 = st.columns(2)
-                        with m3:
-                            st.markdown(f'<div class="metric-card"><div class="metric-label">Last Minute Ratio</div><div class="metric-value">{round(lf*100,1)}%</div></div>', unsafe_allow_html=True)
-                        with m4:
-                            st.markdown(f'<div class="metric-card"><div class="metric-label">Weekend Ratio</div><div class="metric-value">{round(weekend*100,1)}%</div></div>', unsafe_allow_html=True)
-                        st.markdown(f'<div class="metric-card"><div class="metric-label">Average Stay Duration</div><div class="metric-value">{round(stay,1)} <span style="font-size:18px;font-weight:500;">nights</span></div></div>', unsafe_allow_html=True)
-
-                    with col2:
-                        st.markdown('<div class="section-header">🎯 Behavioral Radar Profile</div>', unsafe_allow_html=True)
-
-                        from sklearn.preprocessing import MinMaxScaler
-                        cluster_profile = employee_features.groupby("Cluster")[feature_cols].mean()
-                        minmax_scaler = MinMaxScaler()
-                        cluster_scaled = minmax_scaler.fit_transform(cluster_profile)
-
-                        profile_row = cluster_scaled[selected_cluster]
-                        radar_values = list(profile_row) + [profile_row[0]]
-                        radar_labels = feature_cols + [feature_cols[0]]
-
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatterpolar(r=radar_values, theta=radar_labels, fill='toself',
-                            line=dict(width=4, color="#1BA0E2"), fillcolor="rgba(156,87,137,0.25)", name='Profile'))
-                        fig.add_trace(go.Scatterpolar(r=[0.5]*len(radar_labels), theta=radar_labels,
-                            line=dict(width=2, color="rgba(138,77,120,0.4)", dash='dash'), name='Benchmark'))
-
-                        fig.update_layout(
-                            polar=dict(radialaxis=dict(visible=True, range=[0,1])),
-                            showlegend=True, height=580,
-                            margin=dict(l=50,r=50,t=50,b=50),
-                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-
-                if not selected_data.empty:
-                    col1, col2 = st.columns([1, 1.4], gap="large")
-
-                    with col1:
-                        st.markdown('<div class="section-header">💡 Behavioral Insights</div>', unsafe_allow_html=True)
-                        if lf > 0.5:
-                            st.markdown('<div class="insight-card insight-error"><strong>⚠️ Reactive Traveler</strong><br>High last-minute booking ratio detected.</div>', unsafe_allow_html=True)
-                        elif lead > 7:
-                            st.markdown('<div class="insight-card insight-success"><strong>✅ Strategic Planner</strong><br>Excellent advance planning.</div>', unsafe_allow_html=True)
-                        else:
-                            st.markdown('<div class="insight-card insight-info"><strong>ℹ️ Balanced Approach</strong><br>Shows balanced booking behavior.</div>', unsafe_allow_html=True)
-
-                        avg_bf = employee_features["Booking_Frequency"].mean()
-                        if bf > avg_bf:
-                            intensity_pct = ((bf - avg_bf) / avg_bf * 100)
-                            st.markdown(f'<div class="insight-card insight-warning"><strong>📊 High Activity</strong><br>Travel intensity <strong>{round(intensity_pct,1)}%</strong> above peer average.</div>', unsafe_allow_html=True)
-                        else:
-                            st.markdown('<div class="insight-card insight-success"><strong>📊 Normal Activity</strong><br>Travel intensity aligns with baseline.</div>', unsafe_allow_html=True)
-
-                        if weekend > 0.4:
-                            st.markdown('<div class="insight-card insight-info"><strong>🌅 Weekend Preference</strong><br>Strong weekend tendency.</div>', unsafe_allow_html=True)
-                        else:
-                            st.markdown('<div class="insight-card insight-info"><strong>💼 Weekday Focus</strong><br>Primarily weekday travel.</div>', unsafe_allow_html=True)
-
-                        avg_stay_val = employee_features["Avg_Stay"].mean()
-                        if stay > avg_stay_val:
-                            st.markdown(f'<div class="insight-card insight-warning"><strong>🏨 Extended Stays</strong><br><strong>{round(stay-avg_stay_val,1)}</strong> nights above average.</div>', unsafe_allow_html=True)
-                        else:
-                            st.markdown('<div class="insight-card insight-success"><strong>🏨 Quick Visits</strong><br>Efficient short trips.</div>', unsafe_allow_html=True)
-
-                    with col2:
-                        st.markdown('<div class="section-header">📋 Metric Breakdown</div>', unsafe_allow_html=True)
-                        for i, feature in enumerate(feature_cols):
-                            score = profile_row[i]
-                            if score > 0.7: status, status_icon, color = "High", "🔴", "#1BA0E2"
-                            elif score > 0.4: status, status_icon, color = "Medium", "🟡", "#75caf0"
-                            else: status, status_icon, color = "Low", "🟢", "#e7c3d9"
-                            progress_width = int(score * 100)
-                            st.markdown(f"""
-                            <div class="breakdown-card">
-                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                                    <strong style="color:#1a1a1a;font-size:13px;">{feature.replace("_"," ")}</strong>
-                                    <span style="color:#888;font-weight:500;font-size:11px;margin:0 10px;">{score:.2f}</span>
-                                    <span style="color:{color};font-weight:600;font-size:11px;">{status_icon} {status}</span>
-                                </div>
-                                <div class="progress-container">
-                                    <div class="progress-bar" style="background:{color};width:{progress_width}%;"></div>
-                                </div>
-                            </div>""", unsafe_allow_html=True)
-
-        # ======================================
-        # TAB 5: SOCIAL NETWORK ANALYSIS
-        # ======================================
-        # ======================================
-        # TAB 5: SOCIAL NETWORK ANALYSIS — MTRAX Blue Theme
-        # ======================================
-        with tab5:
-
-            # ── Header Banner ──────────────────────────────────────────────
-            st.markdown("""
-            <style>
-            .sna-header {
-                background: linear-gradient(135deg, #062440 0%, #0D7FCC 55%, #1BA0E2 100%);
-                border-radius: 14px;
-                padding: 30px 36px;
-                margin-bottom: 24px;
-                position: relative;
-                overflow: hidden;
-                box-shadow: 0 8px 32px rgba(13,127,204,0.28);
-            }
-            .sna-header::before {
-                content: '';
-                position: absolute; top: -60px; right: -60px;
-                width: 260px; height: 260px; border-radius: 50%;
-                background: rgba(255,255,255,0.05);
-            }
-            .sna-header::after {
-                content: '';
-                position: absolute; bottom: -40px; left: 30%;
-                width: 180px; height: 180px; border-radius: 50%;
-                background: rgba(226,248,113,0.07);
-            }
-            .sna-header-inner {
-                display: flex; align-items: center; gap: 16px;
-                position: relative; z-index: 1;
-            }
-            .sna-icon-wrap {
-                width: 52px; height: 52px; border-radius: 12px;
-                background: rgba(255,255,255,0.14);
-                border: 1px solid rgba(255,255,255,0.22);
-                display: flex; align-items: center; justify-content: center;
-                font-size: 1.6em; flex-shrink: 0;
-            }
-            .sna-title { color: #fff; font-size: 1.45em; font-weight: 700; margin: 0; }
-            .sna-sub { color: rgba(255,255,255,0.60); font-size: 0.82em; margin-top: 4px; }
-            .sna-pill {
-                margin-left: auto;
-                display: inline-flex; align-items: center; gap: 7px;
-                background: rgba(255,255,255,0.12);
-                border: 1px solid rgba(255,255,255,0.22);
-                border-radius: 100px; padding: 6px 16px;
-                font-size: 0.72em; font-weight: 600;
-                color: rgba(255,255,255,0.85); letter-spacing: 0.06em;
-            }
-            .sna-pill-dot {
-                width: 6px; height: 6px; border-radius: 50%;
-                background: #e2f871;
-                box-shadow: 0 0 6px #e2f871;
-                animation: sna-blink 2s ease infinite;
-            }
-            @keyframes sna-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-            .sna-stat {
-                background: #fff;
-                border-radius: 12px;
-                padding: 20px 18px 16px;
-                border-top: 3px solid var(--sna-accent, #1BA0E2);
-                box-shadow: 0 2px 12px rgba(13,127,204,0.08);
-                text-align: center;
-                transition: transform .18s ease, box-shadow .18s ease;
-                margin-bottom: 16px;
-            }
-            .sna-stat:hover {
-                transform: translateY(-3px);
-                box-shadow: 0 6px 20px rgba(13,127,204,0.16);
-            }
-            .sna-stat-icon { font-size: 1.5em; margin-bottom: 8px; display: block; }
-            .sna-stat-label {
-                font-size: 0.68em; font-weight: 600; color: #8a9aaa;
-                text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 6px;
-            }
-            .sna-stat-value { font-size: 1.45em; font-weight: 700; }
-
-            .sna-filter-bar {
-                background: #f0f8ff;
-                border: 1px solid #cce4f4;
-                border-left: 4px solid #1BA0E2;
-                border-radius: 8px;
-                padding: 12px 18px 8px;
-                margin-bottom: 14px;
-            }
-            .sna-filter-label {
-                font-size: 0.70em; font-weight: 700;
-                color: #1BA0E2; text-transform: uppercase;
-                letter-spacing: 0.10em; margin-bottom: 2px;
-            }
-
-            .sna-rank-head {
-                background: linear-gradient(135deg, #f0f8ff 0%, #ffffff 100%);
-                border-radius: 10px; padding: 14px 18px 4px;
-                border-left: 3px solid #1BA0E2; margin-bottom: 8px;
-                box-shadow: 0 1px 6px rgba(13,127,204,0.07);
-            }
-            .sna-rank-title {
-                font-size: 0.78em; font-weight: 700; color: #1BA0E2;
-                text-transform: uppercase; letter-spacing: 0.07em;
-            }
-            .sna-rank-head-hotel {
-                background: linear-gradient(135deg, #eef3fb 0%, #ffffff 100%);
-                border-radius: 10px; padding: 14px 18px 4px;
-                border-left: 3px solid #0D7FCC; margin-bottom: 8px;
-                box-shadow: 0 1px 6px rgba(13,127,204,0.07);
-            }
-            .sna-rank-title-hotel {
-                font-size: 0.78em; font-weight: 700; color: #0D7FCC;
-                text-transform: uppercase; letter-spacing: 0.07em;
-            }
-            .sna-empty-warn {
-                background: #f0f8ff; border: 1px solid #cce4f4;
-                border-left: 4px solid #1BA0E2; border-radius: 8px;
-                padding: 16px 20px; font-size: 0.88em; color: #0D7FCC;
-            }
-            </style>
-
-            <div class="sna-header">
-                <div class="sna-header-inner">
-                    <div class="sna-icon-wrap">🕸️</div>
-                    <div>
-                        <div class="sna-title">Social Network Analysis</div>
-                        <div class="sna-sub">Employee ↔ Hotel Interaction Network · Centrality &amp; Dependency Mapping</div>
-                    </div>
-                    <div class="sna-pill">
-                        <span class="sna-pill-dot"></span>NETWORK GRAPH
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            required_cols = ["Employee Id", "Hotel Name"]
-
-            if all(col in df_all.columns for col in required_cols):
-
-                df_sna = (df_all.dropna(subset=required_cols)
-                          .groupby(required_cols).size().reset_index(name="weight"))
-
-                total_emp_count = df_sna["Employee Id"].nunique()
-                total_htl_count = df_sna["Hotel Name"].nunique()
-                total_edges     = len(df_sna)
-                avg_connections = df_sna.groupby("Employee Id")["weight"].sum().mean()
-
-                stat_cols = st.columns(4)
-                stat_data = [
-                    ("👤", "Total Employees",    f"{total_emp_count:,}",   "#1BA0E2"),
-                    ("🏨", "Total Hotels",       f"{total_htl_count:,}",   "#1494C6"),
-                    ("🔗", "Total Interactions", f"{total_edges:,}",        "#0D7FCC"),
-                    ("📊", "Avg Trips / Emp",    f"{avg_connections:.1f}", "#062440"),
-                ]
-                for col, (icon, label, val, color) in zip(stat_cols, stat_data):
-                    with col:
-                        st.markdown(f"""
-                        <div class="sna-stat" style="--sna-accent:{color};">
-                            <span class="sna-stat-icon">{icon}</span>
-                            <div class="sna-stat-label">{label}</div>
-                            <div class="sna-stat-value" style="color:{color};">{val}</div>
-                        </div>""", unsafe_allow_html=True)
-
-                st.markdown("""
-                <div class="sna-filter-bar">
-                    <div class="sna-filter-label">⚙ Network Parameters</div>
-                </div>""", unsafe_allow_html=True)
-
-                fcol1, fcol2, fcol3 = st.columns([2, 2, 1])
-                with fcol1:
-                    top_emp = st.slider("👤 Top Employees", 5, min(100, total_emp_count), min(50, total_emp_count))
-                with fcol2:
-                    top_htl = st.slider("🏨 Top Hotels", 5, min(50, total_htl_count), min(15, total_htl_count))
-                with fcol3:
-                    layout_algo = st.selectbox("📐 Layout", ["Spring", "Kamada-Kawai", "Circular"])
-
-                top_employees = (df_sna.groupby("Employee Id")["weight"].sum()
-                                 .sort_values(ascending=False).head(top_emp).index)
-                top_hotels = (df_sna.groupby("Hotel Name")["weight"].sum()
-                              .sort_values(ascending=False).head(top_htl).index)
-                df_filtered_sna = df_sna[
-                    df_sna["Employee Id"].isin(top_employees) &
-                    df_sna["Hotel Name"].isin(top_hotels)
-                ]
-
-                G = nx.Graph()
-                for _, row in df_filtered_sna.iterrows():
-                    G.add_edge(row["Employee Id"], row["Hotel Name"], weight=row["weight"])
-
-                seed = 42
-                if layout_algo == "Spring":
-                    pos = nx.spring_layout(G, seed=seed, k=0.7)
-                elif layout_algo == "Kamada-Kawai":
-                    try:
-                        pos = nx.kamada_kawai_layout(G)
-                    except:
-                        pos = nx.spring_layout(G, seed=seed)
-                else:
-                    pos = nx.circular_layout(G)
-
-                degree      = dict(G.degree())
-                betweenness = nx.betweenness_centrality(G)
-                max_weight  = max((G[u][v]["weight"] for u, v in G.edges()), default=1)
-                max_degree  = max(degree.values(), default=1)
-
-                # Edge traces — blue tones
-                edge_traces = []
-                for u, v in G.edges():
-                    x0, y0 = pos[u]; x1, y1 = pos[v]
-                    w = G[u][v]["weight"]
-                    opacity = 0.12 + 0.55 * (w / max_weight)
-                    width   = 0.5  + 3.0  * (w / max_weight)
-                    edge_traces.append(go.Scatter(
-                        x=[x0, x1, None], y=[y0, y1, None], mode="lines",
-                        line=dict(width=width, color=f"rgba(27,160,226,{opacity:.2f})"),
-                        hoverinfo="none", showlegend=False
-                    ))
-
-                # Employee nodes — blue gradient
-                emp_x, emp_y, emp_text, emp_size, emp_mc = [], [], [], [], []
-                for node in G.nodes():
-                    if node not in top_employees:
-                        continue
-                    x, y = pos[node]
-                    deg  = degree[node]
-                    bet  = betweenness.get(node, 0)
-                    size = 14 + (deg / max_degree) * 30
-                    total_trips    = df_filtered_sna[df_filtered_sna["Employee Id"] == node]["weight"].sum()
-                    hotels_visited = df_filtered_sna[df_filtered_sna["Employee Id"] == node]["Hotel Name"].nunique()
-                    emp_x.append(x); emp_y.append(y)
-                    emp_size.append(size); emp_mc.append(deg)
-                    emp_text.append(
-                        f"<b>👤 {node}</b><br>"
-                        f"Hotel Connections: <b>{deg}</b><br>"
-                        f"Total Stays: <b>{int(total_trips):,}</b><br>"
-                        f"Unique Hotels: <b>{hotels_visited}</b><br>"
-                        f"Betweenness: <b>{bet:.3f}</b>"
-                    )
-
-                employee_trace = go.Scatter(
-                    x=emp_x, y=emp_y, mode="markers", name="Employee",
-                    hoverinfo="text", text=emp_text,
-                    marker=dict(
-                        size=emp_size, color=emp_mc,
-                        colorscale=[
-                            [0.0, "#cce4f4"],
-                            [0.4, "#1BA0E2"],
-                            [0.7, "#1494C6"],
-                            [1.0, "#062440"]
-                        ],
-                        showscale=True,
-                        colorbar=dict(
-                            title=dict(text="Degree<br>(Employee)",
-                                       font=dict(size=10, color="#6a8fa0")),
-                            thickness=10, len=0.45, y=0.75, x=1.01,
-                            tickfont=dict(size=9, color="#6a8fa0")
-                        ),
-                        line=dict(width=2, color="white"),
-                        symbol="circle"
-                    )
-                )
-
-                # Hotel nodes — lime accent + dark blue
-                htl_x, htl_y, htl_text, htl_size, htl_mc = [], [], [], [], []
-                for node in G.nodes():
-                    if node not in top_hotels:
-                        continue
-                    x, y = pos[node]
-                    deg  = degree[node]
-                    bet  = betweenness.get(node, 0)
-                    size = 18 + (deg / max_degree) * 28
-                    total_stays = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["weight"].sum()
-                    unique_emps = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["Employee Id"].nunique()
-                    htl_x.append(x); htl_y.append(y)
-                    htl_size.append(size); htl_mc.append(deg)
-                    htl_text.append(
-                        f"<b>🏨 {node}</b><br>"
-                        f"Employee Connections: <b>{deg}</b><br>"
-                        f"Total Stays: <b>{int(total_stays):,}</b><br>"
-                        f"Unique Travelers: <b>{unique_emps}</b><br>"
-                        f"Betweenness: <b>{bet:.3f}</b>"
-                    )
-
-                hotel_trace = go.Scatter(
-                    x=htl_x, y=htl_y, mode="markers", name="Hotel",
-                    hoverinfo="text", text=htl_text,
-                    marker=dict(
-                        size=htl_size, color=htl_mc,
-                        colorscale=[
-                            [0.0, "#d8f0b0"],
-                            [0.3, "#98ea16"],
-                            [0.6, "#0D7FCC"],
-                            [1.0, "#062440"]
-                        ],
-                        showscale=True,
-                        colorbar=dict(
-                            title=dict(text="Degree<br>(Hotel)",
-                                       font=dict(size=10, color="#6a8fa0")),
-                            thickness=10, len=0.45, y=0.28, x=1.01,
-                            tickfont=dict(size=9, color="#6a8fa0")
-                        ),
-                        line=dict(width=2, color="white"),
-                        symbol="diamond"
-                    )
-                )
-
-                fig = go.Figure(
-                    data=edge_traces + [employee_trace, hotel_trace],
-                    layout=go.Layout(
-                        title=dict(
-                            text=(
-                                f"<b>Employee ↔ Hotel Network</b>"
-                                f"<span style='font-size:11px;color:#8a9aaa;'>"
-                                f"  ·  Top {top_emp} Employees"
-                                f"  ·  Top {top_htl} Hotels"
-                                f"  ·  {layout_algo} Layout</span>"
-                            ),
-                            font=dict(size=15, color="#1a2a3a"),
-                            x=0.0, xanchor="left"
-                        ),
-                        showlegend=True,
-                        legend=dict(
-                            bgcolor="rgba(240,248,255,0.95)",
-                            bordercolor="#cce4f4", borderwidth=1,
-                            font=dict(size=11, color="#1a2a3a")
-                        ),
-                        hovermode="closest",
-                        margin=dict(b=60, l=10, r=90, t=70),
-                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                        plot_bgcolor="#f0f8ff",
-                        paper_bgcolor="white",
-                        height=660
-                    )
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-
-                # ── Rank Tables ─────────────────────────────────────────────
-                rank_col1, rank_col2 = st.columns(2)
-
-                emp_rank = []
-                for node in top_employees:
-                    if node not in G.nodes():
-                        continue
-                    deg = degree.get(node, 0)
-                    bet = betweenness.get(node, 0)
-                    total_stays = df_filtered_sna[df_filtered_sna["Employee Id"] == node]["weight"].sum()
-                    emp_rank.append({
-                        "Employee ID": str(node),
-                        "Connections": deg,
-                        "Total Stays": int(total_stays),
-                        "Centrality":  round(bet, 4)
-                    })
-                emp_rank_df = (pd.DataFrame(emp_rank)
-                               .sort_values("Connections", ascending=False)
-                               .head(10).reset_index(drop=True))
-                emp_rank_df.index = emp_rank_df.index + 1
-                emp_rank_df.index.name = "Rank"
-
-                htl_rank = []
-                for node in top_hotels:
-                    if node not in G.nodes():
-                        continue
-                    deg = degree.get(node, 0)
-                    bet = betweenness.get(node, 0)
-                    total_stays = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["weight"].sum()
-                    unique_emps = df_filtered_sna[df_filtered_sna["Hotel Name"] == node]["Employee Id"].nunique()
-                    htl_rank.append({
-                        "Hotel Name":  str(node),
-                        "Travelers":   deg,
-                        "Total Stays": int(total_stays),
-                        "Centrality":  round(bet, 4)
-                    })
-                htl_rank_df = (pd.DataFrame(htl_rank)
-                               .sort_values("Travelers", ascending=False)
-                               .head(10).reset_index(drop=True))
-                htl_rank_df.index = htl_rank_df.index + 1
-                htl_rank_df.index.name = "Rank"
-
-                with rank_col1:
-                    st.markdown("""
-                    <div class="sna-rank-head">
-                        <div class="sna-rank-title">👤 Top Employees by Connectivity</div>
-                    </div>""", unsafe_allow_html=True)
-                    st.dataframe(
-                        emp_rank_df.style.background_gradient(
-                            subset=["Connections", "Total Stays"], cmap="Blues"
-                        ),
-                        use_container_width=True
-                    )
-
-                with rank_col2:
-                    st.markdown("""
-                    <div class="sna-rank-head-hotel">
-                        <div class="sna-rank-title-hotel">🏨 Top Hotels by Dependency Risk</div>
-                    </div>""", unsafe_allow_html=True)
-                    st.dataframe(
-                        htl_rank_df.style.background_gradient(
-                            subset=["Travelers", "Total Stays"], cmap="PuBu"
-                        ),
-                        use_container_width=True
-                    )
-
-            else:
-                st.markdown("""
-                <div class="sna-empty-warn">
-                    ⚠️ Kolom <strong>Employee Id</strong> atau
-                    <strong>Hotel Name</strong> tidak tersedia dalam dataset.
-                </div>""", unsafe_allow_html=True)
-
         # ======================================
         # TAB 6: PRICE INTELLIGENCE — Global Filters
         # ======================================
@@ -6364,10 +4565,15 @@ def main_app():
                                       & df_sc["_pareto_key"].astype(str).str.strip().ne("")
                                       & df_sc["_pareto_key"].astype(str).str.lower().ne("nan")]
 
-                        has_rn = "Number of Rooms Night" in df_sc.columns
+                        has_rn  = "Number of Rooms Night" in df_sc.columns
+                        has_trn = "Travel Request Number" in df_sc.columns
                         agg_map = {"Invoice Amount": ("Invoice Amount", "sum")}
                         if has_rn:
                             agg_map["Room Nights"] = ("Number of Rooms Night", "sum")
+                        # Basis rata-rata: booking unik (Travel Request Number),
+                        # fallback ke jumlah baris jika kolom tidak tersedia
+                        agg_map["Bookings"] = (("Travel Request Number", "nunique") if has_trn
+                                               else ("Invoice Amount", "size"))
 
                         pareto_df = (df_sc.groupby("_pareto_key").agg(**agg_map)
                                      .reset_index()
@@ -6376,6 +4582,11 @@ def main_app():
                                      .reset_index(drop=True))
                         if not has_rn:
                             pareto_df["Room Nights"] = np.nan
+
+                        _bk = pareto_df["Bookings"].replace(0, np.nan)
+                        pareto_df["Avg Spend / Booking"]      = pareto_df["Invoice Amount"] / _bk
+                        pareto_df["Avg Room Night / Booking"] = pareto_df["Room Nights"] / _bk
+                        pareto_df["Avg Rate/Night"] = pareto_df["Invoice Amount"] / pareto_df["Room Nights"].replace(0, np.nan)
 
                         # Daftar nama hotel asli per properti (untuk tabel, Excel & tooltip)
                         if is_hotel_dim:
@@ -6514,38 +4725,47 @@ def main_app():
                             """, unsafe_allow_html=True)
 
                         with tab_detail:
-                            # Kolom: Hotel / Properti, Nama Hotel Tergabung, Invoice Amount,
-                            #        Room Nights, Spend %, Cumulative %, Rank
                             name_col = "Hotel / Properti" if is_hotel_dim else pi_dimension
                             detail_df = top_contributors.rename(columns={pi_dimension: name_col})
                             detail_cols = [name_col]
                             if is_hotel_dim:
                                 detail_cols.append("Nama Hotel Tergabung")
-                            detail_cols += ["Invoice Amount", "Room Nights", "Spend %", "Cumulative %", "Rank"]
+                            detail_cols += ["Invoice Amount", "Room Nights", "Bookings",
+                                            "Avg Spend / Booking", "Avg Room Night / Booking",
+                                            "Spend %", "Cumulative %", "Rank"]
                             detail_df = detail_df[detail_cols].reset_index(drop=True)
 
                             st.dataframe(
                                 detail_df.style
                                 .format({"Invoice Amount": "Rp{:,.0f}",
                                          "Room Nights": "{:,.0f}",
+                                         "Bookings": "{:,.0f}",
+                                         "Avg Spend / Booking": "Rp{:,.0f}",
+                                         "Avg Room Night / Booking": "{:.2f}",
+                                         "Avg Rate/Night": "Rp{:,.0f}",                                         
                                          "Spend %": "{:.2f}%",
                                          "Cumulative %": "{:.2f}%"}, na_rep="-")
                                 .background_gradient(subset=["Spend %"], cmap="Blues"),
                                 use_container_width=True, hide_index=True
                             )
+                            if not has_trn:
+                                st.caption("Bookings dihitung dari jumlah baris data "
+                                           "(kolom Travel Request Number tidak tersedia).")
+
                             output_excel = excel_bytes_with_formats(
                                 detail_df, "Top Contributors",
                                 pct_cols=("Spend %", "Cumulative %"),
-                                money_cols=("Invoice Amount",),
-                                int_cols=("Room Nights", "Rank"))
-                            if st.session_state.get("role") == "Admin":
+                                money_cols=("Invoice Amount", "Avg Spend / Booking", "Avg Rate/Night"),
+                                int_cols=("Room Nights", "Bookings", "Rank"),
+                                dec_cols=("Avg Room Night / Booking",))
+                            if can_download():
                                 st.download_button(
                                     label="⬇️ Download Excel", data=output_excel,
                                     file_name=f"pareto_{pi_dimension.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
                                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                     key="dl_pareto_contributors")
                             else:
-                                st.markdown('<div class="pi-locked">🔒 Download hanya tersedia untuk <strong>Admin</strong></div>',
+                                st.markdown('<div class="pi-locked">🔒 Download tidak tersedia untuk akun ini</div>',
                                             unsafe_allow_html=True)
 
                         with tab_insight:
@@ -6905,7 +5125,9 @@ def main_app():
                     rp["_n_members"] = 1
 
                 total_rn = rp["Room Nights"].sum()
-                rp["Avg LOS"]         = rp["Room Nights"] / rp["Bookings"].replace(0, np.nan)
+                _rbk = rp["Bookings"].replace(0, np.nan)
+                rp["Avg Room Night / Booking"] = rp["Room Nights"] / _rbk
+                rp["Avg Spend / Booking"]      = rp["Invoice Amount"] / _rbk
                 rp["Avg Rate/Night"]  = rp["Invoice Amount"] / rp["Room Nights"].replace(0, np.nan)
                 rp["RN %"]            = rp["Room Nights"] / total_rn * 100
                 rp["Cumulative %"]    = rp["RN %"].cumsum().clip(upper=100)
@@ -7043,32 +5265,36 @@ def main_app():
                     name_col = "Hotel / Properti" if is_hotel_dim else ri_dimension
                     ri_detail = ri_top.rename(columns={ri_dimension: name_col})
                     cols = [name_col] + (["Nama Hotel Tergabung"] if is_hotel_dim else []) + \
-                           ["Room Nights", "Bookings", "Avg LOS", "Invoice Amount", "Avg Rate/Night",
+                           ["Room Nights", "Bookings", "Avg Room Night / Booking",
+                            "Invoice Amount", "Avg Spend / Booking", "Avg Rate/Night",
                             "RN %", "Cumulative %", "Rank"]
                     ri_detail = ri_detail[cols].reset_index(drop=True)
                     st.dataframe(
                         ri_detail.style
-                        .format({"Room Nights": "{:,.0f}", "Bookings": "{:,.0f}", "Avg LOS": "{:.2f}",
-                                 "Invoice Amount": "Rp{:,.0f}", "Avg Rate/Night": "Rp{:,.0f}",
+                        .format({"Room Nights": "{:,.0f}", "Bookings": "{:,.0f}",
+                                 "Avg Room Night / Booking": "{:.2f}",
+                                 "Invoice Amount": "Rp{:,.0f}",
+                                 "Avg Spend / Booking": "Rp{:,.0f}",
+                                 "Avg Rate/Night": "Rp{:,.0f}",
                                  "RN %": "{:.2f}%", "Cumulative %": "{:.2f}%"}, na_rep="-")
                         .background_gradient(subset=["RN %"], cmap="Blues"),
                         use_container_width=True, hide_index=True)
                     if not has_trn:
                         st.caption("Bookings dihitung dari jumlah baris data (kolom Travel Request Number tidak tersedia).")
-                    if st.session_state.get("role") == "Admin":
+                    if can_download():
                         st.download_button(
                             label="⬇️ Download Excel",
                             data=excel_bytes_with_formats(
                                 ri_detail, "Top Room Nights",
                                 pct_cols=("RN %", "Cumulative %"),
-                                money_cols=("Invoice Amount", "Avg Rate/Night"),
+                                money_cols=("Invoice Amount", "Avg Spend / Booking", "Avg Rate/Night"),
                                 int_cols=("Room Nights", "Bookings", "Rank"),
-                                dec_cols=("Avg LOS",)),
+                                dec_cols=("Avg Room Night / Booking",)),
                             file_name=f"room_pareto_{ri_dimension.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key="dl_room_pareto")
                     else:
-                        st.markdown('<div class="pi-locked">🔒 Download hanya tersedia untuk <strong>Admin</strong></div>',
+                        st.markdown('<div class="pi-locked">🔒 Download tidak tersedia untuk akun ini</div>',
                                     unsafe_allow_html=True)
 
                 with ri_tab_insight:
@@ -7220,6 +5446,21 @@ def main_app():
                     """, unsafe_allow_html=True)
 
             _render_tab_room()
+
+
+        # ======================================
+        # TAB COST AVOIDANCE (modul cost_avoidance.py)
+        # ======================================
+        with tab_cost:
+            render_cost_avoidance(
+                df_all,
+                can_download=can_download(),
+                can_edit=is_admin(),
+                username=st.session_state.get("username", ""),
+                excel_fn=excel_bytes_with_formats,
+                standardize_name=standardize_name,
+                normalize_city=_normalize_city_key,
+            )
 
         with tab7:
 
@@ -7440,7 +5681,7 @@ def main_app():
                         <div class="sk-header-title">Sankey Flow Analysis</div>
                         <div class="sk-header-sub">
                             Visualisasi alur pengeluaran travel ·
-                            Perusahaan → Kota → Hotel · berbasis Invoice Amount
+                            Negara → Kota → Hotel · berbasis Invoice Amount
                         </div>
                     </div>
                     <div class="sk-header-badge">
@@ -7454,7 +5695,7 @@ def main_app():
             st.markdown("""
             <div class="sk-flow-path">
                 <div class="sk-flow-node active">
-                    <span class="sk-flow-node-icon">🏢</span> Perusahaan
+                    <span class="sk-flow-node-icon">🌏</span> Negara
                 </div>
                 <div class="sk-flow-arrow">
                     <div class="sk-flow-arrow-line"></div>
@@ -7473,7 +5714,7 @@ def main_app():
             </div>
             """, unsafe_allow_html=True)
 
-            required_sankey  = ["Nama Perusahaan", "Hotel Name", "Invoice Amount"]
+            required_sankey  = ["Country", "Hotel Name", "Invoice Amount"]
             city_sankey_col  = next(
                 (c for c in ["City", "City Destination"] if c in df_overview.columns), None
             )
@@ -7505,7 +5746,7 @@ def main_app():
                     )
                     sankey_country_filter = st.radio(
                         label="sankey_wilayah",
-                        options=["Domestik", "Internasional"],
+                        options=["Semua", "Domestik", "Internasional"],
                         index=0, horizontal=True,
                         label_visibility="collapsed",
                         key="sankey_country_radio"
@@ -7513,8 +5754,8 @@ def main_app():
 
                 with row_ctrl[1]:
                     top_n_company = st.selectbox(
-                        "🏢 Perusahaan", [5, 8, 10, 15, 20],
-                        index=2, key="sankey_top_company"
+                        "🌏 Negara", [3, 5, 8, 10, 15],
+                        index=1, key="sankey_top_company"
                     )
                 with row_ctrl[2]:
                     top_n_city = st.selectbox(
@@ -7538,7 +5779,10 @@ def main_app():
                     _df_sk["_cu"] = _df_sk["Country"].astype(str).str.strip().str.upper()
                     domestic_alias = ["INDONESIA", "ID", "IDN"]
 
-                    if sankey_country_filter == "Domestik":
+                    if sankey_country_filter == "Semua":
+                        df_sankey    = _df_sk.drop(columns=["_cu"])
+                        sankey_label = "🌏 Semua"
+                    elif sankey_country_filter == "Domestik":
                         df_sankey    = _df_sk[_df_sk["_cu"].isin(domestic_alias)].drop(columns=["_cu"])
                         sankey_label = "🇮🇩 Domestik"
                     else:
@@ -7555,11 +5799,11 @@ def main_app():
                     )
                 else:
                     df_sk = df_sankey.dropna(
-                        subset=["Nama Perusahaan", city_sankey_col, "Hotel Name", "Invoice Amount"]
+                        subset=["Country", city_sankey_col, "Hotel Name", "Invoice Amount"]
                     ).copy()
 
                     # Compute tops
-                    top_companies = (df_sk.groupby("Nama Perusahaan")["Invoice Amount"]
+                    top_companies = (df_sk.groupby("Country")["Invoice Amount"]
                                      .sum().nlargest(top_n_company).index)
                     top_cities    = (df_sk.groupby(city_sankey_col)["Invoice Amount"]
                                      .sum().nlargest(top_n_city).index)
@@ -7567,7 +5811,7 @@ def main_app():
                                      .sum().nlargest(top_n_hotel).index)
 
                     df_sk = df_sk[
-                        df_sk["Nama Perusahaan"].isin(top_companies) &
+                        df_sk["Country"].isin(top_companies) &
                         df_sk[city_sankey_col].isin(top_cities) &
                         df_sk["Hotel Name"].isin(top_hotels)
                     ]
@@ -7587,7 +5831,7 @@ def main_app():
                         <div class="sk-active-filter">
                             <span>🔎 <b>Filter aktif</b></span>
                             <span>Wilayah: <b>{sankey_label}</b></span>
-                            <span>Top <b>{top_n_company}</b> Perusahaan
+                            <span>Top <b>{top_n_company}</b> Negara
                                 · <b>{top_n_city}</b> Kota
                                 · <b>{top_n_hotel}</b> Hotel</span>
                             <span>Total Spend:
@@ -7601,7 +5845,7 @@ def main_app():
                         """, unsafe_allow_html=True)
 
                         # ── Stat Cards ────────────────────────────────────────
-                        n_co = df_sk["Nama Perusahaan"].nunique()
+                        n_co = df_sk["Country"].nunique()
                         n_ci = df_sk[city_sankey_col].nunique()
                         n_ht = df_sk["Hotel Name"].nunique()
                         n_rn = df_sk["Number of Rooms Night"].sum() if "Number of Rooms Night" in df_sk.columns else 0
@@ -7610,7 +5854,7 @@ def main_app():
                         <div class="sk-stat-grid">
                             <div class="sk-stat" style="--sk-color:#1BA0E2;">
                                 <span class="sk-stat-icon">🏢</span>
-                                <div class="sk-stat-label">Perusahaan</div>
+                                <div class="sk-stat-label">Negara</div>
                                 <div class="sk-stat-value">{n_co}</div>
                             </div>
                             <div class="sk-stat" style="--sk-color:#1494C6;">
@@ -7632,12 +5876,12 @@ def main_app():
                         """, unsafe_allow_html=True)
 
                         # ── Build Sankey data ─────────────────────────────────
-                        co_ci = (df_sk.groupby(["Nama Perusahaan", city_sankey_col])
+                        co_ci = (df_sk.groupby(["Country", city_sankey_col])
                                  ["Invoice Amount"].sum().reset_index())
                         ci_ho = (df_sk.groupby([city_sankey_col, "Hotel Name"])
                                  ["Invoice Amount"].sum().reset_index())
 
-                        companies = list(co_ci["Nama Perusahaan"].unique())
+                        companies = list(co_ci["Country"].unique())
                         cities    = list(co_ci[city_sankey_col].unique())
                         hotels    = list(ci_ho["Hotel Name"].unique())
                         node_labels = companies + cities + hotels
@@ -7648,8 +5892,8 @@ def main_app():
 
                         sources, targets, values = [], [], []
                         for _, row in co_ci.iterrows():
-                            if row["Nama Perusahaan"] in co_idx and row[city_sankey_col] in ci_idx:
-                                sources.append(co_idx[row["Nama Perusahaan"]])
+                            if row["Country"] in co_idx and row[city_sankey_col] in ci_idx:
+                                sources.append(co_idx[row["Country"]])
                                 targets.append(ci_idx[row[city_sankey_col]])
                                 values.append(row["Invoice Amount"])
                         for _, row in ci_ho.iterrows():
@@ -7716,9 +5960,9 @@ def main_app():
                             margin=dict(l=16, r=16, t=58, b=16),
                             title=dict(
                                 text=(
-                                    f"<b>Sankey Flow: Perusahaan → Kota → Hotel</b>"
+                                    f"<b>Sankey Flow: Negara → Kota → Hotel</b>"
                                     f"<span style='color:#6a8fa0;font-size:11px;'>"
-                                    f"  ·  Top {top_n_company} Perusahaan"
+                                    f"  ·  Top {top_n_company} Negara"
                                     f"  ·  Top {top_n_city} Kota"
                                     f"  ·  Top {top_n_hotel} Hotel"
                                     f"  ·  {sankey_label}"
@@ -7736,7 +5980,7 @@ def main_app():
 
                         tbl_col1, tbl_col2, tbl_col3 = st.columns(3)
 
-                        top_co_tbl = (df_sk.groupby("Nama Perusahaan")["Invoice Amount"]
+                        top_co_tbl = (df_sk.groupby("Country")["Invoice Amount"]
                                       .sum().sort_values(ascending=False)
                                       .reset_index().head(top_n_company))
                         top_ci_tbl = (df_sk.groupby(city_sankey_col)["Invoice Amount"]
@@ -7753,7 +5997,7 @@ def main_app():
                                         padding:10px 16px 4px;margin-bottom:8px;'>
                                 <div style='font-size:0.72em;font-weight:700;color:#1BA0E2;
                                             text-transform:uppercase;letter-spacing:0.08em;'>
-                                    🏢 Top Perusahaan
+                                    🌏 Top Negara
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
@@ -7804,7 +6048,7 @@ def main_app():
                         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
                         output_sankey = BytesIO()
                         export_df = (
-                            df_sk.groupby(["Nama Perusahaan", city_sankey_col, "Hotel Name"])
+                            df_sk.groupby(["Country", city_sankey_col, "Hotel Name"])
                             ["Invoice Amount"].sum()
                             .reset_index()
                             .sort_values("Invoice Amount", ascending=False)
@@ -7812,7 +6056,7 @@ def main_app():
                         export_df.to_excel(output_sankey, index=False, sheet_name="Sankey Flow")
                         output_sankey.seek(0)
 
-                        if st.session_state.get("role") == "Admin":
+                        if can_download():
                             st.download_button(
                                 label="⬇️ Download Data Sankey Flow (Excel)",
                                 data=output_sankey,
@@ -7824,7 +6068,7 @@ def main_app():
                                 key="dl_sankey_flow")
                         else:
                             st.markdown(
-                                '<div class="sk-locked">🔒 Download hanya tersedia untuk <strong>Admin</strong></div>',
+                                '<div class="sk-locked">🔒 Download tidak tersedia untuk akun ini</div>',
                                 unsafe_allow_html=True
                             )
 
@@ -7971,16 +6215,35 @@ def main_app():
 
                         st.plotly_chart(fig_hotels, use_container_width=True)
 
-                        # Download
-                        output_hotels = BytesIO()
-                        top_hotels_tab.drop(columns=["Rank", "Highlight"]).to_excel(
-                            output_hotels,
-                            index=False,
-                            sheet_name="Top 100 Hotels"
+                        # Download — tambah Average Room Rate per hotel
+                        # (total Invoice Amount ÷ total Room Nights, sama dengan "Avg Rate/Night"
+                        # di Price/Room Intelligence; hanya baris dengan RN > 0 & nominal valid)
+                        dl_hotels = top_hotels_tab.drop(columns=["Rank", "Highlight"])
+                        # Kolom City setelah Hotel Name (kota yang paling sering muncul per hotel)
+                        _city_dl = next((c for c in ["City", "City Destination"] if c in df_tab8.columns), None)
+                        if _city_dl:
+                            _hc = df_tab8[["Hotel Name", _city_dl]].dropna()
+                            _hc = _hc[_hc[_city_dl].astype(str).str.strip().str.lower() != "nan"]
+                            _hotel_city = (_hc.groupby("Hotel Name")[_city_dl]
+                                           .agg(lambda s: s.value_counts().index[0]))
+                            dl_hotels.insert(1, "City", dl_hotels["Hotel Name"].map(_hotel_city))
+                        if "Invoice Amount" in df_tab8.columns:
+                            _rate_src = df_tab8[["Hotel Name", "Number of Rooms Night", "Invoice Amount"]].copy()
+                            _rate_src["Number of Rooms Night"] = pd.to_numeric(_rate_src["Number of Rooms Night"], errors="coerce")
+                            _rate_src["Invoice Amount"] = pd.to_numeric(_rate_src["Invoice Amount"], errors="coerce")
+                            _rate_src = _rate_src[(_rate_src["Number of Rooms Night"] > 0) & _rate_src["Invoice Amount"].notna()]
+                            _rate = (_rate_src.groupby("Hotel Name")[["Invoice Amount", "Number of Rooms Night"]].sum())
+                            _rate["Average Room Rate"] = (_rate["Invoice Amount"] /
+                                                         _rate["Number of Rooms Night"].replace(0, np.nan)).round(0)
+                            dl_hotels = dl_hotels.merge(_rate[["Average Room Rate"]], how="left",
+                                                        left_on="Hotel Name", right_index=True)
+                        output_hotels = excel_bytes_with_formats(
+                            dl_hotels, "Top 100 Hotels",
+                            money_cols=("Average Room Rate",),
+                            int_cols=("Number of Rooms Night",),
                         )
-                        output_hotels.seek(0)
 
-                        if st.session_state.get("role") == "Admin":
+                        if can_download():
                             st.download_button(
                                 label="⬇️ Download Data",
                                 data=output_hotels,
@@ -7991,7 +6254,7 @@ def main_app():
                             st.markdown("""
                             <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;
                             border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>
-                            🔒 Download hanya tersedia untuk <strong>Admin</strong>
+                            🔒 Download tidak tersedia untuk akun ini
                             </div>
                             """, unsafe_allow_html=True)
 
@@ -8061,7 +6324,7 @@ def main_app():
                         )
                         output_cities.seek(0)
 
-                        if st.session_state.get("role") == "Admin":
+                        if can_download():
                             st.download_button(
                                 label="⬇️ Download Data",
                                 data=output_cities,
@@ -8072,7 +6335,7 @@ def main_app():
                             st.markdown("""
                             <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;
                             border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>
-                            🔒 Download hanya tersedia untuk <strong>Admin</strong>
+                            🔒 Download tidak tersedia untuk akun ini
                             </div>
                             """, unsafe_allow_html=True)
 
@@ -8305,13 +6568,13 @@ def main_app():
             dend_r1 = st.columns([2, 2, 2, 2])
             with dend_r1[0]:
                 dend_entity = st.selectbox(
-                    "🎯 Entitas", ["Hotel", "Perusahaan", "Kota"], key="dend_entity",
+                    "🎯 Entitas", ["Kota", "Hotel"], key="dend_entity",
                     help="Pilih entitas yang akan dikelompokkan"
                 )
             with dend_r1[1]:
                 dend_metric_col = st.selectbox(
                     "📐 Metric",
-                    ["Invoice Amount", "Number of Rooms Night", "Travel Request Number"],
+                    ["Invoice Amount", "Number of Rooms Night"],
                     key="dend_metric",
                     help="Metric yang digunakan sebagai dasar clustering"
                 )
@@ -8341,28 +6604,34 @@ def main_app():
                 )
 
             # ── Data preparation ─────────────────────────────────────────────
-            _city_col = next((c for c in df_all.columns if c in ["City", "City Destination"]), None)
-            entity_map_dend  = {"Hotel": "Hotel Name", "Perusahaan": "Nama Perusahaan", "Kota": _city_col}
-            pivot_rows_dend  = {
-                "Hotel":     "Nama Perusahaan",
-                "Perusahaan": _city_col if _city_col else "Hotel Name",
-                "Kota":      "Nama Perusahaan"
-            }
+            # Profil tiap entitas = pola bulanan (kolom perusahaan tidak ada di sumber data)
+            _df_dend_src = df_all.copy()
+            if "Issue Time" in _df_dend_src.columns:
+                _df_dend_src["Bulan"] = pd.to_datetime(_df_dend_src["Issue Time"], errors="coerce",
+                                                       dayfirst=True).dt.to_period("M").astype(str)
+            _city_col = next((c for c in _df_dend_src.columns if c in ["City", "City Destination"]), None)
+            entity_map_dend  = {"Hotel": "Hotel Name", "Kota": _city_col}
+            pivot_rows_dend  = {"Hotel": "Bulan", "Kota": "Bulan"}
 
             entity_col_dend = entity_map_dend.get(dend_entity)
             row_col_dend    = pivot_rows_dend.get(dend_entity)
-            metric_col_dend = next((c for c in df_all.columns if c == dend_metric_col), None)
+            metric_col_dend = next((c for c in _df_dend_src.columns if c == dend_metric_col), None)
 
-            if (entity_col_dend and entity_col_dend in df_all.columns
+            if (entity_col_dend and entity_col_dend in _df_dend_src.columns
                     and metric_col_dend
-                    and row_col_dend and row_col_dend in df_all.columns):
+                    and row_col_dend and row_col_dend in _df_dend_src.columns):
 
-                df_dend = df_all[[entity_col_dend, row_col_dend, metric_col_dend]].dropna()
+                df_dend = _df_dend_src[[entity_col_dend, row_col_dend, metric_col_dend]].dropna()
                 top_ent = df_dend.groupby(entity_col_dend)[metric_col_dend].sum().nlargest(dend_top_n).index
                 df_dend = df_dend[df_dend[entity_col_dend].isin(top_ent)]
                 pivot_dend = (df_dend.groupby([entity_col_dend, row_col_dend])[metric_col_dend]
                               .sum().unstack(fill_value=0))
-                X_dend = sk_normalize(pivot_dend.values, norm="l2")
+                if pivot_dend.shape[0] >= 2 and pivot_dend.shape[1] >= 1:
+                    X_dend = sk_normalize(pivot_dend.values, norm="l2")
+                else:
+                    X_dend = np.empty((0, 0))
+                    st.info("ℹ️ Data belum cukup untuk membentuk dendrogram dengan pilihan ini "
+                            "(minimal 2 entitas). Coba ganti Entitas/Metric atau longgarkan filter.")
 
                 if X_dend.shape[0] >= 2:
                     Z_dend       = sk_linkage(X_dend, method=dend_method, metric="euclidean")
@@ -8653,7 +6922,7 @@ def main_app():
                     <div class="dnd-insight">
                         <strong>Hasil Clustering — {dend_entity} · {dend_method} linkage · {n_clusters_dend} klaster</strong><br><br>
                         Dari <em>{len(pivot_dend)} {dend_entity}</em> yang dianalisis,
-                        terbentuk <em>{n_clusters_dend} klaster</em> berdasarkan kemiripan pola
+                        terbentuk <em>{n_clusters_dend} klaster</em> berdasarkan kemiripan pola bulanan
                         <em>{dend_metric_col}</em>.<br><br>
                         <strong>Klaster {dominant}</strong> mendominasi dengan kontribusi
                         <em>{dominant_pct:.1f}%</em> dari total.
@@ -8669,79 +6938,82 @@ def main_app():
                             border-left:4px solid #1BA0E2;border-radius:8px;
                             padding:16px 20px;font-size:0.88em;color:#0D7FCC;'>
                     ⚠️ Data tidak cukup untuk membuat dendrogram dengan parameter yang dipilih.
-                    Pastikan kolom <strong>Hotel Name</strong>, <strong>Nama Perusahaan</strong>,
-                    dan <strong>Invoice Amount</strong> tersedia.
+                    Pastikan kolom <strong>Hotel Name</strong>, <strong>City</strong>,
+                    <strong>Issue Time</strong> dan <strong>Invoice Amount</strong> tersedia.
                 </div>
                 """, unsafe_allow_html=True)
 
+
         # ======================================
-        # TAB 10: EXPORT
+        # TAB LAPORAN — hanya laporan agregat + audit log
         # ======================================
         with tab10:
-            st.markdown("<div class='section-title'>Export Data</div>", unsafe_allow_html=True)
-            st.markdown("Export your data in various formats for further analysis.")
+            st.markdown("<div class='section-title'>Laporan</div>", unsafe_allow_html=True)
+            st.caption("Semua unduhan berupa laporan agregat dan tercatat atas nama akun Anda. "
+                       "Laporan Cost Avoidance (detail, kebocoran, target renegosiasi) ada di tab Cost Avoidance.")
 
-            col1, col2, col3 = st.columns(3)
+            _rep = df_all.copy()
+            _rep["Number of Rooms Night"] = pd.to_numeric(_rep.get("Number of Rooms Night"), errors="coerce")
+            _has_tr = "Travel Request Number" in _rep.columns
 
-            with col1:
-                st.markdown("#### CSV Format")
-                st.markdown("Compatible with Excel, Google Sheets")
-                if st.button("Download CSV", use_container_width=True, type="primary"):
-                    csv = df_all.to_csv(index=False).encode("utf-8")
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button("⬇️ Download",data=csv,
-                            file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv",use_container_width=True,
-                            key="dl_export_csv")
-                    else:
-                        st.markdown("""<div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
-                        padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>🔒 Download hanya tersedia untuk <strong>Admin</strong></div>""",
-                        unsafe_allow_html=True)
+            def _agg(df, keys):
+                g = df.groupby(keys, dropna=False).agg(
+                    **{"Room nights": ("Number of Rooms Night", "sum"),
+                       "Spend (Rp)": ("Invoice Amount", "sum")})
+                if _has_tr:
+                    g["Travel requests"] = df.groupby(keys, dropna=False)["Travel Request Number"].nunique()
+                g["Avg rate / malam (Rp)"] = (g["Spend (Rp)"] / g["Room nights"].replace(0, np.nan)).round(0)
+                return g.reset_index().sort_values("Room nights", ascending=False)
 
-            with col2:
-                st.markdown("#### Excel Format")
-                st.markdown("Microsoft Excel workbook")
-                if st.button("Download Excel", use_container_width=True, type="primary"):
-                    buffer = BytesIO()
-                    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-                        df_all.to_excel(writer, index=False, sheet_name="Travel Data")
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button("⬇️ Download",data=buffer.getvalue(),
-                            file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True,
-                            key="dl_export_xlsx")
-                    else:
-                        st.markdown("""<div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
-                        padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>🔒 Download hanya tersedia untuk <strong>Admin</strong></div>""",
-                        unsafe_allow_html=True)
+            _reports = []
+            if {"Hotel Name", "City"}.issubset(_rep.columns):
+                _reports.append(("Ringkasan per hotel", "Hotel, kota, room nights, spend, rata-rata rate per malam",
+                                 _agg(_rep, ["Hotel Name", "City"]), "ringkasan_per_hotel"))
+            if "City" in _rep.columns:
+                _reports.append(("Ringkasan per kota", "Kota, negara, room nights, spend, rata-rata rate per malam",
+                                 _agg(_rep, ["Country", "City"] if "Country" in _rep.columns else ["City"]),
+                                 "ringkasan_per_kota"))
+            if "Issue Time" in _rep.columns:
+                _m = _rep.copy()
+                _m["Bulan"] = pd.to_datetime(_m["Issue Time"], errors="coerce", dayfirst=True).dt.to_period("M").astype(str)
+                if "Country" in _m.columns:
+                    _m["Market"] = np.where(_m["Country"].astype(str).str.strip().str.upper() == "INDONESIA",
+                                            "Domestik", "Internasional")
+                    _keys = ["Bulan", "Market"]
+                else:
+                    _keys = ["Bulan"]
+                _reports.append(("Tren bulanan", "Travel request, room nights dan spend per bulan",
+                                 _agg(_m, _keys).sort_values(_keys), "tren_bulanan"))
 
-            with col3:
-                st.markdown("#### JSON Format")
-                st.markdown("For APIs and data exchange")
-                if st.button("Download JSON", use_container_width=True, type="primary"):
-                    json_data = df_all.to_json(orient="records", date_format="iso")
-                    if st.session_state.get('role') == 'Admin':
-                        st.download_button("⬇️ Download",data=json_data,
-                            file_name=f"mtrax_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                            mime="application/json",use_container_width=True,
-                            key="dl_export_json")
-                    else:
-                        st.markdown("""<div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
-                        padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>🔒 Download hanya tersedia untuk <strong>Admin</strong></div>""",
-                        unsafe_allow_html=True)
+            _cols = st.columns(3)
+            for _i, (_title, _desc, _df, _fname) in enumerate(_reports):
+                with _cols[_i % 3]:
+                    with st.container(border=True):
+                        st.markdown(f"**{_title}**")
+                        st.caption(f"{_desc} · {len(_df):,} baris".replace(",", "."))
+                        if can_download():
+                            st.download_button(
+                                "⬇️ Unduh Excel",
+                                excel_bytes_with_formats(_df, _title[:31],
+                                                         money_cols=("Spend (Rp)", "Avg rate / malam (Rp)"),
+                                                         int_cols=("Room nights", "Travel requests")),
+                                file_name=f"{_fname}_{datetime.now():%Y%m%d}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"dl_rep_{_fname}")
+                        else:
+                            st.caption("🔒 Unduhan tidak tersedia untuk akun ini.")
 
-            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-            st.markdown("### Export Statistics")
+            st.info("**Data per transaksi tidak bisa diunduh dari dashboard.** Kebutuhan data per booking "
+                    "diajukan lewat permintaan data dan disetujui atasan serta Pejabat Pelindungan Data Pribadi.")
 
-            col1, col2, col3, col4 = st.columns(4)
-            with col1: st.metric("Total Records", f"{len(df_all):,}")
-            with col2: st.metric("Total Columns", f"{len(df_all.columns)}")
-            with col3:
-                memory_usage = df_all.memory_usage(deep=True).sum()/1024/1024
-                st.metric("Memory Usage", f"{memory_usage:.2f} MB")
-            with col4: st.metric("Est. File Size", f"{memory_usage*0.8:.2f} MB")
-            
+            if is_super_admin():
+                st.markdown("<div class='section-title'>Audit log</div>", unsafe_allow_html=True)
+                _log = read_audit_tail(200)
+                if _log.empty:
+                    st.caption("Belum ada catatan.")
+                else:
+                    st.dataframe(_log, hide_index=True, use_container_width=True, height=360)
+
         # ======================================
         # TAB 11: PATRA JASA GROUP vs NON-PATRA JASA
         # ======================================
@@ -8760,7 +7032,12 @@ def main_app():
                 "Patra Anyer Hotel",
                 "Patra Parapat Hotel",
             ]
-            PATRA_JASA_NORMALIZED = [h.lower().strip() for h in PATRA_JASA_HOTELS]
+            # Nama di data sudah diseragamkan, jadi kamus Patra juga dicocokkan
+            # dalam bentuk aslinya maupun bentuk standarnya.
+            PATRA_JASA_NORMALIZED = sorted(
+                {h.lower().strip() for h in PATRA_JASA_HOTELS}
+                | {str(standardize_name(h)).lower().strip() for h in PATRA_JASA_HOTELS}
+            )
 
             # ── Validasi kolom minimum ──
             _req_cols = {"Hotel Name", "Country"}
@@ -9205,7 +7482,7 @@ def main_app():
                             _output_pj = BytesIO()
                             _dl_pivot.to_excel(_output_pj, index=False, sheet_name="Patra vs Non-Patra")
                             _output_pj.seek(0)
-                            if st.session_state.get("role") == "Admin":
+                            if can_download():
                                 st.download_button(
                                     label="⬇️ Download Tabel",
                                     data=_output_pj,
@@ -9216,7 +7493,7 @@ def main_app():
                                 st.markdown("""
                                 <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
                                 padding:10px 16px;font-size:0.82em;color:#1BA0E2;display:flex;align-items:center;gap:8px;'>
-                                    <span>🔒</span><span>Download hanya tersedia untuk <strong>Admin</strong></span>
+                                    <span>🔒</span><span>Download tidak tersedia untuk akun ini</span>
                                 </div>""", unsafe_allow_html=True)
                         else:
                             st.info(f"ℹ️ Tidak ada data bulanan untuk ditampilkan pada tahun {_pj_selected_year}.")
@@ -9244,6 +7521,8 @@ def main_app():
 
                         # Normalisasi nama hotel ke nama kanonik dari kamus
                         _norm_to_canonical = {h.lower().strip(): h for h in PATRA_JASA_HOTELS}
+                        _norm_to_canonical.update({str(standardize_name(h)).lower().strip(): h
+                                                   for h in PATRA_JASA_HOTELS})
                         df_kamus["Nama Hotel Canonical"] = df_kamus["_hotel_norm"].map(_norm_to_canonical).fillna(df_kamus["Hotel Name"])
 
                         _km_th_h  = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:center;white-space:nowrap;"
@@ -9379,12 +7658,6 @@ def main_app():
                         else:
                             st.info("Data room nights per hotel tidak tersedia (kolom 'Number of Rooms Night' tidak ditemukan).")
 
-        # ======================================
-        # TAB 12: AI HOTEL MERGE (Claude API)
-        # ======================================
-        with tab12:
-            render_ai_hotel_merge_tab(_ai_hotel_summary)
-
     # ======================================
     # DISCLAIMER + FOOTER
     # ======================================
@@ -9399,7 +7672,7 @@ def main_app():
     st.markdown("""
     <div class='divider' style='margin-top:50px;'></div>
     <div style='text-align:center;padding:25px;color:#888888;font-size:0.85em;'>
-        © 2025 Dikembangkan oleh 
+        © 2026 Dikembangkan oleh 
         <a href="https://www.linkedin.com/in/rifyalt/" target="_blank" style='color:#1BA0E2;text-decoration:none;font-weight:500;'>
             Rifyal Tumber
         </a> · MTRAX Travel Analytics
@@ -9413,6 +7686,16 @@ def main_app():
 # ===============================
 _try_restore_session_from_cookie()  # pulihkan login kalau cookie sesi masih valid (mis. setelah reload halaman)
 
+# Mode tanpa login (sementara): [access] login_required = false di secrets.toml
+if not login_required() and not st.session_state.get("authenticated"):
+    guest_login()
+# Login diaktifkan lagi: sesi tamu yang masih terbuka langsung diakhiri
+if login_required() and st.session_state.get("username") == GUEST_USERNAME:
+    for _k in list(st.session_state.keys()):
+        del st.session_state[_k]
+    init_login_security()
+    st.session_state.authenticated = False
+
 if not st.session_state.get("authenticated"):
 
     if st.session_state.get("pending_2fa"):
@@ -9420,12 +7703,12 @@ if not st.session_state.get("authenticated"):
         username = st.session_state.pending_user
         totp_secrets = _load_totp_secrets()
 
-        # Semua user berbagi secret admin — enrolled jika [totp][admin] ada di secrets.toml
-        enrolled_via_toml = False
-        try:
-            enrolled_via_toml = bool(st.secrets["totp"]["admin"])
-        except Exception:
-            pass
+        # Setiap user punya secret TOTP sendiri di secrets.toml [totp][<username>]
+        enrolled_via_toml = bool(_own_totp_secret(username))
+        if USERS.get(username, {}).get("role") == "Demo" and not enrolled_via_toml:
+            # Demo tanpa secret sendiri tidak memakai 2FA
+            st.session_state.pending_2fa = False
+            st.rerun()
 
         # ── Hanya percaya secrets.toml sebagai bukti enrollment permanen.
         # session_state.totp_enrolled bersifat volatile (hilang saat restart),
@@ -9445,5 +7728,6 @@ if not st.session_state.get("authenticated"):
         login_page()   # belum login sama sekali
 
 else:
-    check_session_timeout()
+    if login_required():
+        check_session_timeout()
     main_app()
