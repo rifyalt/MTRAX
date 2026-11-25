@@ -3515,12 +3515,13 @@ def tab_laporan(df):
             b = ca.prepare_bookings(r, standardize_name, _normalize_city_key)
             corp, _ = ca.harmonize_corp_names(b, corp)
             corp = ca.align_corp_cities(b, corp)
+            b, corp = ca.breakfast_only(b, corp)
             mm = ca.match_bookings(b, corp)
             pools = ca.market_pools(b)
             s = ca.summarize_matched(mm, pools)
             if not s.empty:
                 reps.append(("Cost avoidance per hotel & tipe kamar",
-                             "Corp rate, rate dibayar, selisih, potensi avoidance, status daya saing",
+                             "Booking termasuk sarapan · corp rate, rate dibayar, selisih, potensi avoidance, status",
                              _cols(s, ["Hotel", "Kota", "Room type", "Meal plan", "Corp", "Avg dibayar", "Selisih %",
                                        "RN", "Potensi", "Malam < corp %", "Posisi kota", "Daya saing"])
                              .rename(columns={"Corp": "Corp rate", "RN": "Room nights"}), "cost_avoidance"))
