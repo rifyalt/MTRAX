@@ -212,6 +212,17 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 .mx-table th:first-child, .mx-table td:first-child {{ text-align:left; }}
 .mx-table td {{ padding:8px 10px; border-bottom:1px solid #EDEDED; text-align:right; white-space:nowrap; }}
 .mx-table tbody tr:hover td {{ background:#F7FBFE; }}
+.mx-scope {{ background:#FFFFFF; border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--shadow);
+  margin:6px 0 18px; }}
+.mx-scope .row {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); }}
+.mx-scope .it {{ padding:14px 18px; border-right:1px solid #EDEDED; }}
+.mx-scope .it:last-child {{ border-right:none; }}
+.mx-scope .l {{ font-size:12.5px; color:var(--muted); }}
+.mx-scope .v {{ font-size:18px; font-weight:600; color:var(--ink); margin-top:4px; font-variant-numeric:tabular-nums; }}
+.mx-scope .s {{ font-size:12.5px; color:var(--muted); margin-top:2px; }}
+.mx-scope .ft {{ border-top:1px solid #EDEDED; padding:9px 18px; font-size:12.5px; color:var(--muted); background:#FAFAFA;
+  border-radius:0 0 var(--r) var(--r); }}
+[data-testid="stPopover"] button {{ border-radius:8px; font-size:13.5px; }}
 .mx-footer {{ text-align:center; padding:20px 0 4px; color:var(--muted); font-size:12.5px; }}
 .mx-footer a {{ color:var(--p3); text-decoration:none; }}
 
@@ -317,6 +328,14 @@ def section(title, sub=""):
 
 def note(text_html, warn=False):
     st.markdown(f'<div class="{"mx-warn" if warn else "mx-note"}">{text_html}</div>', unsafe_allow_html=True)
+
+
+def scope_bar(items, footnote_html=""):
+    """Satu kartu berisi beberapa angka cakupan data, dipisah garis tipis, plus catatan kecil di bawah."""
+    cells = "".join(f'<div class="it"><div class="l">{esc(a)}</div><div class="v">{esc(b)}</div>'
+                    f'<div class="s">{esc(c)}</div></div>' for a, b, c in items)
+    ft = f'<div class="ft">{footnote_html}</div>' if footnote_html else ""
+    st.markdown(f'<div class="mx-scope"><div class="row">{cells}</div>{ft}</div>', unsafe_allow_html=True)
 
 
 def badge(status) -> str:
