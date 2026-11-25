@@ -1058,16 +1058,16 @@ def tab_date_range_filter(df: pd.DataFrame, date_col, key_prefix: str, col_from,
     _lbl = ("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;"
             "letter-spacing:0.08em;margin-bottom:6px;'>{}</div>")
     with col_from:
-        st.markdown(_lbl.format(f"📅 From · {date_col}"), unsafe_allow_html=True)
+        st.markdown(_lbl.format(f"From · {date_col}"), unsafe_allow_html=True)
         d_from = st.date_input("from", min_value=mn, max_value=mx, key=k_from,
                                format="YYYY/MM/DD", label_visibility="collapsed")
     with col_to:
-        st.markdown(_lbl.format("📅 To"), unsafe_allow_html=True)
+        st.markdown(_lbl.format("To"), unsafe_allow_html=True)
         d_to = st.date_input("to", min_value=mn, max_value=mx, key=k_to,
                              format="YYYY/MM/DD", label_visibility="collapsed")
 
     if d_from > d_to:
-        st.warning("⚠️ Tanggal 'From' lebih besar dari 'To'. Filter tanggal tab ini diabaikan.")
+        st.warning("Tanggal 'From' lebih besar dari 'To'. Filter tanggal tab ini diabaikan.")
         return df, f"{mn:%d %b %Y} – {mx:%d %b %Y}"
 
     mask = (_dates.dt.date >= d_from) & (_dates.dt.date <= d_to)
@@ -1237,11 +1237,13 @@ def _install_download_guard():
     def _dg_guard(self, *args, **kwargs):
         if not can_download():
             return False
+        kwargs.setdefault("icon", ":material/download:")
         return _log(_orig_dg(self, *args, **kwargs), args, kwargs)
 
     def _st_guard(*args, **kwargs):
         if not can_download():
             return False
+        kwargs.setdefault("icon", ":material/download:")
         return _log(_orig_st(*args, **kwargs), args, kwargs)
 
     _dg_guard._mtrax_guard = True
@@ -1655,7 +1657,7 @@ def twofa_setup_page(username: str):
         qr_note = ''
     else:
         qr_html = ''
-        qr_note = '<div class="qr-missing">📱 Install <code>qrcode[pil]</code> atau <code>segno</code> untuk QR code</div>'
+        qr_note = '<div class="qr-missing">Install <code>qrcode[pil]</code> atau <code>segno</code> untuk QR code</div>'
 
     html_content = f"""<!DOCTYPE html>
 <html lang="id">
@@ -1955,7 +1957,7 @@ function copyKey(el) {{
         # Enter = tombol submit PERTAMA (Verifikasi), jadi Kembali diletakkan setelahnya.
         col_v, col_c = st.columns([3, 2])
         with col_v:
-            _verify = st.form_submit_button("✅  Verifikasi & Masuk", width="stretch", type="primary")
+            _verify = st.form_submit_button("Verifikasi & masuk", width="stretch", type="primary")
         with col_c:
             _back = st.form_submit_button("← Kembali", width="stretch")
 
@@ -1968,7 +1970,7 @@ function copyKey(el) {{
             st.session_state.totp_enrolled[username] = True
             _finish_login(username)
         else:
-            st.error("❌ Kode salah atau sudah kedaluwarsa. Coba lagi.")
+            st.error("Kode salah atau sudah kedaluwarsa. Coba lagi.")
 
 
 def twofa_verify_page(username: str):
@@ -1985,13 +1987,13 @@ def twofa_verify_page(username: str):
 <html lang="id">
 <head>
 <meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after {{ margin: 0; padding: 0; box-sizing: border-box; }}
 
 body {{
-  font-family: 'DM Sans', sans-serif;
-  background: #eef6fc;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #F0F0F0;
   min-height: 100vh;
   display: flex;
   align-items: flex-start;
@@ -2031,12 +2033,12 @@ body {{
 .card {{
   background: #ffffff;
   border-radius: 20px;
-  box-shadow: 0 4px 32px rgba(100,40,90,0.10), 0 1px 4px rgba(100,40,90,0.06);
+  box-shadow: 0 4px 32px rgba(20,20,20,0.08), 0 1px 4px rgba(20,20,20,0.05);
   overflow: hidden;
 }}
 
 .card-header {{
-  background: linear-gradient(135deg, #062440 0%, #0D7FCC 55%, #1BA0E2 100%);
+  background: linear-gradient(135deg, #0A5D96 0%, #0D7FCC 55%, #1BA0E2 100%);
   padding: 28px 32px 24px;
   position: relative;
   overflow: hidden;
@@ -2058,8 +2060,8 @@ body {{
 }}
 .header-badge .dot {{
   width: 6px; height: 6px; border-radius: 50%;
-  background: #a8ff78;
-  box-shadow: 0 0 6px #a8ff78;
+  background: #98EA16;
+  box-shadow: none;
   animation: blink 2s ease infinite;
 }}
 @keyframes blink {{ 0%,100%{{opacity:1}} 50%{{opacity:0.35}} }}
@@ -2073,7 +2075,7 @@ body {{
   line-height: 1.6; position: relative; z-index: 1;
 }}
 .header-sub strong {{ color: rgba(255,255,255,0.95); }}
-.header-sub em {{ color: #e0b8d8; font-style: normal; font-weight: 500; }}
+.header-sub em {{ color: #E2F871; font-style: normal; font-weight: 500; }}
 
 /* ── Icon lock ─────────────────────────────── */
 .lock-wrap {{
@@ -2111,10 +2113,10 @@ body {{
   font-weight: 500;
 }}
 .timer-val {{
-  font-family: 'DM Mono', monospace;
+  font-family: 'Roboto Mono', monospace;
   font-size: 1.0em;
   font-weight: 600;
-  color: #1BA0E2;
+  color: #0D7FCC;
   min-width: 28px;
   text-align: right;
 }}
@@ -2138,7 +2140,7 @@ body {{
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  background: #eef6fc;
+  background: #F0F0F0;
   border-radius: 10px;
   padding: 12px 16px;
 }}
@@ -2168,7 +2170,7 @@ body {{
   <div class="card">
     <div class="card-header">
       <div class="lock-wrap">
-        <div class="lock-circle">🔐</div>
+        <div class="lock-circle"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
       </div>
       <div class="header-badge"><span class="dot"></span>Autentikasi Dua Langkah</div>
       <div class="header-title">Masukkan Kode OTP</div>
@@ -2188,7 +2190,7 @@ body {{
 
       <!-- Hint -->
       <div class="hint-box">
-        <span class="hint-icon">💡</span>
+        
         <div class="hint-text">
           Buka <strong>Google Authenticator</strong> &rarr; cari akun <em>MTRAX:{username}</em> &rarr; masukkan <strong>6 digit kode</strong> yang ditampilkan.
         </div>
@@ -2214,7 +2216,7 @@ body {{
         border-radius: 10px !important;
         border: 1.5px solid #cce4f4 !important;
         font-size: 1.3em !important;
-        font-family: 'DM Mono', monospace !important;
+        font-family: 'Roboto Mono', monospace !important;
         letter-spacing: 0.35em !important;
         text-align: center !important;
         padding: 14px !important;
@@ -2254,7 +2256,7 @@ body {{
         # Enter = tombol submit PERTAMA (Verifikasi), jadi Kembali diletakkan setelahnya.
         col_v, col_c = st.columns([3, 2])
         with col_v:
-            _verify = st.form_submit_button("✅  Verifikasi & Masuk", width="stretch", type="primary")
+            _verify = st.form_submit_button("Verifikasi & masuk", width="stretch", type="primary")
         with col_c:
             _back = st.form_submit_button("← Kembali", width="stretch")
 
@@ -2266,7 +2268,7 @@ body {{
         if _totp_valid(secret, otp_input):
             _finish_login(username)
         else:
-            st.error("❌ Kode salah atau sudah kedaluwarsa. Coba lagi.")
+            st.error("Kode salah atau sudah kedaluwarsa. Coba lagi.")
             time.sleep(1)
 
 
@@ -2286,7 +2288,7 @@ def _finish_login(username: str):
     _token = _create_session_token(username, USERS[username]["role"])
     st.session_state._session_token = _token
     _set_session_cookie(_token)
-    st.success("✅ Login berhasil! Selamat datang.")
+    st.success("Login berhasil. Selamat datang.")
     # PENTING: `st.session_state.authenticated` sudah True di atas, jadi
     # `st.rerun()` di bawah ini SUDAH CUKUP untuk langsung masuk ke dashboard
     # dalam sesi yang sama — tidak bergantung pada cookie/JS sama sekali.
@@ -2322,362 +2324,142 @@ def login_page():
         except Exception: return ""
 
     logo_b64 = _b64_img(os.path.join("assets", "LOGO M FIX.png"))
-    logo_tag = (
-        f'<img src="data:image/png;base64,{logo_b64}" '
-        f'style="width:44px;display:block;margin:0 auto 16px;" />'
-        if logo_b64 else
-        '<div style="width:44px;height:44px;border-radius:9px;'
-        'background:linear-gradient(135deg,#1BA0E2,#0D7FCC);'
-        'display:flex;align-items:center;justify-content:center;margin:0 auto 16px;'
-        'font-size:0.9em;font-weight:800;color:#ffffff;letter-spacing:.04em;">MTX</div>'
-    )
+    logo_img = (f'<img src="data:image/png;base64,{logo_b64}" alt="MTRAX" />' if logo_b64
+                else '<span class="lg-fallback">M</span>')
 
+    # Palet mengikuti identitas MTRAX: lime -> hijau toska -> biru -> biru tua
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Roboto+Mono:wght@400;500&display=swap');
-
-    /* ── RESET & BASE ── */
-    *, *::before, *::after { font-family:'Inter',sans-serif !important; box-sizing:border-box; margin:0; padding:0; }
-    html, body { height:100%; overflow:hidden; }
-
-    /* ── FIX: kembalikan font Material Symbols untuk ikon bawaan Streamlit
-         (mis. tombol show/hide password) — tanpa ini, wildcard font-family di atas
-         merusak ligature ikon sehingga muncul teks literal "visibility" alih-alih ikon mata ── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    :root { --lime:#E2F871; --teal:#1494C6; --blue:#1BA0E2; --blue-d:#0C79C2; --navy:#0A5D96;
+            --ink:#434343; --muted:#6B6B6B; --line:#DEDEDE; }
+    *, *::before, *::after { font-family:'Inter',sans-serif !important; box-sizing:border-box; }
     [data-testid="stIconMaterial"] {
-        font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
-        font-weight: normal !important;
-        font-style: normal !important;
-        letter-spacing: normal !important;
-        text-transform: none !important;
-        white-space: nowrap !important;
-        word-wrap: normal !important;
-        direction: ltr !important;
-        -webkit-font-feature-settings: 'liga' !important;
-        font-feature-settings: 'liga' !important;
-        -webkit-font-smoothing: antialiased !important;
-        font-size: 1.2rem !important;
+        font-family:'Material Symbols Rounded','Material Symbols Outlined','Material Icons' !important;
+        font-weight:normal !important; letter-spacing:normal !important; text-transform:none !important;
+        -webkit-font-feature-settings:'liga' !important; font-feature-settings:'liga' !important;
+        font-size:1.15rem !important;
     }
+    html, body { height:100%; overflow:hidden; }
+    .stApp { background:#FFFFFF !important; overflow:hidden; }
+    [data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"],
+    [data-testid="stSidebar"], #MainMenu, footer { display:none !important; }
+    [data-testid="stAppViewContainer"], section[data-testid="stMain"] { padding:0 !important; overflow:hidden !important; }
+    .block-container { padding:0 !important; max-width:100% !important; overflow:hidden !important; }
+    ::-webkit-scrollbar { display:none !important; }
+    [data-testid="stHorizontalBlock"] { gap:0 !important; }
+    [data-testid="stHorizontalBlock"] > div { padding:0 !important; }
+    [data-testid="stHorizontalBlock"] > div:first-child { display:none !important; }
 
-    .stApp                              { background:#0D7FCC !important; overflow:hidden; }
-    [data-testid="stHeader"]            { display:none !important; }
-    [data-testid="stToolbar"]           { display:none !important; }
-    [data-testid="stDecoration"]        { display:none !important; }
-    [data-testid="stSidebar"]           { display:none !important; }
-    [data-testid="stAppViewContainer"]  { padding:0 !important; overflow:hidden !important; }
-    section[data-testid="stMain"]       { overflow:hidden !important; }
-    #MainMenu, footer, header[data-testid="stHeader"] { display:none !important; }
-    .block-container                    { padding:0 !important; max-width:100% !important; overflow:hidden !important; }
-    ::-webkit-scrollbar                 { display:none !important; }
+    /* ── Panel kiri: identitas, gradasi lembut ── */
+    .lg-brand-panel {
+        position:fixed; inset:0 auto 0 0; width:56%; z-index:1; overflow:hidden;
+        background: linear-gradient(140deg, #E2F871 0%, #9FDCB0 24%, #1BA0E2 56%, #1494C6 74%, #0D7FCC 90%, #0A5D96 100%);
+        display:flex; flex-direction:column; justify-content:space-between; padding:44px 56px 40px;
+    }
+    .lg-brand-panel::after {           /* satu bidang halus agar tidak datar, tanpa ornamen */
+        content:''; position:absolute; right:-18%; bottom:-30%; width:70%; height:80%;
+        background: radial-gradient(closest-side, rgba(255,255,255,.14), transparent); pointer-events:none;
+    }
+    .lg-top { display:flex; align-items:center; gap:12px; position:relative; z-index:2; }
+    .lg-mark { width:40px; height:40px; border-radius:10px; background:#FFFFFF;
+               display:flex; align-items:center; justify-content:center;
+               box-shadow:0 1px 2px rgba(20,20,20,.10); }
+    .lg-mark img { width:26px; height:auto; display:block; }
+    .lg-fallback { font-weight:800; color:var(--blue-d); font-size:18px; }
+    .lg-name { font-size:13px; font-weight:700; letter-spacing:.22em; color:#434343; }
+    .lg-hero { position:relative; z-index:2; max-width:460px; }
+    .lg-rule { width:40px; height:3px; border-radius:2px; background:#FFFFFF; opacity:.9; margin-bottom:22px; }
+    .lg-title { font-size:40px; line-height:1.12; font-weight:800; letter-spacing:-.02em; color:#FFFFFF !important; margin:0 0 18px !important; padding:0 !important; text-shadow:0 1px 12px rgba(10,93,150,.25); }
+    .lg-sub { font-size:15px; line-height:1.6; color:rgba(255,255,255,.86); margin:0; }
+    .lg-foot { position:relative; z-index:2; font-size:12px; color:rgba(255,255,255,.75); }
 
-    /* ── HIDE DUMMY LEFT COL ── */
-    [data-testid="stHorizontalBlock"]                        { gap:0 !important; overflow:hidden !important; }
-    [data-testid="stHorizontalBlock"] > div                  { padding:0 !important; }
-    [data-testid="stHorizontalBlock"] > div:first-child      { display:none !important; }
+    /* ── Panel kanan: putih polos ── */
+    .lg-form-panel { position:fixed; inset:0 0 0 56%; background:#FFFFFF; z-index:1; }
+    .lg-copy { position:fixed; left:calc(56% + 56px); bottom:24px; z-index:5; font-size:11.5px; color:#8A8A8A; }
+    .lg-copy a { color:inherit; text-decoration:none; }
+    .lg-copy a:hover { color:var(--blue-d); }
 
-    /* ══════════════════════════════════════════════════════
-       CANVAS — full screen gradient background
-    ══════════════════════════════════════════════════════ */
-    .lp-canvas {
-        position: fixed; top:0; left:0;
-        width: 100%; height: 100vh; z-index: 1;
-        background: linear-gradient(135deg,
-            #e2f871 0%,
-            #c8ec50 12%,
-            #8dd4a8 26%,
-            #4ab8d4 38%,
-            #1BA0E2 50%,
-            #1494C6 65%,
-            #0D7FCC 80%,
-            #07395f 100%
-        );
-        overflow: hidden;
-    }
-
-    /* animated mesh radial blobs */
-    .lp-canvas::before {
-        content:'';
-        position:absolute; inset:0;
-        background:
-            radial-gradient(ellipse at 8% 10%,  rgba(226,248,113,0.55) 0%, transparent 38%),
-            radial-gradient(ellipse at 90% 5%,  rgba(13,127,204,0.45)  0%, transparent 40%),
-            radial-gradient(ellipse at 75% 90%, rgba(20,148,198,0.40)  0%, transparent 45%),
-            radial-gradient(ellipse at 15% 88%, rgba(226,248,113,0.30) 0%, transparent 35%);
-        animation: lp-meshShift 12s ease-in-out infinite alternate;
-    }
-    @keyframes lp-meshShift {
-        0%   { opacity:1; transform:scale(1) translateX(0); }
-        100% { opacity:0.85; transform:scale(1.04) translateX(12px); }
-    }
-
-    /* dot grid overlay */
-    .lp-canvas::after {
-        content:''; position:absolute; inset:0; pointer-events:none;
-        background-image: radial-gradient(circle, rgba(255,255,255,0.18) 1px, transparent 1px);
-        background-size: 30px 30px;
-        -webkit-mask-image: linear-gradient(135deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.1) 60%, transparent 100%);
-        mask-image: linear-gradient(135deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.1) 60%, transparent 100%);
-    }
-
-    /* ── BLOBS ── */
-    .lp-blob {
-        position:absolute; border-radius:50%; pointer-events:none;
-    }
-    .lp-blob-1 {
-        width:520px; height:520px; top:-160px; left:-140px;
-        background: radial-gradient(circle, rgba(226,248,113,0.40) 0%, transparent 68%);
-        animation: lp-floatA 8s ease-in-out infinite alternate;
-    }
-    .lp-blob-2 {
-        width:480px; height:480px; top:30%; right:-100px;
-        background: radial-gradient(circle, rgba(13,127,204,0.32) 0%, transparent 65%);
-        animation: lp-floatB 10s ease-in-out infinite alternate;
-    }
-    .lp-blob-3 {
-        width:380px; height:380px; bottom:-120px; left:20%;
-        background: radial-gradient(circle, rgba(7,57,95,0.28) 0%, transparent 60%);
-        animation: lp-floatA 9s ease-in-out infinite alternate-reverse;
-    }
-    .lp-blob-4 {
-        width:260px; height:260px; top:-60px; right:18%;
-        background: radial-gradient(circle, rgba(200,236,80,0.28) 0%, transparent 65%);
-        animation: lp-floatB 7s ease-in-out infinite alternate;
-    }
-    @keyframes lp-floatA {
-        0%   { transform:translate(0,0) scale(1); }
-        100% { transform:translate(20px,30px) scale(1.06); }
-    }
-    @keyframes lp-floatB {
-        0%   { transform:translate(0,0) scale(1); }
-        100% { transform:translate(-15px,20px) scale(0.95); }
-    }
-
-    /* ── RINGS ── */
-    .lp-ring {
-        position:absolute; border-radius:50%; pointer-events:none;
-    }
-    .lp-ring-1 { width:600px; height:600px; top:-180px; left:-180px; border:1.5px solid rgba(255,255,255,0.12); }
-    .lp-ring-2 { width:380px; height:380px; top:60px; left:60px; border:1px solid rgba(255,255,255,0.07); }
-    .lp-ring-3 { width:320px; height:320px; bottom:-80px; right:10%; border:1px solid rgba(255,255,255,0.08); }
-    .lp-ring-4 { width:180px; height:180px; top:15%; right:28%; border:1px solid rgba(226,248,113,0.25); }
-
-    /* ── PARTICLES ── */
-    .lp-particle { position:absolute; border-radius:50%; pointer-events:none; }
-    .lp-p1 { width:5px; height:5px; background:#e2f871; top:12%; left:8%;
-              box-shadow:0 0 14px rgba(226,248,113,0.8); animation:lp-pulse 3s ease-in-out infinite; }
-    .lp-p2 { width:4px; height:4px; background:#fff; top:6%; right:12%;
-              opacity:0.6; animation:lp-pulse 4s ease-in-out infinite 1s; }
-    .lp-p3 { width:3px; height:3px; background:#e2f871; bottom:22%; left:18%;
-              box-shadow:0 0 10px rgba(226,248,113,0.6); animation:lp-pulse 5s ease-in-out infinite 0.5s; }
-    .lp-p4 { width:6px; height:6px; background:rgba(255,255,255,0.5); bottom:35%; right:18%;
-              animation:lp-pulse 3.5s ease-in-out infinite 2s; }
-    .lp-p5 { width:3px; height:3px; background:#1BA0E2; top:45%; left:38%;
-              box-shadow:0 0 10px rgba(27,160,226,0.7); animation:lp-pulse 4s ease-in-out infinite 1.5s; }
-    @keyframes lp-pulse {
-        0%,100% { opacity:1; transform:scale(1); }
-        50%     { opacity:0.35; transform:scale(1.5); }
-    }
-
-    /* ── LEFT CONTENT: brand + hero ── */
-    .lp-inner {
-        position:fixed; z-index:10;
-        top:0; left:0; bottom:0; width:50%;
-        display:flex; flex-direction:column;
-        justify-content:space-between;
-        padding:40px 52px 48px;
-    }
-    .lp-brand { display:flex; align-items:center; gap:12px; }
-    .lp-brand-icon {
-        width:36px; height:36px; border-radius:8px;
-        background:rgba(255,255,255,0.18);
-        border:1px solid rgba(255,255,255,0.28);
-        display:flex; align-items:center; justify-content:center;
-    }
-    .lp-brand-icon-sq {
-        display:block; width:10px; height:10px;
-        background:white; border-radius:1px; opacity:0.95;
-    }
-    .lp-brand-name { font-size:0.80em; font-weight:800; color:#fff; letter-spacing:0.20em;
-                     text-shadow:0 1px 8px rgba(0,0,0,0.18); }
-    .lp-divider {
-        width:34px; height:3px;
-        background:linear-gradient(90deg, #e2f871 0%, rgba(226,248,113,0.30) 100%);
-        border-radius:2px; margin-bottom:18px;
-        box-shadow:0 0 12px rgba(226,248,113,0.55);
-    }
-    .lp-headline {
-        font-size:2.40em; font-weight:900; color:#fff;
-        line-height:1.15; letter-spacing:-0.02em; margin-bottom:16px;
-        text-shadow:0 2px 20px rgba(0,0,0,0.20);
-    }
-    .lp-sub { font-size:0.80em; color:rgba(255,255,255,0.60); font-weight:400; line-height:1.7; }
-
-    /* ── COPYRIGHT ── */
-    .lp-copy {
-        position:fixed; bottom:20px; right:28px; z-index:10;
-        font-size:0.60em; color:rgba(255,255,255,0.40);
-        font-weight:500; letter-spacing:0.04em;
-    }
-    .lp-copy a { color:inherit; text-decoration:none; }
-    .lp-copy a:hover { color:rgba(226,248,113,0.70); }
-
-    /* ── FLOATING LOGIN CARD — glass white ── */
     [data-testid="stHorizontalBlock"] > div:last-child {
-        position: fixed !important;
-        top: 50% !important;
-        left: 72% !important;
-        transform: translate(-50%, -50%) !important;
-        z-index: 1000 !important;
-        width: 340px !important;
-        max-width: 340px !important;
-        background: rgba(255,255,255,0.96) !important;
-        border-radius: 20px !important;
-        box-shadow:
-            0 0 0 1px rgba(255,255,255,0.30),
-            0 8px 32px rgba(7,57,95,0.22),
-            0 32px 80px rgba(7,57,95,0.16) !important;
-        padding: 40px 36px 36px !important;
-        border: none !important;
-        overflow: visible !important;
-        backdrop-filter: blur(20px) !important;
-        -webkit-backdrop-filter: blur(20px) !important;
+        position:fixed !important; top:50% !important; left:78% !important; transform:translate(-50%,-50%) !important;
+        z-index:1000 !important; width:360px !important; max-width:360px !important;
+        background:transparent !important; box-shadow:none !important; border:none !important; padding:0 !important;
     }
+    .lg-h { font-size:26px; font-weight:700; color:var(--ink); letter-spacing:-.01em; margin:0 0 6px; }
+    .lg-p { font-size:14px; color:var(--muted); margin:0 0 32px; }
+    .lg-label { font-size:12px; font-weight:600; color:var(--ink); margin:0 0 6px; }
+    .lg-label.pw { margin-top:18px; }
 
-    /* shimmer top border on card */
-    [data-testid="stHorizontalBlock"] > div:last-child::before {
-        content:'';
-        position:absolute; top:0; left:20px; right:20px; height:1px;
-        background:linear-gradient(90deg,
-            transparent 0%, rgba(226,248,113,0.60) 30%,
-            rgba(27,160,226,0.40) 70%, transparent 100%);
-        border-radius:1px;
-    }
-
-    /* ── INPUT FIELDS ── */
     .stTextInput label { display:none !important; }
-    .stTextInput > div > div > input {
-        border-radius: 8px !important;
-        border: 1.5px solid #dde5ee !important;
-        background: #f7fafd !important;
-        padding: 12px 14px !important;
-        font-size: 0.86em !important;
-        color: #1a2a3a !important;
-        transition: border-color .2s, box-shadow .2s !important;
-    }
-    .stTextInput > div > div > input::placeholder { color: #b0bec8 !important; }
-    .stTextInput > div > div > input:focus {
-        border-color: #1BA0E2 !important;
-        box-shadow: 0 0 0 3px rgba(27,160,226,0.13) !important;
-        background: #ffffff !important;
-        outline: none !important;
-    }
-    .stTextInput > div > div > div > button {
-        background: transparent !important; border: none !important; color: #b0bec8 !important;
-        display: inline-flex !important; align-items: center !important; justify-content: center !important;
-        min-width: 32px !important; height: 32px !important; padding: 0 !important;
-    }
-    .stTextInput > div > div > div > button:hover { color: #0D7FCC !important; }
+    .stTextInput > div { border:none !important; background:transparent !important; }
+    .stTextInput > div > div { border:1px solid var(--line) !important; border-radius:8px !important;
+                               background:#FFFFFF !important; transition:border-color .15s, box-shadow .15s; }
+    .stTextInput > div > div:focus-within { border-color:var(--blue) !important; box-shadow:0 0 0 3px rgba(27,160,226,.16) !important; }
+    .stTextInput input { padding:12px 14px !important; font-size:14px !important; color:var(--ink) !important;
+                         background:transparent !important; }
+    .stTextInput input::placeholder { color:#9A9A9A !important; }
+    .stTextInput button { background:transparent !important; border:none !important; color:#8A8A8A !important; }
+    .stTextInput button:hover { color:var(--blue-d) !important; }
 
-    /* ── LOG IN BUTTON — lime gradient ── */
-    /* (mencakup stButton dan stFormSubmitButton — form dipakai agar tombol Enter bisa submit login) */
-    div[data-testid="stButton"] > button,
-    div[data-testid="stFormSubmitButton"] > button {
-        background: linear-gradient(135deg, #e2f871 0%, #cce84a 50%, #b8d930 100%) !important;
-        color: #07395f !important;
-        border: none !important;
-        border-radius: 9px !important;
-        padding: 13px !important;
-        font-weight: 900 !important;
-        font-size: 0.78em !important;
-        letter-spacing: 0.16em !important;
-        text-transform: uppercase !important;
-        width: 100% !important;
-        cursor: pointer !important;
-        transition: all .18s ease !important;
-        margin-top: 6px !important;
-        box-shadow: 0 4px 18px rgba(226,248,113,0.55), 0 1px 4px rgba(7,57,95,0.12) !important;
+    div[data-testid="stFormSubmitButton"] > button, div[data-testid="stButton"] > button {
+        width:100% !important; margin-top:26px !important; padding:12px 0 !important;
+        background:var(--blue-d) !important; color:#FFFFFF !important; border:none !important; border-radius:8px !important;
+        font-size:14px !important; font-weight:600 !important; letter-spacing:.02em !important;
+        box-shadow:none !important; transition:background .15s !important;
     }
-    div[data-testid="stButton"] > button:hover,
-    div[data-testid="stFormSubmitButton"] > button:hover {
-        background: linear-gradient(135deg, #d4e860 0%, #bdd938 50%, #a8c820 100%) !important;
-        box-shadow: 0 6px 24px rgba(226,248,113,0.70), 0 2px 8px rgba(7,57,95,0.15) !important;
-        transform: translateY(-1.5px) !important;
-    }
-    div[data-testid="stButton"] > button:active,
-    div[data-testid="stFormSubmitButton"] > button:active { transform: translateY(0) !important; }
+    div[data-testid="stFormSubmitButton"] > button:hover, div[data-testid="stButton"] > button:hover { background:var(--navy) !important; }
+    div[data-testid="stFormSubmitButton"] > button p { font-weight:600 !important; }
+    div[data-testid="stForm"] { border:none !important; padding:0 !important; }
+    .lg-accent { height:3px; width:48px; border-radius:2px; margin:0 0 28px;
+                 background:linear-gradient(90deg, var(--lime), var(--blue) 60%, var(--blue-d)); }
+    .lg-note { font-size:12px; color:var(--muted); margin-top:18px; line-height:1.5; }
+    .stAlert { border-radius:8px !important; font-size:13px !important; margin-top:10px !important; }
 
-    /* Streamlit's st.form menambahkan border bawaan di sekeliling form — dihilangkan
-       supaya tetap menyatu dengan desain kartu login yang sudah ada */
-    div[data-testid="stForm"] {
-        border: none !important;
-        padding: 0 !important;
+    @media (max-width: 900px) {
+        .lg-brand-panel { display:none; }
+        .lg-form-panel { inset:0; }
+        .lg-copy { left:24px; }
+        [data-testid="stHorizontalBlock"] > div:last-child { left:50% !important; width:88vw !important; max-width:360px !important; }
     }
-
-    .stAlert { border-radius: 8px !important; margin-top: 8px !important; font-size: 0.78em !important; }
     </style>
     """, unsafe_allow_html=True)
 
-    # ── RENDER BACKGROUND CANVAS
-    st.markdown("""
-    <div class="lp-canvas">
-        <div class="lp-blob lp-blob-1"></div>
-        <div class="lp-blob lp-blob-2"></div>
-        <div class="lp-blob lp-blob-3"></div>
-        <div class="lp-blob lp-blob-4"></div>
-        <div class="lp-ring lp-ring-1"></div>
-        <div class="lp-ring lp-ring-2"></div>
-        <div class="lp-ring lp-ring-3"></div>
-        <div class="lp-ring lp-ring-4"></div>
-        <div class="lp-particle lp-p1"></div>
-        <div class="lp-particle lp-p2"></div>
-        <div class="lp-particle lp-p3"></div>
-        <div class="lp-particle lp-p4"></div>
-        <div class="lp-particle lp-p5"></div>
-    </div>
-    <div class="lp-inner">
-        <div class="lp-brand">
-            <div class="lp-brand-icon"><span class="lp-brand-icon-sq"></span></div>
-            <span class="lp-brand-name">MTRAX</span>
+    st.markdown(f"""
+    <div class="lg-brand-panel">
+        <div class="lg-top"><div class="lg-mark">{logo_img}</div><span class="lg-name">MTRAX</span></div>
+        <div class="lg-hero">
+            <div class="lg-rule"></div>
+            <h1 class="lg-title">Corporate Travel<br>Analytics</h1>
+            <p class="lg-sub">Corporate Travel Analytics Platform for Pertamina Group —
+               hotel spend, corporate rate compliance and savings in one place.</p>
         </div>
-        <div>
-            <div class="lp-divider"></div>
-            <div class="lp-headline">Welcome to<br><b>MTRAX</b><br>Analytics</div>
-            <div class="lp-sub">Corporate Travel Analytics Platform<br>for Business Travel</div>
-        </div>
+        <div class="lg-foot">No employee identity data · every access is logged</div>
     </div>
-    <div class="lp-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2026 MTRAX.</a> All rights reserved. · v2026.11.25-PDP</div>
+    <div class="lg-form-panel"></div>
+    <div class="lg-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2026 MTRAX · PT Mitra Tours &amp; Travel</a> · v2026.11.25-PDP</div>
     """, unsafe_allow_html=True)
 
-    # ── FLOATING CARD: dummy col (hidden) + form col
     _dummy, col_form = st.columns(2)
     with col_form:
-        st.markdown(f"""
-        {logo_tag}
-        <div style="text-align:center;font-size:1.15em;font-weight:800;color:#1a1a1a;
-             letter-spacing:0.01em;margin-bottom:5px;">Welcome</div>
-        <div style="text-align:center;font-size:0.70em;color:#666;margin-bottom:28px;
-             font-weight:400;letter-spacing:0.02em;">Log in to your account</div>
-        <div style="font-size:0.70em;font-weight:700;color:#07395f;
-             letter-spacing:0.10em;text-transform:uppercase;margin-bottom:6px;">Username</div>
+        st.markdown("""
+        <div class="lg-accent"></div>
+        <div class="lg-h">Welcome back</div>
+        <div class="lg-p">Log in to your MTRAX account.</div>
+        <div class="lg-label">Username</div>
         """, unsafe_allow_html=True)
 
         # Dibungkus st.form supaya menekan Enter di kolom Username/Password
         # langsung men-submit login (form_submit_button otomatis ter-trigger oleh Enter),
         # tanpa harus mengklik tombol LOG IN secara manual.
         with st.form("login_form", clear_on_submit=False):
-            username = st.text_input("_u", placeholder="Enter Username ...",
+            username = st.text_input("_u", placeholder="Enter username",
                                      label_visibility="collapsed", key="login_username")
-
-            st.markdown("""
-            <div style="font-size:0.70em;font-weight:700;color:#07395f;
-                 letter-spacing:0.10em;text-transform:uppercase;margin:14px 0 6px;">Password</div>
-            """, unsafe_allow_html=True)
-
-            password = st.text_input("_p", type="password", placeholder="Enter Password ...",
+            st.markdown('<div class="lg-label pw">Password</div>', unsafe_allow_html=True)
+            password = st.text_input("_p", type="password", placeholder="Enter password",
                                      label_visibility="collapsed", key="login_password")
-
-            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-
-            submitted = st.form_submit_button("LOG IN", width="stretch")
+            submitted = st.form_submit_button("Log in", width="stretch")
+        st.markdown('<div class="lg-note">Accounts with 2FA will be asked for a code from the authenticator app.</div>',
+                    unsafe_allow_html=True)
 
         if submitted:
             if not validate_username(username):
@@ -2806,13 +2588,13 @@ def _fig(fig, key, height=None):
 
 
 def _hbar(labels, values, key, color=ui.BLUE, top_highlight=None, height=None, text=None):
-    colors = [color if (top_highlight is None or i < top_highlight) else "#B9D7EC" for i in range(len(values))]
+    colors = [color if (top_highlight is None or i < top_highlight) else ui.BLUE_XL for i in range(len(values))]
     fig = go.Figure(go.Bar(x=values, y=labels, orientation="h", marker_color=colors,
                            text=text if text is not None else [ui.fmt_int(v) for v in values],
                            textposition="outside", cliponaxis=False,
                            hovertemplate="%{y}<br>%{x:,.0f}<extra></extra>"))
     fig.update_layout(yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
-                      xaxis=dict(showgrid=True, gridcolor="#EEF1F4"), showlegend=False,
+                      xaxis=dict(showgrid=True, gridcolor="#EDEDED"), showlegend=False,
                       margin=dict(l=10, r=60, t=10, b=20))
     _fig(fig, key, height or max(260, 26 * len(values) + 40))
 
@@ -2821,7 +2603,7 @@ def _pareto_fig(names, values, top_n, key, value_title):
     total = float(np.nansum(values)) or 1.0
     cum = np.cumsum(values) / total * 100
     show = min(len(names), 50)
-    colors = [ui.BLUE if i < top_n else "#B9D7EC" for i in range(show)]
+    colors = [ui.BLUE if i < top_n else ui.BLUE_XL for i in range(show)]
     fig = go.Figure()
     fig.add_trace(go.Bar(x=names[:show], y=values[:show], marker_color=colors, name=value_title,
                          hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>"))
@@ -2830,7 +2612,7 @@ def _pareto_fig(names, values, top_n, key, value_title):
                              hovertemplate="Kumulatif %{y:.1f}%<extra></extra>"))
     fig.add_hline(y=80, yref="y2", line_dash="dash", line_color=ui.RED, opacity=0.7,
                   annotation_text="80%", annotation_position="right")
-    fig.update_layout(yaxis=dict(title=value_title, gridcolor="#EEF1F4"),
+    fig.update_layout(yaxis=dict(title=value_title, gridcolor="#EDEDED"),
                       yaxis2=dict(overlaying="y", side="right", range=[0, 105], ticksuffix="%", showgrid=False),
                       xaxis=dict(showticklabels=False), legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
                       bargap=0.15)
@@ -2853,18 +2635,17 @@ def _key_column(df, dim, merge, pmap):
 # ---------------------------------------------------------------- sidebar & header
 def render_sidebar():
     with st.sidebar:
-        st.markdown('<div class="mx-brand"><div class="m">MTX</div><div class="t">MTRAX</div></div>',
-                    unsafe_allow_html=True)
+        ui.brand()
         uname = st.session_state.get("username", "")
         role = st.session_state.get("role", "")
         if uname == GUEST_USERNAME:
-            tfa = f'<div class="t" style="color:#8A4B00">🔓 Mode tanpa login</div>'
+            tfa = ui.status_line("Mode tanpa login", "warn")
         elif _own_totp_secret(uname):
-            tfa = f'<div class="t" style="color:{ui.GREEN}">🔒 2FA pribadi aktif</div>'
+            tfa = ui.status_line("2FA pribadi aktif", "ok")
         elif role == "Demo":
-            tfa = '<div class="t" style="color:#5A6B7A">Akun demo</div>'
+            tfa = ui.status_line("Akun demo", "muted")
         else:
-            tfa = '<div class="t" style="color:#8A4B00">2FA belum diaktifkan</div>'
+            tfa = ui.status_line("2FA belum diaktifkan", "warn")
         st.markdown(f'<div class="mx-userbox"><div class="n">{ui.esc(uname)}</div>'
                     f'<div class="r">{ui.esc(role)}</div>{tfa}</div>', unsafe_allow_html=True)
         if not login_required():
@@ -2883,7 +2664,7 @@ def render_sidebar():
                 go_clicked = st.button("Get Data", type="primary", width="stretch", key="sb_get")
             if c2 is not None:
                 with c2:
-                    if st.button("🔄", width="stretch", key="sb_refresh",
+                    if st.button(":material/refresh:", width="stretch", key="sb_refresh",
                                  help="Bersihkan cache & tarik ulang (kode TR/Booking ID ikut berganti)"):
                         load_drive_data.clear()
                         st.toast("Cache dibersihkan. Klik Get Data.")
@@ -3011,7 +2792,7 @@ def tab_dashboard(df):
             if "Country" in d:
                 dom = d["Country"].astype(str).str.upper().isin(DOMESTIC_ALIAS)
                 fig = go.Figure(go.Pie(labels=["Domestik", "Internasional"], values=[int(dom.sum()), int((~dom).sum())],
-                                       hole=0.6, marker=dict(colors=[ui.BLUE, "#B9C6D1"]), textinfo="percent",
+                                       hole=0.6, marker=dict(colors=[ui.BLUE, ui.LIME]), textinfo="percent",
                                        sort=False))
                 fig.update_layout(annotations=[dict(text=f"<b>{ui.fmt_int(len(d))}</b><br>bookings", x=0.5, y=0.5,
                                                     showarrow=False, font=dict(size=14))],
@@ -3024,9 +2805,9 @@ def tab_dashboard(df):
             if "Issue Time" in d and "Travel Request Number" in d:
                 m = d.dropna(subset=["Issue Time"]).assign(Bulan=lambda x: x["Issue Time"].dt.to_period("M").astype(str))
                 t = m.groupby("Bulan")["Travel Request Number"].nunique()
-                fig = go.Figure(go.Bar(x=list(t.index), y=list(t.values), marker_color=ui.BLUE_L,
+                fig = go.Figure(go.Bar(x=list(t.index), y=list(t.values), marker_color=ui.P1,
                                        hovertemplate="%{x}<br>%{y:,} TR<extra></extra>"))
-                fig.update_layout(yaxis=dict(gridcolor="#EEF1F4"))
+                fig.update_layout(yaxis=dict(gridcolor="#EDEDED"))
                 _fig(fig, "db_trend", 300)
     with b:
         with st.container(border=True):
@@ -3044,7 +2825,7 @@ def tab_dashboard(df):
                       .reindex(["Senin", "Selasa–Kamis", "Jumat", "Sabtu–Minggu"]).fillna(0))
                 pct = pv / max(pv.values.sum(), 1) * 100
                 fig = go.Figure(go.Heatmap(z=pct.values, x=list(pct.columns), y=list(pct.index),
-                                           colorscale=[[0, "#EEF1F4"], [0.35, ui.BLUE_XL], [0.7, ui.BLUE], [1, ui.NAVY]],
+                                           colorscale=ui.SEQUENTIAL,
                                            text=[[f"{v:.0f}%" for v in r] for r in pct.values], texttemplate="%{text}",
                                            showscale=False, hovertemplate="%{y} · %{x}<br>%{z:.1f}%<extra></extra>"))
                 fig.update_layout(yaxis=dict(autorange="reversed"))
@@ -3104,7 +2885,7 @@ def tab_price(df, pmap):
                                                                             "Spend %", "Kumulatif %"]
         top = top[cols].rename(columns={"RN": "Room nights", "Spend": "Spend (Rp)"})
         with h2:
-            _dl("⬇️ Unduh Excel", top, "Top contributors", "pareto_spend", "pi_dl",
+            _dl("Unduh Excel", top, "Top contributors", "pareto_spend", "pi_dl",
                 money_cols=("Spend (Rp)", "Avg rate / malam"), int_cols=("Room nights", "Bookings"),
                 pct_cols=("Spend %", "Kumulatif %"))
         show = top.copy()
@@ -3193,7 +2974,7 @@ def tab_room(df, pmap):
             t["RN %"] = t["RN"] / tot * 100
             t = t.rename(columns={key: "Hotel / properti" if dim == "Hotel" else "Kota", "RN": "Room nights",
                                   "Spend": "Spend (Rp)"})
-            _dl("⬇️ Unduh Excel", t, "Top room nights", "pareto_room_nights", "ri_dl",
+            _dl("Unduh Excel", t, "Top room nights", "pareto_room_nights", "ri_dl",
                 money_cols=("Spend (Rp)", "Avg rate / malam"), int_cols=("Room nights", "Bookings"), pct_cols=("RN %",))
             st.dataframe(t, width="stretch", hide_index=True,
                          column_config={"Spend (Rp)": st.column_config.NumberColumn(format="%,.0f"),
@@ -3233,7 +3014,7 @@ def tab_room(df, pmap):
                 "Number of Rooms Night"].sum()
             fig = go.Figure(go.Bar(x=list(m.index), y=list(m.values), marker_color=ui.BLUE,
                                    hovertemplate="%{x}<br>%{y:,.0f} RN<extra></extra>"))
-            fig.update_layout(yaxis=dict(gridcolor="#EEF1F4"))
+            fig.update_layout(yaxis=dict(gridcolor="#EDEDED"))
             st.markdown("<div style='font-size:13px;font-weight:600'>Tren room nights bulanan (check-in)</div>",
                         unsafe_allow_html=True)
             _fig(fig, "ri_month", 260)
@@ -3262,7 +3043,7 @@ def tab_sankey(df):
         "Invoice Amount", ascending=False).rename(columns={"Invoice Amount": "Spend (Rp)"})
     with c4:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        _dl("⬇️ Unduh Excel", exp, "Sankey Flow", "sankey_flow", "sk_dl", money_cols=("Spend (Rp)",))
+        _dl("Unduh Excel", exp, "Sankey Flow", "sankey_flow", "sk_dl", money_cols=("Spend (Rp)",))
     ui.kpi_row([ui.kpi("Negara", ui.fmt_int(d["Country"].nunique())), ui.kpi("Kota tujuan", ui.fmt_int(d["City"].nunique())),
                 ui.kpi("Hotel", ui.fmt_int(d["Hotel Name"].nunique())),
                 ui.kpi("Total spend dalam alur", ui.fmt_big(flow),
@@ -3281,7 +3062,7 @@ def tab_sankey(df):
     fig = go.Figure(go.Sankey(arrangement="snap",
                               node=dict(label=labels, pad=18, thickness=14, color=ui.NAVY,
                                         line=dict(color="white", width=0.5)),
-                              link=dict(source=src, target=tgt, value=val, color="rgba(13,127,204,0.22)")))
+                              link=dict(source=src, target=tgt, value=val, color="rgba(27,160,226,0.22)")))
     with st.container(border=True):
         ui.section("Alur spend: Negara → Kota → Hotel", "Ketebalan alur = Invoice Amount (Rupiah)")
         _fig(fig, "sk_fig", max(460, 26 * len(hotels) + 80))
@@ -3317,7 +3098,7 @@ def tab_top(df):
             with a:
                 ui.section("Top 100 hotel", "Biru tua = top 20 · room nights")
             with b:
-                _dl("⬇️ Unduh Excel", t, "Top 100 Hotels", "top_100_hotels", "th_dl_h",
+                _dl("Unduh Excel", t, "Top 100 Hotels", "top_100_hotels", "th_dl_h",
                     money_cols=("Average Room Rate",), int_cols=("Number of Rooms Night",))
             with st.container(height=640, border=False):
                 _hbar(list(h.index), list(h.values), "th_h", top_highlight=20, height=26 * len(h) + 40)
@@ -3328,7 +3109,7 @@ def tab_top(df):
             with a:
                 ui.section("Top 100 kota", "Biru tua = top 20 · room nights")
             with b:
-                _dl("⬇️ Unduh Excel", c.reset_index(), "Top 100 Cities", "top_100_cities", "th_dl_c",
+                _dl("Unduh Excel", c.reset_index(), "Top 100 Cities", "top_100_cities", "th_dl_c",
                     int_cols=("Number of Rooms Night",))
             with st.container(height=640, border=False):
                 _hbar(list(c.index), list(c.values), "th_c", top_highlight=20, height=26 * len(c) + 40)
@@ -3361,12 +3142,12 @@ def tab_dendro(df):
     Z = linkage(X, method=method)
     k = min(k, len(pv) - 1)
     cl = fcluster(Z, t=k, criterion="maxclust")
-    palette = [ui.BLUE, ui.ORANGE, ui.GREEN, ui.NAVY, "#47B5E8", "#8A4B00"]
+    palette = ui.CATEGORICAL
     labels = list(pv.index)
     dn = dendrogram(Z, labels=labels, no_plot=True, orientation="left")
     fig = go.Figure()
     for xs, ys in zip(dn["dcoord"], dn["icoord"]):
-        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#8A99A6", width=1.6),
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#9A9A9A", width=1.6),
                                  hoverinfo="skip", showlegend=False))
     leaf_y = [5 + 10 * i for i in range(len(dn["ivl"]))]
     leaf_col = [palette[(cl[labels.index(l)] - 1) % len(palette)] for l in dn["ivl"]]
@@ -3376,7 +3157,8 @@ def tab_dendro(df):
     cut = Z[-(k - 1), 2] if k > 1 else 0
     fig.add_vline(x=cut, line_dash="dash", line_color=ui.RED, annotation_text=f"potong: {k} klaster")
     mx = max(max(x) for x in dn["dcoord"])
-    fig.update_layout(xaxis=dict(range=[mx * 1.05, -mx * 0.45], title="Dissimilarity", gridcolor="#EEF1F4"),
+    fig.update_layout(xaxis=dict(range=[mx * 1.05, -mx * 0.45], title="Dissimilarity", gridcolor="#EDEDED",
+                                 tickvals=[round(v, 2) for v in np.linspace(0, mx, 5)]),
                       yaxis=dict(showticklabels=False, showgrid=False))
     with st.container(border=True):
         ui.section(f"Dendrogram — {ent}", f"Kemiripan pola bulanan · linkage {method}")
@@ -3391,7 +3173,7 @@ def tab_dendro(df):
         valtxt = ui.fmt_big(v) if metric == "Invoice Amount" else f"{ui.fmt_int(v)} RN"
         with cols[(i - 1) % len(cols)]:
             st.markdown(f'<div class="mx-cluster" style="border-top:4px solid {palette[(i - 1) % len(palette)]}">'
-                        f'<strong>Klaster {i} · {len(mem)} entitas</strong><span style="color:#3A4A58">{ui.esc(shown)}</span>'
+                        f'<strong>Klaster {i} · {len(mem)} entitas</strong><span style="color:#434343">{ui.esc(shown)}</span>'
                         f'<span style="font-weight:600">{valtxt} · {ui.fmt_pct(v / tot * 100, digits=0)}</span></div>',
                         unsafe_allow_html=True)
     ui.note("Entitas dalam satu klaster punya pola perjalanan serupa, sehingga bisa dinegosiasikan dengan strategi "
@@ -3449,16 +3231,16 @@ def tab_patra(df):
     pv = pv.reindex(index=["Patra Jasa Group", "Non-Patra Jasa"], columns=range(1, 13), fill_value=0)
     names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"]
     rows = ""
-    for grp, color, bg in (("Patra Jasa Group", "#0A6AAD", "#F2F8FD"), ("Non-Patra Jasa", "#8A4B00", "#FFF9F0")):
+    for grp, color, bg in (("Patra Jasa Group", ui.P3, "#F3F9FD"), ("Non-Patra Jasa", ui.POS_TEXT, "#F7FDEB")):
         vals = pv.loc[grp]
         rows += f'<tr style="background:{bg}"><td style="font-weight:500">{grp}</td>' + "".join(
             f'<td style="color:{color}">{ui.fmt_int(v) if v else "—"}</td>' for v in vals) + \
-            f'<td style="font-weight:600;background:#E6F0F8">{ui.fmt_int(vals.sum())}</td></tr>'
+            f'<td style="font-weight:600;background:#EAF5FC">{ui.fmt_int(vals.sum())}</td></tr>'
     tot_m = pv.sum()
-    rows += '<tr style="font-style:italic"><td style="color:#5A6B7A">% Patra Jasa</td>' + "".join(
-        f'<td style="color:#5A6B7A">{(pv.loc["Patra Jasa Group", m] / t * 100):.0f}%</td>' if t else
-        '<td style="color:#A0AAB4">—</td>' for m, t in tot_m.items()) + \
-        f'<td style="color:#5A6B7A;background:#E6F0F8">{pv.loc["Patra Jasa Group"].sum() / max(tot_m.sum(), 1) * 100:.0f}%</td></tr>'
+    rows += '<tr style="font-style:italic"><td style="color:#6B6B6B">% Patra Jasa</td>' + "".join(
+        f'<td style="color:#6B6B6B">{(pv.loc["Patra Jasa Group", m] / t * 100):.0f}%</td>' if t else
+        '<td style="color:#9A9A9A">—</td>' for m, t in tot_m.items()) + \
+        f'<td style="color:#6B6B6B;background:#EAF5FC">{pv.loc["Patra Jasa Group"].sum() / max(tot_m.sum(), 1) * 100:.0f}%</td></tr>'
     with st.container(border=True):
         h1, h2 = st.columns([4, 1])
         with h1:
@@ -3467,7 +3249,7 @@ def tab_patra(df):
             out = pv.copy()
             out.columns = names
             out["Total"] = out.sum(axis=1)
-            _dl("⬇️ Unduh Excel", out.reset_index().rename(columns={"Grup": "Grup hotel"}), "Patra vs Non-Patra",
+            _dl("Unduh Excel", out.reset_index().rename(columns={"Grup": "Grup hotel"}), "Patra vs Non-Patra",
                 "patra_jasa_comparison", "pj_dl")
         st.markdown('<div style="overflow-x:auto"><table class="mx-table"><thead><tr><th>Grup hotel</th>' +
                     "".join(f"<th>{n}</th>" for n in names) + "<th>Total</th></tr></thead><tbody>" + rows +
@@ -3549,13 +3331,13 @@ def tab_laporan(df):
                             f"<div class='mx-h2sub'>{ui.esc(desc)}<br>{ui.fmt_int(len(data))} baris</div>",
                             unsafe_allow_html=True)
                 if can_download():
-                    _dl("⬇️ Unduh Excel", data, title, fname, f"lap_{fname}",
+                    _dl("Unduh Excel", data, title, fname, f"lap_{fname}",
                         money_cols=tuple(c for c in data.columns if "(Rp)" in c or c in
                                          ("Corp rate", "Avg dibayar", "Potensi", "Target dipakai", "Hard savings",
                                           "Corp rate setara")),
                         int_cols=tuple(c for c in data.columns if c in ("Room nights", "Travel requests", "RN")))
                 else:
-                    st.caption("🔒 Unduhan tidak tersedia untuk akun ini.")
+                    st.caption("Unduhan tidak tersedia untuk akun ini.")
     ui.note("<b>Data per transaksi tidak bisa diunduh dari dashboard.</b> Kebutuhan data per booking diajukan lewat "
             "permintaan data dan disetujui atasan serta Pejabat Pelindungan Data Pribadi.")
     if is_super_admin():
@@ -3675,9 +3457,9 @@ def main_app():
     st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
     ui.note("<b>Disclaimer &amp; Compliance Notice</b><br>Aplikasi ini untuk analisis internal. Output tidak bersifat "
             "final dan harus divalidasi sesuai kebijakan perusahaan.")
-    st.markdown("<div style='text-align:center;padding:18px;color:#5A6B7A;font-size:12px'>© 2026 Dikembangkan oleh "
-                "<a href='https://www.linkedin.com/in/rifyalt/' target='_blank'>Rifyal Tumber</a> · MTRAX Travel Analytics"
-                "</div>", unsafe_allow_html=True)
+    st.markdown("<div class='mx-footer'>© 2026 MTRAX Travel Analytics · PT Mitra Tours &amp; Travel · Dikembangkan oleh "
+                "<a href='https://www.linkedin.com/in/rifyalt/' target='_blank'>Rifyal Tumber</a></div>",
+                unsafe_allow_html=True)
 
 
 
