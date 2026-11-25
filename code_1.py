@@ -3502,8 +3502,12 @@ def tab_laporan(df):
     cp = ca.corp_path()
     if cp.exists():
         try:
-            corp, _ = ca.prepare_corp(pd.read_excel(cp), "Nett", standardize_name, _normalize_city_key)
+            corp, _ = ca.prepare_corp(ca.read_corp_file(cp),
+                                      "Belum" if str(st.session_state.get("ca_basis", "")).startswith("Belum") else "Nett",
+                                      standardize_name, _normalize_city_key,
+                                      carry_forward=st.session_state.get("ca_carry", True))
             b = ca.prepare_bookings(r, standardize_name, _normalize_city_key)
+            corp = ca.align_corp_cities(b, corp)
             mm = ca.match_bookings(b, corp)
             pools = ca.market_pools(b)
             s = ca.summarize_matched(mm, pools)
