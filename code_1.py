@@ -2323,7 +2323,7 @@ def login_page():
             with open(p, "rb") as f: return base64.b64encode(f.read()).decode()
         except Exception: return ""
 
-    wm_b64 = ui.img_b64(ui.WORDMARK)
+    wm_b64 = ui.wordmark_b64()
     wordmark = (f'<img class="lg-wordmark" src="data:image/png;base64,{wm_b64}" alt="MTRAX" />' if wm_b64
                 else '<div class="lg-h" style="letter-spacing:.12em">MTRAX</div>')
 
