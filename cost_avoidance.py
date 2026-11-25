@@ -40,9 +40,10 @@ STATUS_RULES = {                   # ambang status daya saing (bisa diubah)
 MIN_MARKET_SAMPLE = 5              # minimal booking pembanding untuk menghitung persentil kota
 
 CORP_COLUMNS = {                   # nama kolom standar -> alias yang diterima di file corp rate
-    "Hotel Name": ["hotel name", "hotel", "nama hotel"],
-    "City": ["city", "kota"],
-    "Room Type": ["room type", "room category", "tipe kamar"],
+    "Hotel Name": ["nama hotel", "hotel name", "hotel"],
+    "City": ["kota/kabupaten", "kota / kabupaten", "kota kabupaten", "kabupaten/kota", "city", "kota"],
+    "Province": ["provinsi", "province"],
+    "Room Type": ["type room", "room type", "tipe kamar", "room category", "jenis kamar"],
     "Meal Plan": ["meal plan", "meal", "board"],
     "Corp Rate": ["corp rate", "corporate rate", "rate", "harga"],
     "Tax Basis": ["tax basis", "basis pajak", "basis"],
@@ -73,13 +74,48 @@ def norm_room_type(value) -> str:
         return "Lainnya"
     if "suite" in s:
         return "Suite"
-    if any(k in s for k in ("executive", "club", "premier", "premium")):
+    if any(k in s for k in ("executive", "club", "premier", "premium", "business")):
         return "Executive"
     if "deluxe" in s or "dlx" in s:
         return "Deluxe"
     if any(k in s for k in ("superior", "standard", "standar", "moderate", "classic", "std", "spr")):
         return "Superior"
+    if re.search(r"\b(smart|pop|single|twin|double|queen|king)\b", s):
+        return "Superior"
     return "Lainnya"
+
+
+_ROOM_NOISE = re.compile(r"\b(rooms?|kamar|include[sd]?|incl|with|breakfast|room only|only|ro|rbf|abf|\d?bf|"
+                         r"single|double|twin|king|queen|city view|ocean view|pool view|garden view|view)\b")
+
+
+def room_key(value) -> str:
+    """Kunci tipe kamar untuk pencocokan. Tipe standar (Superior/Deluxe/Executive/Suite) dipakai apa adanya;
+    tipe lain memakai namanya sendiri, mis. 'Signature Rooms' -> 'Lainnya · Signature', supaya
+    'Raffles Room' tidak dibandingkan dengan 'Signature Room'."""
+    rt = norm_room_type(value)
+    if rt != "Lainnya":
+        return rt
+    s = re.sub(r"[^a-z0-9 ]", " ", _fold(value))
+    s = re.sub(r"\s+", " ", _ROOM_NOISE.sub(" ", s)).strip()
+    return f"Lainnya · {s.title()}" if s and s not in ("nan", "none") else "Lainnya"
+
+
+def is_other_room(rt) -> bool:
+    return str(rt).startswith("Lainnya")
+
+
+MEAL_ANY = "Semua"   # corp rate tanpa meal plan: berlaku untuk Room Only maupun Breakfast Included
+
+
+def meal_from_room_text(value) -> str:
+    """Meal plan yang tertulis di nama tipe kamar, mis. 'Superior Include Breakfast', 'Deluxe (1BF)', 'Room Only'."""
+    s = _fold(value)
+    if re.search(r"room only|\(ro\)|\bro\b|without breakfast|tanpa sarapan|no breakfast", s):
+        return "Room Only"
+    if re.search(r"breakfast|sarapan|\b\d ?bf\b|\(\d?bf\)|\brbf\b|\babf\b|\bbf\b", s):
+        return "Breakfast Included"
+    return MEAL_ANY
 
 
 def norm_meal(value) -> str:
@@ -167,7 +203,7 @@ def prepare_bookings(df: pd.DataFrame, standardize_name=None, normalize_city=Non
     ncity = normalize_city or (lambda c: _fold(c).upper())
     b["_hotel_key"] = b["Hotel Name"].map(lambda v: hotel_key(v, standardize_name))
     b["_city_key"] = b["City"].map(ncity)
-    b["_rt"] = b["Room Category"].map(norm_room_type) if "Room Category" in b.columns else "Lainnya"
+    b["_rt"] = b["Room Category"].map(room_key) if "Room Category" in b.columns else "Lainnya"
     b["_meal"] = b["Meal Plan"].map(norm_meal) if "Meal Plan" in b.columns else "Tidak diketahui"
     b["_rate"] = b["Invoice Amount"] / b["Number of Rooms Night"]
     b["_checkin"] = _to_dt(b["Check in Date"]) if "Check in Date" in b.columns else pd.NaT
@@ -175,43 +211,156 @@ def prepare_bookings(df: pd.DataFrame, standardize_name=None, normalize_city=Non
     return b.reset_index(drop=True)
 
 
+YEAR_COL = re.compile(r"(?:corp(?:orate)?\s*rate|harga|rate)\D*((?:19|20)\d{2})(?:\.\d+)?$")
+
+
+def _year_columns(df: pd.DataFrame) -> dict:
+    """{tahun: [kolom, ...]} untuk kolom 'Corporate Rate 2024', 'Corporate Rate 2025', ...
+    Kolom kembar (mis. dua 'Corporate Rate 2026') dikelompokkan ke tahun yang sama."""
+    out = {}
+    for c in df.columns:
+        m = YEAR_COL.search(_fold(c))
+        if m:
+            out.setdefault(int(m.group(1)), []).append(c)
+    return dict(sorted(out.items()))
+
+
+def _cell_rate(v):
+    """(angka, belum_pajak?) dari sel corp rate. '-', 'upon request', kosong -> NaN."""
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return np.nan, False
+    if isinstance(v, str):
+        t = _fold(v)
+        if not re.search(r"\d", t):
+            return np.nan, False
+        return _to_number(t), "++" in t
+    return _to_number(v), False
+
+
+def corp_to_long(corp: pd.DataFrame, carry_forward: bool = True) -> tuple[pd.DataFrame, list]:
+    """Format MasterData (satu kolom 'Corporate Rate <tahun>' per tahun) -> satu baris per tahun
+    dengan Valid From/Valid To = 1 Jan - 31 Des. Bila carry_forward, tahun yang kosong memakai rate
+    tahun sebelumnya (sampai tahun terakhir di file)."""
+    years = _year_columns(corp)
+    issues = []
+    if not years:
+        return corp, issues
+    dup = [y for y, cols in years.items() if len(cols) > 1]
+    if dup:
+        issues.append("Kolom tahun kembar digabung: " + ", ".join(f"Corporate Rate {y}" for y in dup)
+                      + " (dipakai nilai pertama yang terisi).")
+    base_cols = [c for c in corp.columns if not any(c in cols for cols in years.values())]
+    base = corp[base_cols].reset_index(drop=True)
+    vals, plus = {}, {}
+    for y, cols in years.items():
+        parsed = [corp[c].reset_index(drop=True).map(_cell_rate) for c in cols]
+        num = pd.concat([p.map(lambda t: t[0]) for p in parsed], axis=1).bfill(axis=1).iloc[:, 0]
+        pp = pd.concat([p.map(lambda t: t[1]) for p in parsed], axis=1).any(axis=1)
+        vals[y], plus[y] = num, pp
+    rows, carried = [], 0
+    for i in range(len(base)):
+        last = None
+        for y in years:
+            v = vals[y].iat[i]
+            src = y
+            if pd.isna(v) and carry_forward and last is not None:
+                v, src, pl = last[0], last[1], last[2]
+                carried += 1
+            elif not pd.isna(v):
+                pl = bool(plus[y].iat[i])
+                last = (v, y, pl)
+            if pd.isna(v):
+                continue
+            r = base.iloc[i].to_dict()
+            r.update({"Corp Rate": v, "Valid From": pd.Timestamp(y, 1, 1), "Valid To": pd.Timestamp(y, 12, 31),
+                      "Tahun rate": src, "_plus": pl})
+            rows.append(r)
+    out = pd.DataFrame(rows)
+    yrs = list(years)
+    issues.append(f"Format per tahun terbaca: {yrs[0]}–{yrs[-1]} · {len(base):,} baris tipe kamar → "
+                  f"{len(out):,} corp rate per tahun.".replace(",", "."))
+    if carried:
+        issues.append(f"{carried:,} sel tahun kosong memakai rate tahun sebelumnya.".replace(",", "."))
+    return out, issues
+
+
 def prepare_corp(corp: pd.DataFrame, default_basis: str = "Nett",
-                 standardize_name=None, normalize_city=None) -> tuple[pd.DataFrame, list]:
-    """Rapikan file corp rate. Return (tabel, daftar masalah)."""
+                 standardize_name=None, normalize_city=None, carry_forward: bool = True) -> tuple[pd.DataFrame, list]:
+    """Rapikan file corp rate (format MasterData per tahun, atau format lama satu kolom Corp Rate).
+    Return (tabel, daftar catatan)."""
     issues = []
     if corp is None or corp.empty:
         return pd.DataFrame(), ["File corp rate kosong."]
     c = _pick_columns(corp, CORP_COLUMNS)
-    for col in ("Hotel Name", "City", "Corp Rate"):
+    c, notes = corp_to_long(c, carry_forward)
+    issues += notes
+    for col in ("Hotel Name", "Corp Rate"):
         if col not in c.columns:
-            issues.append(f"Kolom wajib '{col}' tidak ditemukan.")
-    if issues:
+            issues.append(f"Kolom wajib '{col}' tidak ditemukan." if col == "Hotel Name" else
+                          "Kolom harga tidak ditemukan (contoh: 'Corporate Rate 2026').")
+    if any(i.startswith("Kolom wajib") or i.startswith("Kolom harga") for i in issues):
         return pd.DataFrame(), issues
+    if "City" not in c.columns:
+        c["City"] = ""
     if "Room Type" not in c.columns:
         c["Room Type"] = "Superior"
-        issues.append("Kolom Room Type tidak ada: semua corp rate dianggap Superior.")
-    if "Meal Plan" not in c.columns:
-        c["Meal Plan"] = "Breakfast Included"
-        issues.append("Kolom Meal Plan tidak ada: semua corp rate dianggap Breakfast Included.")
-    c["Corp Rate"] = c["Corp Rate"].map(_to_number)
-    bad = int(c["Corp Rate"].isna().sum())
-    if bad:
-        issues.append(f"{bad} baris corp rate tidak terbaca angkanya dan diabaikan.")
+        issues.append("Kolom Type Room tidak ada: semua corp rate dianggap Superior.")
+    c = c[c["Hotel Name"].notna() & (c["Hotel Name"].astype(str).str.strip() != "")].copy()
+    if "_plus" not in c.columns:
+        parsed = c["Corp Rate"].map(_cell_rate)
+        c["Corp Rate"], c["_plus"] = parsed.map(lambda t: t[0]), parsed.map(lambda t: t[1])
     c = c[c["Corp Rate"] > 0].copy()
+    # meal plan: kolom Meal Plan bila terisi, lalu teks di Type Room, selain itu berlaku untuk semua
+    meal_col = c["Meal Plan"] if "Meal Plan" in c.columns else pd.Series(np.nan, index=c.index)
+    from_col = meal_col.map(lambda v: norm_meal(v) if pd.notna(v) and str(v).strip() not in ("", "-") else MEAL_ANY)
+    from_col = from_col.replace("Tidak diketahui", MEAL_ANY)
+    from_room = c["Room Type"].map(meal_from_room_text)
+    c["_meal"] = np.where(from_col != MEAL_ANY, from_col, from_room)
+    # pajak: '++' di sel, atau kolom Tax Basis, atau pilihan basis di aplikasi
     basis = c["Tax Basis"].astype(str) if "Tax Basis" in c.columns else pd.Series(default_basis, index=c.index)
-    excl = basis.map(_fold).str.contains("excl|belum|before|\\+\\+", regex=True)
+    excl = basis.map(_fold).str.contains("excl|belum|before|\\+\\+", regex=True) | c["_plus"].astype(bool)
     c["_corp"] = np.where(excl, c["Corp Rate"] * (1 + DEFAULT_TAX), c["Corp Rate"])
     ncity = normalize_city or (lambda v: _fold(v).upper())
     c["_hotel_key"] = c["Hotel Name"].map(lambda v: hotel_key(v, standardize_name))
-    c["_city_key"] = c["City"].map(ncity)
-    c["_rt"] = c["Room Type"].map(norm_room_type)
-    c["_meal"] = c["Meal Plan"].map(norm_meal)
+    c["_city_key"] = c["City"].map(lambda v: ncity(v) if pd.notna(v) else "")
+    c["_rt"] = c["Room Type"].map(room_key)
     c["_from"] = _to_dt(c["Valid From"]) if "Valid From" in c.columns else pd.NaT
     c["_to"] = _to_dt(c["Valid To"]) if "Valid To" in c.columns else pd.NaT
-    unk = int((c["_rt"] == "Lainnya").sum())
+    n_pl = int(c["_plus"].astype(bool).sum())
+    if n_pl:
+        issues.append(f"{n_pl} corp rate bertanda '++' dianggap belum pajak (+{DEFAULT_TAX * 100:.0f}%).")
+    unk = int(c["_rt"].map(is_other_room).sum())
     if unk:
-        issues.append(f"{unk} baris corp rate dengan tipe kamar yang tidak dikenali (masuk 'Lainnya').")
+        issues.append(f"{unk:,}".replace(",", ".") + " corp rate dengan tipe kamar di luar Superior/Deluxe/"
+                      "Executive/Suite (mis. Family, Studio). Tipe ini hanya dicocokkan dengan booking "
+                      "yang nama tipe kamarnya sama.")
     return c.reset_index(drop=True), issues
+
+
+def align_corp_cities(b: pd.DataFrame, c: pd.DataFrame) -> pd.DataFrame:
+    """Kota di daftar corp rate sering ditulis beda dengan invoice (Jakarta Selatan vs Jakarta, Badung vs Bali).
+    Untuk hotel yang ada di invoice, kota corp rate disamakan dengan kota di invoice bila:
+    hotel itu hanya punya satu kota di daftar corp rate, atau nama kotanya berbagi kata (Jakarta Selatan ~ Jakarta)."""
+    if b is None or b.empty or c.empty:
+        return c
+    c = c.copy()
+    bc = (b.groupby(["_hotel_key", "_city_key"])["Number of Rooms Night"].sum().reset_index()
+          .sort_values("Number of Rooms Night", ascending=False))
+    b_cities = bc.groupby("_hotel_key", sort=False)["_city_key"].apply(list).to_dict()
+    n_city = c.groupby("_hotel_key")["_city_key"].nunique().to_dict()
+
+    def pick(h, k):
+        cand = b_cities.get(h)
+        if not cand or k in cand:
+            return k
+        kw = set(str(k).lower().split())
+        for bk in cand:
+            if kw & set(str(bk).lower().split()):
+                return bk
+        return cand[0] if n_city.get(h, 0) <= 1 else k
+
+    c["_city_key"] = [pick(h, k) for h, k in zip(c["_hotel_key"], c["_city_key"])]
+    return c
 
 
 def match_bookings(b: pd.DataFrame, c: pd.DataFrame) -> pd.DataFrame:
@@ -223,10 +372,13 @@ def match_bookings(b: pd.DataFrame, c: pd.DataFrame) -> pd.DataFrame:
     out["_match"] = "Hotel non-kontrak"
     if c.empty:
         return out
-    keys = ["_hotel_key", "_city_key", "_rt", "_meal"]
-    m = out[["_bid", "_checkin"] + keys].merge(c[keys + ["_corp", "_from", "_to"]], on=keys, how="inner")
+    keys = ["_hotel_key", "_city_key", "_rt"]
+    m = out[["_bid", "_checkin", "_meal"] + keys].merge(
+        c[keys + ["_meal", "_corp", "_from", "_to"]].rename(columns={"_meal": "_cmeal"}), on=keys, how="inner")
     ok = (m["_from"].isna() | (m["_checkin"] >= m["_from"])) & (m["_to"].isna() | (m["_checkin"] <= m["_to"]))
-    m = m[ok].sort_values("_corp").drop_duplicates("_bid")
+    ok &= (m["_cmeal"] == m["_meal"]) | (m["_cmeal"] == MEAL_ANY)
+    m = m[ok].assign(_exact=lambda x: (x["_cmeal"] == x["_meal"]).astype(int))
+    m = m.sort_values(["_exact", "_corp"], ascending=[False, True]).drop_duplicates("_bid")
     out.loc[out["_bid"].isin(m["_bid"]), "_corp"] = out["_bid"].map(m.set_index("_bid")["_corp"])
     hotels = set(zip(c["_hotel_key"], c["_city_key"]))
     hotel_rt = set(zip(c["_hotel_key"], c["_city_key"], c["_rt"]))
@@ -235,8 +387,9 @@ def match_bookings(b: pd.DataFrame, c: pd.DataFrame) -> pd.DataFrame:
     out["_contract_hotel"] = is_hotel
     out.loc[out["_corp"].notna(), "_match"] = "Cocok"
     rest = out["_corp"].isna() & out["_contract_hotel"]
-    out.loc[rest & (out["_rt"] == "Lainnya"), "_match"] = "Tipe kamar tidak dikenali"
-    out.loc[rest & (out["_rt"] != "Lainnya") & ~pd.Series(is_rt, index=out.index), "_match"] = "Tipe kamar tidak ada di kontrak"
+    other = out["_rt"].map(is_other_room)
+    out.loc[rest & other & ~pd.Series(is_rt, index=out.index), "_match"] = "Tipe kamar tidak dikenali"
+    out.loc[rest & ~other & ~pd.Series(is_rt, index=out.index), "_match"] = "Tipe kamar tidak ada di kontrak"
     out.loc[rest & pd.Series(is_rt, index=out.index) & out["_match"].eq("Hotel non-kontrak"), "_match"] = \
         "Meal plan / masa berlaku tidak cocok"
     return out
@@ -448,17 +601,44 @@ def save_manual(df: pd.DataFrame):
     os.replace(tmp, p)
 
 
+def read_corp_file(path) -> pd.DataFrame:
+    """Baca sheet 'Corp Rate' bila ada, selain itu sheet pertama."""
+    xl = pd.ExcelFile(path, engine="openpyxl")
+    sheet = next((n for n in xl.sheet_names if _fold(n) in ("corp rate", "corporate rate")), xl.sheet_names[0])
+    return xl.parse(sheet)
+
+
 def corp_template() -> BytesIO:
+    """Template mengikuti format MasterData: satu baris per hotel × tipe kamar, satu kolom per tahun."""
     t = pd.DataFrame([
-        {"Hotel Name": "Contoh Hotel Jakarta", "City": "Jakarta", "Room Type": "Superior",
-         "Meal Plan": "Breakfast Included", "Corp Rate": 850000, "Tax Basis": "Nett",
-         "Valid From": "2026-01-01", "Valid To": "2026-12-31"},
-        {"Hotel Name": "Contoh Hotel Jakarta", "City": "Jakarta", "Room Type": "Deluxe",
-         "Meal Plan": "Room Only", "Corp Rate": 900000, "Tax Basis": "Belum pajak",
-         "Valid From": "2026-01-01", "Valid To": "2026-12-31"},
-    ])
+        ["Raffles Jakarta", "Jakarta Selatan", "DKI Jakarta", "Raffles Room", "Breakfast", 2200000, 2400000, 2500000],
+        ["Raffles Jakarta", "Jakarta Selatan", "DKI Jakarta", "Signature Rooms", None, 3050000, 3250000, 3250000],
+        ["Vega Hotel Gading Serpong", "Tangerang", "Banten", "Superior Single / Twin", None, 588000, 600000, "-"],
+        ["Vega Hotel Gading Serpong", "Tangerang", "Banten", "Deluxe King", None, 750000, 762000, "-"],
+        ["Grand Jatra Hotel", "Pekanbaru", "Riau", "Superior Room", None, 998000, "-", 1250000],
+        ["Grand Jatra Hotel", "Pekanbaru", "Riau", "Deluxe Room", None, 1128000, "-", 1420000],
+    ], columns=["Nama Hotel", "Kota/Kabupaten", "Provinsi", "Type Room", "Meal Plan",
+                "Corporate Rate 2024", "Corporate Rate 2025", "Corporate Rate 2026"])
+    notes = pd.DataFrame({"Petunjuk": [
+        "Satu baris per hotel × tipe kamar. Tambah kolom 'Corporate Rate <tahun>' untuk tahun berikutnya.",
+        "Rate tahun X berlaku untuk check-in 1 Januari – 31 Desember tahun X.",
+        "Sel kosong atau '-' = tidak ada rate tahun itu; aplikasi memakai rate tahun sebelumnya.",
+        "Teks seperti 'upon request' atau 'ask to hotel' diabaikan.",
+        "Tulis '++' di belakang angka (mis. 1.100.000 ++) bila rate belum termasuk pajak & service.",
+        "Meal Plan boleh kosong: rate berlaku untuk Room Only maupun Breakfast. "
+        "Isi 'Breakfast' atau 'Room Only' bila rate khusus salah satu. Teks di Type Room "
+        "(mis. 'Include Breakfast', '(1BF)', 'Room Only') juga dibaca.",
+        "Type Room dikelompokkan ke Superior / Deluxe / Executive / Suite agar bisa dicocokkan dengan Room Category di invoice.",
+        "Kota boleh ditulis sampai kecamatan (mis. Jakarta Selatan); hotel dicocokkan dengan kota di invoice.",
+    ]})
     buf = BytesIO()
-    t.to_excel(buf, index=False, sheet_name="Corp Rate")
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+        t.to_excel(w, index=False, sheet_name="Corp Rate")
+        notes.to_excel(w, index=False, sheet_name="Petunjuk")
+        w.sheets["Corp Rate"].set_column(0, 0, 30)
+        w.sheets["Corp Rate"].set_column(1, 4, 20)
+        w.sheets["Corp Rate"].set_column(5, 7, 20, w.book.add_format({"num_format": "#,##0"}))
+        w.sheets["Petunjuk"].set_column(0, 0, 120)
     buf.seek(0)
     return buf
 
@@ -535,25 +715,38 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             st.download_button("⬇️ Template", corp_template(), file_name="template_corp_rate.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                key="ca_tpl")
-        basis = st.selectbox("Basis corp rate (dipakai bila file tidak punya kolom Tax Basis)",
-                             ["Nett (sudah pajak & service)", "Belum pajak — tambah 21%"], key="ca_basis")
+        st.caption("Format: Nama Hotel · Kota/Kabupaten · Provinsi · Type Room · Meal Plan · Corporate Rate 2024, "
+                   "2025, 2026, … (satu kolom per tahun). Lihat sheet Petunjuk di template.")
+        o1, o2 = st.columns(2)
+        with o1:
+            basis = st.selectbox("Basis corp rate tanpa tanda '++'",
+                                 ["Nett (sudah pajak & service)", "Belum pajak — tambah 21%"], key="ca_basis")
+        with o2:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            carry = st.checkbox("Tahun kosong pakai rate tahun sebelumnya", value=True, key="ca_carry")
 
     if not cp.exists():
         return
     try:
-        corp_raw = pd.read_excel(cp)
+        corp_raw = read_corp_file(cp)
     except Exception as e:
         st.error(f"File corp rate tidak bisa dibaca: {e}")
         return
 
     corp, issues = prepare_corp(corp_raw, "Belum" if basis.startswith("Belum") else "Nett",
-                                standardize_name, normalize_city)
-    for msg in issues:
-        st.warning(msg)
+                                standardize_name, normalize_city, carry_forward=carry)
+    errors = [i for i in issues if i.startswith("Kolom wajib") or i.startswith("Kolom harga") or "kosong." in i]
+    for msg in errors:
+        st.error(msg)
+    notes = [i for i in issues if i not in errors]
+    if notes:
+        with st.expander("ℹ️ Catatan pembacaan daftar corp rate"):
+            st.markdown("\n".join(f"- {n}" for n in notes))
     b = prepare_bookings(df_all, standardize_name, normalize_city)
     if b.empty or corp.empty:
         st.info("Data booking atau corp rate belum cukup untuk dianalisis.")
         return
+    corp = align_corp_cities(b, corp)
     m = match_bookings(b, corp)
     pools = market_pools(b)
     summary = summarize_matched(m, pools)
