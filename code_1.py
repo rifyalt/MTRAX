@@ -2323,7 +2323,7 @@ def login_page():
             with open(p, "rb") as f: return base64.b64encode(f.read()).decode()
         except Exception: return ""
 
-    wm_b64 = _b64_img(os.path.join("assets", "mtrax_wordmark.png"))
+    wm_b64 = ui.img_b64(ui.WORDMARK)
     wordmark = (f'<img class="lg-wordmark" src="data:image/png;base64,{wm_b64}" alt="MTRAX" />' if wm_b64
                 else '<div class="lg-h" style="letter-spacing:.12em">MTRAX</div>')
 
@@ -3459,7 +3459,8 @@ def main_app():
     ui.note("<b>Disclaimer &amp; Compliance Notice</b><br>Aplikasi ini untuk analisis internal. Output tidak bersifat "
             "final dan harus divalidasi sesuai kebijakan perusahaan.")
     st.markdown("<div class='mx-footer'>© 2026 MTRAX Travel Analytics · PT Mitra Tours And Travel · Dikembangkan oleh "
-                "<a href='https://www.linkedin.com/in/rifyalt/' target='_blank'>Rifyal Tumber</a></div>",
+                "<a href='https://www.linkedin.com/in/rifyalt/' target='_blank'>Rifyal Tumber</a>"
+                f" · UI {getattr(ui, 'UI_VERSION', 'lama')}</div>",
                 unsafe_allow_html=True)
 
 
