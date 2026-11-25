@@ -2323,9 +2323,9 @@ def login_page():
             with open(p, "rb") as f: return base64.b64encode(f.read()).decode()
         except Exception: return ""
 
-    logo_b64 = _b64_img(os.path.join("assets", "LOGO M FIX.png"))
-    logo_img = (f'<img src="data:image/png;base64,{logo_b64}" alt="MTRAX" />' if logo_b64
-                else '<span class="lg-fallback">M</span>')
+    wm_b64 = _b64_img(os.path.join("assets", "mtrax_wordmark.png"))
+    wordmark = (f'<img class="lg-wordmark" src="data:image/png;base64,{wm_b64}" alt="MTRAX" />' if wm_b64
+                else '<div class="lg-h" style="letter-spacing:.12em">MTRAX</div>')
 
     # Palet mengikuti identitas MTRAX: lime -> hijau toska -> biru -> biru tua
     st.markdown("""
@@ -2385,6 +2385,7 @@ def login_page():
         z-index:1000 !important; width:360px !important; max-width:360px !important;
         background:transparent !important; box-shadow:none !important; border:none !important; padding:0 !important;
     }
+    .lg-wordmark { height:40px; width:auto; display:block; margin:0 0 36px; }
     .lg-h { font-size:26px; font-weight:700; color:var(--ink); letter-spacing:-.01em; margin:0 0 6px; }
     .lg-p { font-size:14px; color:var(--muted); margin:0 0 32px; }
     .lg-label { font-size:12px; font-weight:600; color:var(--ink); margin:0 0 6px; }
@@ -2426,7 +2427,7 @@ def login_page():
 
     st.markdown(f"""
     <div class="lg-brand-panel">
-        <div class="lg-top"><div class="lg-mark">{logo_img}</div><span class="lg-name">MTRAX</span></div>
+        <div class="lg-top"></div>
         <div class="lg-hero">
             <div class="lg-rule"></div>
             <h1 class="lg-title">Corporate Travel<br>Analytics</h1>
@@ -2436,13 +2437,13 @@ def login_page():
         <div class="lg-foot">No employee identity data · every access is logged</div>
     </div>
     <div class="lg-form-panel"></div>
-    <div class="lg-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2026 MTRAX · PT Mitra Tours &amp; Travel</a> · v2026.11.25-PDP</div>
+    <div class="lg-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2026 MTRAX · PT Mitra Tours And Travel</a> · v2026.11.25-PDP</div>
     """, unsafe_allow_html=True)
 
     _dummy, col_form = st.columns(2)
     with col_form:
-        st.markdown("""
-        <div class="lg-accent"></div>
+        st.markdown(f"""
+        {wordmark}
         <div class="lg-h">Welcome back</div>
         <div class="lg-p">Log in to your MTRAX account.</div>
         <div class="lg-label">Username</div>
@@ -3457,7 +3458,7 @@ def main_app():
     st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
     ui.note("<b>Disclaimer &amp; Compliance Notice</b><br>Aplikasi ini untuk analisis internal. Output tidak bersifat "
             "final dan harus divalidasi sesuai kebijakan perusahaan.")
-    st.markdown("<div class='mx-footer'>© 2026 MTRAX Travel Analytics · PT Mitra Tours &amp; Travel · Dikembangkan oleh "
+    st.markdown("<div class='mx-footer'>© 2026 MTRAX Travel Analytics · PT Mitra Tours And Travel · Dikembangkan oleh "
                 "<a href='https://www.linkedin.com/in/rifyalt/' target='_blank'>Rifyal Tumber</a></div>",
                 unsafe_allow_html=True)
 
