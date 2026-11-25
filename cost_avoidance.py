@@ -37,6 +37,8 @@ STATUS_RULES = {                   # ambang status daya saing (bisa diubah)
     "below_tinjau": 10,            # >= 10%                                   -> Perlu ditinjau
     "pos_tinjau": 60,              # > P60                                    -> Perlu ditinjau
 }
+COMPETITIVE_GREEN = "#1E7B45"     # warna teks corp rate berstatus Kompetitif
+NOT_COMPETITIVE_RED = "#C2412F"   # warna teks corp rate berstatus Tidak kompetitif
 MIN_MARKET_SAMPLE = 5              # minimal booking pembanding untuk menghitung persentil kota
 
 CORP_COLUMNS = {                   # nama kolom standar -> alias yang diterima di file corp rate
@@ -215,6 +217,7 @@ def prepare_bookings(df: pd.DataFrame, standardize_name=None, normalize_city=Non
     ncity = normalize_city or (lambda c: _fold(c).upper())
     b["Hotel Name"] = b["Hotel Name"].map(lambda v: safe_standardize(v, standardize_name))
     b["_hotel_key"] = b["Hotel Name"].map(hotel_key)
+    b["Hotel Name"] = b.groupby("_hotel_key")["Hotel Name"].transform(lambda x: x.value_counts().index[0])
     b["_city_key"] = b["City"].map(ncity)
     b["_rt"] = b["Room Category"].map(room_key) if "Room Category" in b.columns else "Lainnya"
     b["_meal"] = b["Meal Plan"].map(norm_meal) if "Meal Plan" in b.columns else "Tidak diketahui"
@@ -895,8 +898,17 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             show["Malam < corp %"] = out["Malam < corp %"].map(lambda v: f"{v:.0f}%")
             show["Posisi kota"] = out["Posisi kota"].map(lambda v: "-" if pd.isna(v) else f"P{v:.0f}")
             show.index = show.index + 1
-            st.dataframe(show.rename(columns={"Corp": "Corp rate", "RN": "Room nights", "Potensi": "Potensi avoidance"}),
-                         width="stretch", height=520)
+            show = show.rename(columns={"Corp": "Corp rate", "RN": "Room nights", "Potensi": "Potensi avoidance"})
+            tone = show["Daya saing"].map({"Kompetitif": f"color: {COMPETITIVE_GREEN}; font-weight: 600",
+                                           "Tidak kompetitif": f"color: {NOT_COMPETITIVE_RED}; font-weight: 600"}).fillna("")
+
+            def _hl(col):  # corp rate & status: hijau = kompetitif, merah = tidak kompetitif
+                return list(tone) if col.name in ("Corp rate", "Daya saing") else [""] * len(col)
+
+            st.dataframe(show.style.apply(_hl, axis=0), width="stretch", height=min(520, 36 * len(show) + 40))
+            st.caption(f"<span style='color:{COMPETITIVE_GREEN};font-weight:600'>Hijau</span> = corp rate Kompetitif · "
+                       f"<span style='color:{NOT_COMPETITIVE_RED};font-weight:600'>Merah</span> = Tidak kompetitif · "
+                       "hitam = Perlu ditinjau.", unsafe_allow_html=True)
             if can_download:
                 st.download_button("⬇️ Unduh Excel", _excel(out.rename(columns={"Corp": "Corp rate", "RN": "Room nights"}),
                                    "Cost Avoidance", excel_fn,
