@@ -17,6 +17,8 @@ import os
 
 import streamlit as st
 
+UI_VERSION = "2026.11.25-b"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
 P2 = "#1494C6"          # primary — seri kedua / hover
@@ -221,7 +223,8 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 
 
 # ---------------------------------------------------------------- komponen
-WORDMARK = "assets/mtrax_wordmark.png"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+WORDMARK = os.path.join(_HERE, "assets", "mtrax_wordmark.png")   # tidak bergantung folder kerja server
 
 
 def img_b64(path) -> str:
