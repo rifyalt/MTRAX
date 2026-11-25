@@ -772,6 +772,20 @@ def _excel(df: pd.DataFrame, sheet: str, excel_fn=None, **fmt) -> BytesIO:
     return buf
 
 
+def _corp_uploader(cp, where: str):
+    """Unggah & simpan file corp rate (dipakai di halaman kosong dan di menu Corp rate)."""
+    import streamlit as st
+    up = st.file_uploader("Unggah / ganti daftar corp rate (.xlsx)", type=["xlsx"], key=f"ca_corp_up_{where}")
+    if up is not None and st.button("Simpan daftar corp rate", key=f"ca_corp_save_{where}", type="primary"):
+        tmp = cp.with_suffix(".tmp")
+        tmp.write_bytes(up.getvalue())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, cp)
+        st.cache_data.clear()
+        st.success("Daftar corp rate disimpan.")
+        st.rerun()
+
+
 def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit: bool,
                           username: str = "", excel_fn=None, standardize_name=None,
                           normalize_city=None):
@@ -796,17 +810,9 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             st.caption(f"File aktif: corp_rate.xlsx · diperbarui {ts}")
         else:
             st.caption("Belum ada daftar corp rate.")
-        if can_edit:
-            up = st.file_uploader("Unggah / ganti daftar corp rate (.xlsx)", type=["xlsx"], key="ca_corp_up")
-            if up is not None and st.button("Simpan daftar corp rate", key="ca_corp_save", type="primary"):
-                tmp = cp.with_suffix(".tmp")
-                tmp.write_bytes(up.getvalue())
-                os.chmod(tmp, 0o600)
-                os.replace(tmp, cp)
-                st.cache_data.clear()
-                st.success("Daftar corp rate disimpan.")
-                st.rerun()
-        else:
+        if can_edit and cp.exists():
+            _corp_uploader(cp, "pop")
+        elif not can_edit:
             st.caption("Hanya Super Admin & Admin yang bisa mengganti daftar corp rate.")
         basis = st.selectbox("Basis corp rate tanpa tanda '++'",
                              ["Nett (sudah pajak & service)", "Belum pajak — tambah 21%"], key="ca_basis")
@@ -817,9 +823,17 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ca_tpl")
 
     if not cp.exists():
-        ui.note("<b>Belum ada daftar corporate rate.</b> " + (
-            "Buka <b>Corp rate</b> di kanan atas untuk mengunggah file sesuai template." if can_edit else
-            "Minta Super Admin atau Admin mengunggah daftar corp rate."))
+        if can_edit:
+            with st.container(border=True):
+                ui.section("Unggah daftar corporate rate",
+                           "Belum ada daftar corp rate di server. File di server Streamlit Cloud bisa hilang saat "
+                           "aplikasi di-reboot atau di-deploy ulang; bila itu terjadi, unggah ulang di sini.")
+                _corp_uploader(cp, "main")
+                st.download_button("Template", corp_template(), file_name="template_corp_rate.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   key="ca_tpl_main")
+        else:
+            ui.note("<b>Belum ada daftar corporate rate.</b> Minta Super Admin atau Admin mengunggahnya.")
         return
     try:
         corp_raw = read_corp_file(cp)
