@@ -1361,19 +1361,52 @@ GUEST_USERNAME = "tamu"
 _VALID_ROLES = ("Super Admin", "Admin", "Analyst", "Viewer", "Demo")
 
 
-def login_required() -> bool:
-    try:
-        return bool(dict(st.secrets.get("access", {})).get("login_required", True))
-    except Exception:
+def _as_bool(v, default=True) -> bool:
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    if s in ("false", "0", "no", "off", "tidak", "n"):
+        return False
+    if s in ("true", "1", "yes", "on", "ya", "y"):
         return True
+    return default
+
+
+def login_required() -> bool:
+    """Baca saklar login. Urutan: [access] login_required -> login_required di level teratas
+    secrets.toml -> variabel lingkungan MTRAX_LOGIN_REQUIRED. Default: login wajib."""
+    try:
+        acc = dict(st.secrets.get("access", {}))
+        if "login_required" in acc:
+            return _as_bool(acc["login_required"])
+    except Exception:
+        pass
+    try:
+        if "login_required" in st.secrets:
+            return _as_bool(st.secrets["login_required"])
+    except Exception:
+        pass
+    try:  # baris yang tidak sengaja masuk ke bagian lain (mis. ditempel di akhir file di bawah [demo])
+        for _name, _sec in st.secrets.items():
+            if hasattr(_sec, "keys") and "login_required" in _sec:
+                return _as_bool(_sec["login_required"])
+    except Exception:
+        pass
+    env = os.environ.get("MTRAX_LOGIN_REQUIRED")
+    if env is not None:
+        return _as_bool(env)
+    return True
 
 
 def guest_role() -> str:
+    r = ""
     try:
-        r = str(dict(st.secrets.get("access", {})).get("guest_role", "Viewer"))
+        r = str(dict(st.secrets.get("access", {})).get("guest_role", "") or "")
     except Exception:
-        r = "Viewer"
-    return r if r in _VALID_ROLES else "Viewer"
+        pass
+    r = r or os.environ.get("MTRAX_GUEST_ROLE", "Viewer")
+    match = {x.lower(): x for x in _VALID_ROLES}.get(r.strip().lower())
+    return match or "Viewer"
 
 
 def guest_login():
@@ -2611,7 +2644,7 @@ def login_page():
             <div class="lp-sub">Corporate Travel Analytics Platform<br>for Business Travel</div>
         </div>
     </div>
-    <div class="lp-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2026 MTRAX.</a> All rights reserved.</div>
+    <div class="lp-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2026 MTRAX.</a> All rights reserved. · v2026.11.25-PDP</div>
     """, unsafe_allow_html=True)
 
     # ── FLOATING CARD: dummy col (hidden) + form col
