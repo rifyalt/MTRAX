@@ -3405,7 +3405,9 @@ def tab_laporan(df, data_sig=None):
         try:
             res = ca.run_analysis(r, data_sig or ca.frame_sig(r), src,
                                   "Belum" if str(st.session_state.get("ca_basis", "")).startswith("Belum") else "Nett",
-                                  st.session_state.get("ca_carry", True), standardize_name, _normalize_city_key)
+                                  st.session_state.get("ca_carry", True), standardize_name, _normalize_city_key,
+                                  None if str(st.session_state.get("ca_year", "")).isdigit() is False
+                                  else int(st.session_state["ca_year"]))
             if not res.get("ready"):
                 raise ValueError("belum ada booking yang cocok dengan corp rate")
             mm, corp, pools, s = res["m"], res["corp"], res["pools"], res["summary"]
