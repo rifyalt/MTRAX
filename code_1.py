@@ -642,6 +642,69 @@ def load_drive_data(folder_id, drop_cols):
     # Kunci acak baru setiap kali data ditarik ulang (cache habis / tombol 🔄).
     return mask_dataframe(pd.concat(dfs, ignore_index=True))
 
+# ---------------------------------------------------------------------
+# CORPORATE RATE DARI GOOGLE DRIVE
+#   secrets.toml:
+#     [corp_rate]
+#     folder_id = "<ID folder Google Drive berisi MasterData corp rate>"
+#   Folder harus dibagikan (Viewer) ke email service account di [gcp_service_account].client_email.
+#   Dipakai file Excel / Google Sheet TERBARU di folder itu (utamakan yang namanya memuat
+#   "corp" atau "master"). Dicek ulang tiap 10 menit; tombol "Muat ulang" untuk langsung.
+# ---------------------------------------------------------------------
+CORP_DRIVE_TTL = 10 * 60
+
+
+def _corp_folder_id() -> str:
+    try:
+        return str(dict(st.secrets.get("corp_rate", {})).get("folder_id", "") or "").strip()
+    except Exception:
+        return ""
+
+
+@st.cache_data(ttl=CORP_DRIVE_TTL, max_entries=4, show_spinner=False)
+def _corp_from_drive(folder_id: str):
+    import cost_avoidance as _ca
+    if not _DRIVE_ID_RE.fullmatch(folder_id):
+        raise ValueError("folder_id corp rate tidak valid.")
+    items = _collect_excel_files(_drive_service(), folder_id, max_depth=1)
+    if not items:
+        raise FileNotFoundError("Folder Google Drive tidak berisi file Excel/Google Sheet, atau belum dibagikan "
+                                "ke service account aplikasi.")
+
+    def rank(it):
+        n = it["name"].lower()
+        return (("corp" in n) or ("master" in n), it.get("modifiedTime", ""))
+    item = max(items, key=rank)
+    df = _ca.read_corp_file(_download_to_memory(_drive_service(), item))
+    updated = pd.to_datetime(item.get("modifiedTime"), utc=True, errors="coerce")
+    if pd.notna(updated):
+        updated = updated.tz_convert("Asia/Jakarta").tz_localize(None).to_pydatetime()
+    else:
+        updated = None
+    return {"df": df, "name": item["name"], "updated": updated, "origin": "drive",
+            "sig": f"drive:{item['id']}:{item.get('modifiedTime', '')}", "error": None}
+
+
+def corp_source():
+    """Sumber corp rate untuk Cost Avoidance & Laporan. None bila folder Drive tidak diatur."""
+    fid = _corp_folder_id()
+    if not fid:
+        return None
+    try:
+        src = dict(_corp_from_drive(fid))
+    except Exception as e:
+        msg = str(e)
+        if "404" in msg or "403" in msg or "notFound" in msg or "insufficient" in msg.lower():
+            try:
+                sa = dict(st.secrets["gcp_service_account"]).get("client_email", "service account aplikasi")
+            except Exception:
+                sa = "service account aplikasi"
+            msg = f"Folder tidak bisa diakses. Bagikan folder (Viewer) ke {sa}."
+        src = {"df": None, "origin": "drive", "error": msg}
+    src["refresh"] = _corp_from_drive.clear
+    return src
+
+
 #==========================#
 # FUNGSI AUTO-CANONICAL MAPPING
 #==========================#
@@ -964,6 +1027,12 @@ def build_property_merge_map(pairs_df: pd.DataFrame, threshold: float = 0.88) ->
     return df[["_hotel_raw", "_city_key", "Hotel / Properti"]]
 
 
+def _umap(series, func):
+    """series.map(func) tetapi func dihitung sekali per nilai unik (jauh lebih cepat untuk puluhan ribu baris)."""
+    from cost_avoidance import umap
+    return umap(series, func)
+
+
 def get_property_merge_map(df: pd.DataFrame, hotel_col: str = "Hotel Name",
                            city_col: str = "City") -> pd.DataFrame:
     """Bangun peta penggabungan properti dari df (hasil di-cache)."""
@@ -971,7 +1040,7 @@ def get_property_merge_map(df: pd.DataFrame, hotel_col: str = "Hotel Name",
         return pd.DataFrame(columns=["_hotel_raw", "_city_key", "Hotel / Properti"])
     tmp = pd.DataFrame({
         "_hotel_raw": df[hotel_col].fillna("").astype(str).str.strip(),
-        "_city_key": (df[city_col].map(_normalize_city_key)
+        "_city_key": (_umap(df[city_col], _normalize_city_key)
                       if city_col in df.columns else "ALL"),
     })
     tmp = tmp[tmp["_hotel_raw"].ne("") & tmp["_hotel_raw"].str.lower().ne("nan")]
@@ -984,7 +1053,7 @@ def apply_property_merge(df: pd.DataFrame, prop_map: pd.DataFrame,
     """Tambahkan kolom 'Hotel / Properti' ke df berdasarkan prop_map."""
     out = df.copy()
     out["_hotel_raw"] = out[hotel_col].fillna("").astype(str).str.strip()
-    out["_city_key"] = (out[city_col].map(_normalize_city_key)
+    out["_city_key"] = (_umap(out[city_col], _normalize_city_key)
                         if city_col in out.columns else "ALL")
     out = out.merge(prop_map, on=["_hotel_raw", "_city_key"], how="left")
     out["Hotel / Properti"] = out["Hotel / Properti"].fillna(out["_hotel_raw"])
@@ -1227,6 +1296,15 @@ def _install_download_guard():
         return
     _orig_dg = DeltaGenerator.download_button
     _orig_st = st.download_button
+    # Streamlit baru menerima data berupa fungsi (Excel dibuat saat tombol diklik). Versi lama: panggil langsung.
+    _deferred_ok = "callable" in (getattr(_orig_dg, "__doc__", "") or "")
+
+    def _prep_data(args, kwargs):
+        if "data" in kwargs and callable(kwargs["data"]) and not _deferred_ok:
+            kwargs["data"] = kwargs["data"]()
+        elif len(args) > 1 and callable(args[1]) and not _deferred_ok:
+            args = (args[0], args[1]()) + tuple(args[2:])
+        return args, kwargs
 
     def _log(res, args, kwargs):
         if res:
@@ -1238,12 +1316,14 @@ def _install_download_guard():
         if not can_download():
             return False
         kwargs.setdefault("icon", ":material/download:")
+        args, kwargs = _prep_data(args, kwargs)
         return _log(_orig_dg(self, *args, **kwargs), args, kwargs)
 
     def _st_guard(*args, **kwargs):
         if not can_download():
             return False
         kwargs.setdefault("icon", ":material/download:")
+        args, kwargs = _prep_data(args, kwargs)
         return _log(_orig_st(*args, **kwargs), args, kwargs)
 
     _dg_guard._mtrax_guard = True
@@ -2524,13 +2604,15 @@ XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 # ---------------------------------------------------------------- data
 def prepare_data(df: pd.DataFrame):
-    """Bersihkan data sekali per pemuatan: angka, kurs, tanggal, nama hotel, kota, peta properti."""
+    """Bersihkan data sekali per pemuatan: angka, kurs, tanggal, nama hotel, kota, peta properti.
+    Return (df, peta properti, info kurs, peringatan)."""
     d = df.copy()
+    fx_info, warn = {}, ""
     if "Invoice Amount" in d.columns:
         d["Invoice Amount"] = pd.to_numeric(
             d["Invoice Amount"].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
             errors="coerce")
-        d, st.session_state["_fx_info"] = convert_currency_to_idr(d)
+        d, fx_info = convert_currency_to_idr(d)
     if "Number of Rooms Night" in d.columns:
         d["Number of Rooms Night"] = pd.to_numeric(d["Number of Rooms Night"], errors="coerce")
     for c in ("Check in Date", "Check out Date", "Issue Time"):
@@ -2539,13 +2621,21 @@ def prepare_data(df: pd.DataFrame):
     try:
         d = standardize_hotel_columns(d)
     except Exception as e:
-        st.warning(f"Penyeragaman nama hotel dilewati: {e}")
+        warn = f"Penyeragaman nama hotel dilewati: {e}"
     for c in ("City", "Country"):
         if c in d.columns:
             d[c] = d[c].astype(str).str.strip().str.replace(r"\s+", " ", regex=True).str.title()
             d.loc[d[c].isin(["Nan", "None", ""]), c] = np.nan
     pmap = get_property_merge_map(d, hotel_col="Hotel Name", city_col="City")
-    return d, pmap
+    if "Hotel Name" in d.columns:   # kolom gabungan properti dihitung sekali, bukan di setiap interaksi
+        d = apply_property_merge(d, pmap, hotel_col="Hotel Name", city_col="City")
+    return d, pmap, fx_info, warn
+
+
+@st.cache_data(max_entries=6, show_spinner=False)
+def _prepare_cached(sig: str, _raw: pd.DataFrame):
+    """prepare_data dibagi antar sesi & pengguna selama data yang ditarik sama."""
+    return prepare_data(_raw)
 
 
 def _market(df, choice):
@@ -2577,7 +2667,9 @@ def _xlsx(df, sheet, **fmt):
 
 def _dl(label, df, sheet, fname, key, **fmt):
     if can_download():
-        st.download_button(label, _xlsx(df, sheet, **fmt), file_name=f"{fname}_{datetime.now():%Y%m%d}.xlsx",
+        snap = df.copy()
+        st.download_button(label, lambda: _xlsx(snap, sheet, **fmt).getvalue(),
+                           file_name=f"{fname}_{datetime.now():%Y%m%d}.xlsx",
                            mime=XLSX_MIME, key=key)
 
 
@@ -2625,12 +2717,14 @@ def _pareto_fig(names, values, top_n, key, value_title):
 def _key_column(df, dim, merge, pmap):
     if dim == "Hotel":
         if merge:
+            if "Hotel / Properti" in df.columns:
+                return df, "Hotel / Properti"
             d = apply_property_merge(df, pmap, hotel_col="Hotel Name", city_col="City")
             return d, "Hotel / Properti"
         d = df.copy()
         d["Hotel / Properti"] = d["Hotel Name"].astype(str).str.strip()
         return d, "Hotel / Properti"
-    return df.copy(), "City"
+    return df, "City"
 
 
 # ---------------------------------------------------------------- sidebar & header
@@ -2672,6 +2766,7 @@ def render_sidebar():
             if go_clicked:
                 with st.spinner(f"Memuat data {sel}…"):
                     try:
+                        _t0 = time.time()
                         raw = load_drive_data(all_folders[sel], ["Unnamed: 0", "Travel Request Number.1"])
                         if is_demo_user():
                             raw = prepare_demo_dataset(raw)
@@ -2681,6 +2776,7 @@ def render_sidebar():
                         st.session_state.data_loaded = True
                         st.session_state.data_period = sel
                         st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
+                        st.session_state._load_secs = time.time() - _t0
                         st.rerun()
                     except Exception as e:
                         st.error("Gagal memuat data." if is_demo_user() else f"Gagal memuat data: {e}")
@@ -2688,8 +2784,9 @@ def render_sidebar():
             st.info("Belum ada folder data ([drive_folders] di Secrets).")
 
         if st.session_state.get("data_loaded") and not st.session_state.df_all.empty:
+            secs = st.session_state.get("_load_secs")
             st.success(f"{len(st.session_state.df_all):,} records · {st.session_state.get('data_period', '')}"
-                       .replace(",", "."))
+                       .replace(",", ".") + (f" · dimuat {secs:.1f} dtk".replace(".", ",") if secs and secs >= 0.1 else ""))
             fx = st.session_state.get("_fx_info") or {}
             if fx.get("missing"):
                 st.warning(f"{fx['missing']:,} booking tanpa kurs ({', '.join(fx.get('missing_currencies', []))}).")
@@ -2771,9 +2868,9 @@ def tab_dashboard(df):
     bf = "-"
     if "Meal Plan" in d or "Room Category" in d:
         import cost_avoidance as _ca
-        meal = d["Meal Plan"].map(_ca.norm_meal) if "Meal Plan" in d else pd.Series("Tidak diketahui", index=d.index)
+        meal = _ca.umap(d["Meal Plan"], _ca.norm_meal) if "Meal Plan" in d else pd.Series("Tidak diketahui", index=d.index)
         if "Room Category" in d:
-            meal = meal.where(meal != "Tidak diketahui", d["Room Category"].map(_ca.norm_meal))
+            meal = meal.where(meal != "Tidak diketahui", _ca.umap(d["Room Category"], _ca.norm_meal))
         known = meal != "Tidak diketahui"
         bf = ui.fmt_pct((meal[known] == "Breakfast Included").mean() * 100, digits=0) if known.any() else "-"
     ui.mini_row([("Kota", ui.fmt_int(d["City"].nunique() if "City" in d else 0)),
@@ -3277,7 +3374,7 @@ def tab_patra(df):
 
 
 # ---------------------------------------------------------------- tab: Laporan
-def tab_laporan(df):
+def tab_laporan(df, data_sig=None):
     import cost_avoidance as ca
     ui.page_title("Laporan", "Semua unduhan berupa laporan agregat dalam format Excel dan tercatat atas nama akun Anda")
     r = df.copy()
@@ -3301,27 +3398,24 @@ def tab_laporan(df):
         m["Market"] = np.where(m["Country"].astype(str).str.upper().isin(DOMESTIC_ALIAS), "Domestik", "Internasional")
         reps.append(("Tren bulanan", "Travel request, room nights dan spend per bulan, domestik vs internasional",
                      agg(m, ["Bulan", "Market"]).sort_values(["Bulan", "Market"]), "tren_bulanan"))
-    cp = ca.corp_path()
-    if cp.exists():
+    src = corp_source()
+    if src is None or src.get("df") is None:
+        src = ca.local_corp_source()
+    if src is not None:
         try:
-            corp, _ = ca.prepare_corp(ca.read_corp_file(cp),
-                                      "Belum" if str(st.session_state.get("ca_basis", "")).startswith("Belum") else "Nett",
-                                      standardize_name, _normalize_city_key,
-                                      carry_forward=st.session_state.get("ca_carry", True))
-            b = ca.prepare_bookings(r, standardize_name, _normalize_city_key)
-            corp, _ = ca.harmonize_corp_names(b, corp)
-            corp = ca.align_corp_cities(b, corp)
-            b, corp = ca.breakfast_only(b, corp)
-            mm = ca.match_bookings(b, corp)
-            pools = ca.market_pools(b)
-            s = ca.summarize_matched(mm, pools)
+            res = ca.run_analysis(r, data_sig or ca.frame_sig(r), src,
+                                  "Belum" if str(st.session_state.get("ca_basis", "")).startswith("Belum") else "Nett",
+                                  st.session_state.get("ca_carry", True), standardize_name, _normalize_city_key)
+            if not res.get("ready"):
+                raise ValueError("belum ada booking yang cocok dengan corp rate")
+            mm, corp, pools, s = res["m"], res["corp"], res["pools"], res["summary"]
             if not s.empty:
                 reps.append(("Cost avoidance per hotel & tipe kamar",
                              "Booking termasuk sarapan · corp rate, rate dibayar, selisih, potensi avoidance, status",
                              _cols(s, ["Hotel", "Kota", "Room type", "Meal plan", "Corp", "Avg dibayar", "Selisih %",
                                        "RN", "Potensi", "Room Night < Corp %", "Posisi kota", "Daya saing"])
                              .rename(columns={"Corp": "Corp rate", "RN": "Room nights"}), "cost_avoidance"))
-            lk = ca.leakage(mm, corp, 100)
+            lk = res["leak100"]
             if not lk.empty:
                 reps.append(("Kebocoran non-kontrak", "Top 100 hotel non-kontrak dan potensi pengalihan",
                              _cols(lk, ["Hotel", "Kota", "Room type", "Meal plan", "RN", "Avg dibayar", "Setara",
@@ -3404,6 +3498,41 @@ def page_akses():
             ui.mini_row([("Batas waktu sesi", f"{SESSION_TIMEOUT // 60} menit")])
 
 
+# ---------------------------------------------------------------- navigasi halaman
+PAGES = ["Dashboard", "Price Intelligence", "Cost Avoidance", "Room Intelligence", "Sankey Flow",
+         "Top Hotel/City", "Dendrogram", "Patra Jasa", "Laporan"]
+
+
+def ca_frame_sig(df):
+    import cost_avoidance as _ca
+    return _ca.frame_sig(df)
+
+
+@st.fragment
+def _render_page(page, df, pmap, data_sig):
+    if page == "Dashboard":
+        tab_dashboard(df)
+    elif page == "Price Intelligence":
+        tab_price(df, pmap)
+    elif page == "Cost Avoidance":
+        render_cost_avoidance(df, can_download=can_download(), can_edit=is_admin(),
+                              username=st.session_state.get("username", ""), excel_fn=excel_bytes_with_formats,
+                              standardize_name=standardize_name, normalize_city=_normalize_city_key,
+                              corp_source=corp_source, data_sig=data_sig)
+    elif page == "Room Intelligence":
+        tab_room(df, pmap)
+    elif page == "Sankey Flow":
+        tab_sankey(df)
+    elif page == "Top Hotel/City":
+        tab_top(df)
+    elif page == "Dendrogram":
+        tab_dendro(df)
+    elif page == "Patra Jasa":
+        tab_patra(df)
+    elif page == "Laporan":
+        tab_laporan(df, data_sig)
+
+
 # ---------------------------------------------------------------- main
 def main_app():
     st.set_page_config(page_title="MTRAX | Travel Analytics", layout="wide", initial_sidebar_state="expanded")
@@ -3426,47 +3555,36 @@ def main_app():
         ui.note("Pilih <b>periode data</b> di sidebar lalu klik <b>Get Data</b>.")
         return
 
-    key = (st.session_state.get("_data_ver", 0), st.session_state.get("username", ""))
-    prep = st.session_state.get("_prep2")
-    if prep is None or prep["key"] != key:
-        with st.spinner("Menyiapkan data…"):
-            d_all, pmap = prepare_data(raw)
-        st.session_state._prep2 = prep = {"key": key, "df": d_all, "pmap": pmap}
-    df, pmap = prep["df"], prep["pmap"]
+    ver = st.session_state.get("_data_ver", 0)
+    if st.session_state.get("_sig_ver") != ver:          # sidik jari data dihitung sekali per penarikan
+        st.session_state._raw_sig = ca_frame_sig(raw)
+        st.session_state._sig_ver = ver
+    sig = st.session_state._raw_sig
+    with st.spinner("Menyiapkan data…"):
+        df, pmap, fx_info, prep_warn = _prepare_cached(sig, raw)
+    st.session_state["_fx_info"] = fx_info
+    if prep_warn:
+        st.warning(prep_warn)
 
     dc = _date_col(df)
+    rng_key = "all"
     if dc:
         dates = df[dc].dropna()
         lo, hi = dates.min().date(), dates.max().date()
         with st.sidebar:
             rng = st.date_input("Rentang tanggal (semua tab)", (lo, hi), min_value=lo, max_value=hi,
-                                format="DD/MM/YYYY", key=f"gf_range_{key[0]}")
+                                format="DD/MM/YYYY", key=f"gf_range_{ver}")
         if isinstance(rng, (list, tuple)) and len(rng) == 2:
-            df = df[(df[dc].dt.date >= rng[0]) & (df[dc].dt.date <= rng[1])]
+            d_only = df[dc].dt.normalize()
+            df = df[(d_only >= pd.Timestamp(rng[0])) & (d_only <= pd.Timestamp(rng[1]))]
+            rng_key = f"{rng[0]}_{rng[1]}"
+    data_sig = f"{sig}|{rng_key}"
 
+    # Hanya halaman yang dipilih yang dihitung & digambar (st.tabs menghitung SEMUA tab di setiap interaksi).
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-    t = st.tabs(["Dashboard", "Price Intelligence", "Cost Avoidance", "Room Intelligence", "Sankey Flow",
-                 "Top Hotel/City", "Dendrogram", "Patra Jasa", "Laporan"])
-    with t[0]:
-        tab_dashboard(df)
-    with t[1]:
-        tab_price(df, pmap)
-    with t[2]:
-        render_cost_avoidance(df, can_download=can_download(), can_edit=is_admin(),
-                              username=st.session_state.get("username", ""), excel_fn=excel_bytes_with_formats,
-                              standardize_name=standardize_name, normalize_city=_normalize_city_key)
-    with t[3]:
-        tab_room(df, pmap)
-    with t[4]:
-        tab_sankey(df)
-    with t[5]:
-        tab_top(df)
-    with t[6]:
-        tab_dendro(df)
-    with t[7]:
-        tab_patra(df)
-    with t[8]:
-        tab_laporan(df)
+    with st.container(key="mx_nav"):
+        page = st.radio("Halaman", PAGES, horizontal=True, key="nav_page", label_visibility="collapsed")
+    _render_page(page, df, pmap, data_sig)
 
     st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
     ui.note("<b>Disclaimer &amp; Compliance Notice</b><br>Aplikasi ini untuk analisis internal. Output tidak bersifat "
