@@ -3523,7 +3523,7 @@ def tab_laporan(df):
                 reps.append(("Cost avoidance per hotel & tipe kamar",
                              "Booking termasuk sarapan · corp rate, rate dibayar, selisih, potensi avoidance, status",
                              _cols(s, ["Hotel", "Kota", "Room type", "Meal plan", "Corp", "Avg dibayar", "Selisih %",
-                                       "RN", "Potensi", "Malam < corp %", "Posisi kota", "Daya saing"])
+                                       "RN", "Potensi", "Room Night < Corp %", "Posisi kota", "Daya saing"])
                              .rename(columns={"Corp": "Corp rate", "RN": "Room nights"}), "cost_avoidance"))
             lk = ca.leakage(mm, corp, 100)
             if not lk.empty:
