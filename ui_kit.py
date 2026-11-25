@@ -133,10 +133,16 @@ section[data-testid="stSidebar"] .block-container {{ padding-top:1.25rem; }}
 /* Tombol */
 .stButton > button, .stDownloadButton > button, div[data-testid="stFormSubmitButton"] > button {{
   border-radius:8px; font-weight:500; transition:background .15s, border-color .15s, box-shadow .15s, transform .15s; }}
-.stButton > button[kind="primary"], .stDownloadButton > button, div[data-testid="stFormSubmitButton"] > button[kind="primaryFormSubmit"] {{
+.stButton > button[kind="primary"], div[data-testid="stFormSubmitButton"] > button[kind="primaryFormSubmit"] {{
   background:var(--action); border:1px solid var(--action); color:#FFFFFF; font-weight:600; }}
-.stButton > button[kind="primary"]:hover, .stDownloadButton > button:hover {{
+.stButton > button[kind="primary"]:hover {{
   background:var(--dark); border-color:var(--dark); color:#FFFFFF; box-shadow:var(--shadow-h); }}
+/* Unduh: tombol sekunder bergaris, ukuran ringkas, selalu berjarak dari elemen di atasnya */
+.stDownloadButton {{ margin-top:4px; }}
+.stDownloadButton > button {{ background:#FFFFFF; border:1px solid var(--line); color:var(--action);
+  font-weight:600; font-size:13.5px; padding:6px 14px; min-height:36px; }}
+.stDownloadButton > button:hover {{ background:#F3F9FD; border-color:var(--action); color:var(--action); box-shadow:none; }}
+.stDownloadButton > button p {{ color:var(--action); }}
 .stButton > button[kind="secondary"]:hover {{ border-color:var(--p3); color:var(--p3); }}
 
 /* Kartu */
@@ -175,13 +181,14 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 
 /* Catatan */
 .mx-note {{ background:#FFFFFF; border:1px solid var(--line); border-left:3px solid var(--p1); border-radius:8px;
-  padding:12px 16px; font-size:13.5px; line-height:1.65; color:var(--ink); box-shadow:var(--shadow); }}
+  padding:12px 16px; font-size:13.5px; line-height:1.65; color:var(--ink); box-shadow:var(--shadow); margin-bottom:14px; }}
 .mx-warn {{ background:#FFFBE0; border:1px solid #F2DC5D; border-left:3px solid var(--yellow); border-radius:8px;
-  padding:10px 14px; font-size:13px; line-height:1.55; color:#5C4A00; }}
+  padding:10px 14px; font-size:13px; line-height:1.55; color:#5C4A00; margin-bottom:14px; }}
 .mx-badge {{ border-radius:999px; padding:3px 10px; font-size:12.5px; font-weight:600; display:inline-block; }}
 
 /* Sidebar komponen */
-.mx-brand {{ display:flex; align-items:center; gap:10px; margin-bottom:12px; }}
+.mx-brand {{ display:flex; align-items:center; gap:10px; margin:2px 0 16px; }}
+.mx-wordmark {{ height:30px; width:auto; display:block; }}
 .mx-brand .m {{ width:38px; height:38px; border-radius:10px; background:#FFFFFF; border:1px solid var(--line);
   display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; color:var(--p3); }}
 .mx-brand .m img {{ width:24px; height:auto; }}
@@ -214,17 +221,23 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 
 
 # ---------------------------------------------------------------- komponen
-def brand(logo_path="assets/LOGO M FIX.png"):
-    """Logo + nama aplikasi untuk sidebar."""
-    mark = "M"
+WORDMARK = "assets/mtrax_wordmark.png"
+
+
+def img_b64(path) -> str:
     try:
-        if os.path.exists(logo_path):
-            with open(logo_path, "rb") as f:
-                mark = f'<img src="data:image/png;base64,{base64.b64encode(f.read()).decode()}" alt="MTRAX"/>'
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
     except Exception:
-        pass
-    st.markdown(f'<div class="mx-brand"><div class="m">{mark}</div><div class="t">MTRAX</div></div>',
-                unsafe_allow_html=True)
+        return ""
+
+
+def brand(logo_path=WORDMARK):
+    """Wordmark MTRAX di sidebar (fallback: teks)."""
+    b64 = img_b64(logo_path) if os.path.exists(logo_path) else ""
+    mark = (f'<img src="data:image/png;base64,{b64}" alt="MTRAX" class="mx-wordmark"/>' if b64
+            else '<div class="t">MTRAX</div>')
+    st.markdown(f'<div class="mx-brand">{mark}</div>', unsafe_allow_html=True)
 
 
 def kpi(label, value, sub="", dark=False) -> str:
