@@ -32,7 +32,7 @@ import ui_kit as ui
 # ---------------------------------------------------------------------------
 DEFAULT_TAX = 0.21                 # pajak + service bila corp rate belum termasuk
 STATUS_RULES = {                   # ambang status daya saing (bisa diubah)
-    "below_tidak": 25,             # % malam lebih murah dari corp rate  > 25  -> Tidak kompetitif
+    "below_tidak": 25,             # % room night lebih murah dari corp rate  > 25  -> Tidak kompetitif
     "pos_tidak": 75,               # persentil corp rate di kota          > P75 -> Tidak kompetitif
     "below_tinjau": 10,            # >= 10%                                   -> Perlu ditinjau
     "pos_tinjau": 60,              # > P60                                    -> Perlu ditinjau
@@ -530,10 +530,10 @@ def summarize_matched(m: pd.DataFrame, pools: dict) -> pd.DataFrame:
         Bookings=("_bid", "nunique")).reset_index()
     g["Avg dibayar"] = g["Inv"] / g["RN"]
     g["Selisih %"] = (g["Avg dibayar"] - g["Corp"]) / g["Corp"] * 100
-    g["Malam < corp %"] = g["RN_below"] / g["RN"] * 100
+    g["Room Night < Corp %"] = g["RN_below"] / g["RN"] * 100
     g["Posisi kota"] = [_market_percentile(pools, k, r, ml, v)
                         for k, r, ml, v in zip(g["_city_key"], g["_rt"], g["_meal"], g["Corp"])]
-    g["Daya saing"] = [status_of(bl, p) for bl, p in zip(g["Malam < corp %"], g["Posisi kota"])]
+    g["Daya saing"] = [status_of(bl, p) for bl, p in zip(g["Room Night < Corp %"], g["Posisi kota"])]
     hotel_rn = g.groupby(["_hotel_key", "_city_key"])["RN"].transform("sum")
     g["_hotel_rn"] = hotel_rn
     g = g.rename(columns={"_rt": "Room type", "_meal": "Meal plan"})
@@ -891,8 +891,8 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             ch = s.sort_values("Selisih %", ascending=True)
             labels = ch["Hotel"] + " · " + ch["Room type"] + " · " + ch["Meal plan"].str.replace("Breakfast Included", "BF").str.replace("Room Only", "RO")
             colors = np.where(ch["Selisih %"] > 0, "#C2412F", "#7D8C99")
-            notes = [(_jt(p) if d > 0 else f"{bl:.0f}% malam lebih murah")
-                     for d, p, bl in zip(ch["Selisih %"], ch["Potensi"], ch["Malam < corp %"])]
+            notes = [(_jt(p) if d > 0 else f"{bl:.0f}% room night lebih murah")
+                     for d, p, bl in zip(ch["Selisih %"], ch["Potensi"], ch["Room Night < Corp %"])]
             fig = go.Figure(go.Bar(x=ch["Selisih %"], y=labels, orientation="h", marker_color=colors,
                                    text=[f"{_pct(d, True)} · {n}" for d, n in zip(ch["Selisih %"], notes)],
                                    textposition="outside", cliponaxis=False,
@@ -918,14 +918,14 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             else:
                 d = s.sort_values(col, ascending=False)
             out = d[["Hotel", "Kota", "Room type", "Meal plan", "Corp", "Avg dibayar", "Selisih %", "RN",
-                     "Potensi", "Malam < corp %", "Posisi kota", "Daya saing"]].reset_index(drop=True)
+                     "Potensi", "Room Night < Corp %", "Posisi kota", "Daya saing"]].reset_index(drop=True)
             show = out.copy()
             for c_ in ("Corp", "Avg dibayar"):
                 show[c_] = show[c_].map(_rp)
             show["Selisih %"] = out["Selisih %"].map(lambda v: _pct(v, True))
             show["RN"] = out["RN"].map(lambda v: f"{v:,.0f}".replace(",", "."))
             show["Potensi"] = out["Potensi"].map(_jt)
-            show["Malam < corp %"] = out["Malam < corp %"].map(lambda v: f"{v:.0f}%")
+            show["Room Night < Corp %"] = out["Room Night < Corp %"].map(lambda v: f"{v:.0f}%")
             show["Posisi kota"] = out["Posisi kota"].map(lambda v: "-" if pd.isna(v) else f"P{v:.0f}")
             show.index = show.index + 1
             show = show.rename(columns={"Corp": "Corp rate", "RN": "Room nights", "Potensi": "Potensi avoidance"})
@@ -939,19 +939,22 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             R = STATUS_RULES
             ui.note(
                 "<b>Status daya saing corp rate</b><br>"
-                f"• <span style='color:{COMPETITIVE_GREEN};font-weight:600'>Kompetitif (hijau)</span>: malam &lt; corp "
+                f"• <span style='color:{COMPETITIVE_GREEN};font-weight:600'>Kompetitif (hijau)</span>: Room Night &lt; Corp % "
                 f"di bawah {R['below_tinjau']}% dan posisi paling tinggi P{R['pos_tinjau']}.<br>"
-                f"• <span style='color:{NOT_COMPETITIVE_RED};font-weight:600'>Tidak kompetitif (merah)</span>: malam "
-                f"&lt; corp di atas {R['below_tidak']}%, atau posisi di atas P{R['pos_tidak']}.<br>"
+                f"• <span style='color:{NOT_COMPETITIVE_RED};font-weight:600'>Tidak kompetitif (merah)</span>: Room Night "
+                f"&lt; Corp % di atas {R['below_tidak']}%, atau posisi di atas P{R['pos_tidak']}.<br>"
                 "• <b>Perlu ditinjau (hitam)</b>: di antara keduanya.<br>"
-                "<span style='color:#5A6B7A'>Malam &lt; corp = porsi malam yang dibayar lebih murah dari corp rate. "
-                "Posisi kota = letak corp rate di antara rate yang dibayar untuk tipe kamar yang sama di kota itu "
-                "(P10 = lebih murah dari 90% rate pasar).</span>")
+                "<b>Room Night &lt; Corp %</b> = persentase room night yang dibayar lebih murah dari corp rate. "
+                "Rate per malam tiap booking = Invoice Amount ÷ Number of Rooms Night; bila lebih rendah dari corp rate, "
+                "semua room night booking itu dihitung. Contoh: 3 dari 5 room night dibayar di bawah corp rate = 60%. "
+                "Makin kecil angkanya, makin bagus corp rate-nya.<br>"
+                "<b>Posisi kota</b> = letak corp rate di antara rate yang dibayar untuk tipe kamar yang sama di kota itu "
+                "(P10 = lebih murah dari 90% rate pasar).")
             if can_download:
                 st.download_button("⬇️ Unduh Excel", _excel(out.rename(columns={"Corp": "Corp rate", "RN": "Room nights"}),
                                    "Cost Avoidance", excel_fn,
                                    money_cols=("Corp rate", "Avg dibayar", "Potensi"),
-                                   int_cols=("Room nights",), dec_cols=("Selisih %", "Malam < corp %", "Posisi kota")),
+                                   int_cols=("Room nights",), dec_cols=("Selisih %", "Room Night < Corp %", "Posisi kota")),
                                    file_name=f"cost_avoidance_{datetime.now():%Y%m%d}.xlsx",
                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                    key="ca_dl_detail")
@@ -971,9 +974,9 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             st.markdown(
                 "- **Pencocokan**: hotel + kota + tipe kamar + meal plan, dan tanggal check-in di dalam masa berlaku.\n"
                 "- **Potensi avoidance** = Σ (rate dibayar per booking − corp rate) × room nights, hanya booking di atas corp rate.\n"
-                f"- **Malam < corp**: porsi room nights yang lebih murah dari corp rate. **Posisi kota**: persentil corp rate "
+                f"- **Room Night < Corp %**: porsi room nights yang lebih murah dari corp rate. **Posisi kota**: persentil corp rate "
                 f"terhadap rate dibayar tipe kamar & meal plan sama di kota yang sama (minimal {MIN_MARKET_SAMPLE} booking).\n"
-                f"- **Status**: Tidak kompetitif bila malam < corp > {STATUS_RULES['below_tidak']}% atau posisi > "
+                f"- **Status**: Tidak kompetitif bila Room Night < Corp % > {STATUS_RULES['below_tidak']}% atau posisi > "
                 f"P{STATUS_RULES['pos_tidak']}; Perlu ditinjau bila ≥ {STATUS_RULES['below_tinjau']}% atau > "
                 f"P{STATUS_RULES['pos_tinjau']}.")
 
