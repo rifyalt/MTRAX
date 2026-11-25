@@ -2,6 +2,7 @@ streamlit>=1.45
 pandas>=2.1
 numpy
 plotly
+matplotlib
 scikit-learn
 scipy
 openpyxl
