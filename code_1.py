@@ -1955,9 +1955,9 @@ function copyKey(el) {{
         # Enter = tombol submit PERTAMA (Verifikasi), jadi Kembali diletakkan setelahnya.
         col_v, col_c = st.columns([3, 2])
         with col_v:
-            _verify = st.form_submit_button("✅  Verifikasi & Masuk", use_container_width=True, type="primary")
+            _verify = st.form_submit_button("✅  Verifikasi & Masuk", width="stretch", type="primary")
         with col_c:
-            _back = st.form_submit_button("← Kembali", use_container_width=True)
+            _back = st.form_submit_button("← Kembali", width="stretch")
 
     if _back:
         st.session_state.pending_2fa  = False
@@ -2254,9 +2254,9 @@ body {{
         # Enter = tombol submit PERTAMA (Verifikasi), jadi Kembali diletakkan setelahnya.
         col_v, col_c = st.columns([3, 2])
         with col_v:
-            _verify = st.form_submit_button("✅  Verifikasi & Masuk", use_container_width=True, type="primary")
+            _verify = st.form_submit_button("✅  Verifikasi & Masuk", width="stretch", type="primary")
         with col_c:
-            _back = st.form_submit_button("← Kembali", use_container_width=True)
+            _back = st.form_submit_button("← Kembali", width="stretch")
 
     if _back:
         st.session_state.pending_2fa  = False
@@ -2677,7 +2677,7 @@ def login_page():
 
             st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
-            submitted = st.form_submit_button("LOG IN", use_container_width=True)
+            submitted = st.form_submit_button("LOG IN", width="stretch")
 
         if submitted:
             if not validate_username(username):
@@ -2726,4991 +2726,947 @@ def login_page():
                 st.error(f"Login failed. {remaining_attempts} attempt(s) remaining.")
 
 # ======================================
-# MAIN APP
+# MAIN APP — tampilan mengikuti preview "Dashboard final"
 # ======================================
-def main_app():
-    """Main application"""
-    st.set_page_config(
-        page_title="MTRAX | Travel Analytics",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
+import ui_kit as ui
 
-    # ── BUG FIX: sliding expiry di server (_validate_session_token) memperpanjang
-    # masa berlaku token, tapi cookie di BROWSER tetap memakai max-age lama sejak
-    # login pertama. Kalau tidak disegarkan, cookie browser akan tetap kedaluwarsa
-    # sesuai waktu login awal walau token server masih valid -> user bisa
-    # ter-logout otomatis meski masih aktif memakai aplikasi. Segarkan cookie
-    # (tanpa reload) setiap kali main_app dimuat, selama masih ada token sesi.
-    if st.session_state.get("_session_token"):
-        _set_session_cookie(st.session_state._session_token)
+PATRA_JASA_HOTELS = [
+    "The Patra Bali Resort & Villas", "Patra Semarang Hotel & Convention", "Patra Cirebon Hotel & Convention",
+    "Patra Malioboro Hotel", "Patra Dumai Hotel", "Patra Bandung Hotel", "Patra Jakarta Hotel",
+    "Patra Anyer Hotel", "Patra Parapat Hotel",
+]
+DOMESTIC_ALIAS = ("INDONESIA", "ID", "IDN")
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-    # Custom CSS - MTRAX Theme v2 (Blue/Grey Palette)
-    st.markdown("""
-        <style>
-        /* ============================================================
-           MTRAX DESIGN SYSTEM
-           Primary:  #1BA0E2  #1494C6  #0D7FCC
-           Neutral:  #f0f0f0  #dedede  #434343
-           Accent:   #98ea16  #d61b54  #ff5e1f  #ffdc00  #e2f871  #e13230
-        ============================================================ */
 
-        :root {
-            --clr-primary:      #1BA0E2;
-            --clr-primary-mid:  #1494C6;
-            --clr-primary-dark: #0D7FCC;
-            --clr-bg:           #f0f0f0;
-            --clr-surface:      #ffffff;
-            --clr-border:       #dedede;
-            --clr-text-main:    #434343;
-            --clr-text-muted:   #7a8a96;
-            --clr-accent-green: #98ea16;
-            --clr-accent-pink:  #d61b54;
-            --clr-accent-orange:#ff5e1f;
-            --clr-accent-yellow:#ffdc00;
-            --clr-accent-lime:  #e2f871;
-            --clr-accent-red:   #e13230;
-        }
+# ---------------------------------------------------------------- data
+def prepare_data(df: pd.DataFrame):
+    """Bersihkan data sekali per pemuatan: angka, kurs, tanggal, nama hotel, kota, peta properti."""
+    d = df.copy()
+    if "Invoice Amount" in d.columns:
+        d["Invoice Amount"] = pd.to_numeric(
+            d["Invoice Amount"].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
+            errors="coerce")
+        d, st.session_state["_fx_info"] = convert_currency_to_idr(d)
+    if "Number of Rooms Night" in d.columns:
+        d["Number of Rooms Night"] = pd.to_numeric(d["Number of Rooms Night"], errors="coerce")
+    for c in ("Check in Date", "Check out Date", "Issue Time"):
+        if c in d.columns:
+            d[c] = pd.to_datetime(d[c], errors="coerce", dayfirst=True)
+    try:
+        d = standardize_hotel_columns(d)
+    except Exception as e:
+        st.warning(f"Penyeragaman nama hotel dilewati: {e}")
+    for c in ("City", "Country"):
+        if c in d.columns:
+            d[c] = d[c].astype(str).str.strip().str.replace(r"\s+", " ", regex=True).str.title()
+            d.loc[d[c].isin(["Nan", "None", ""]), c] = np.nan
+    pmap = get_property_merge_map(d, hotel_col="Hotel Name", city_col="City")
+    return d, pmap
 
-        * {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica', sans-serif;
-        }
 
-        /* ── Proteksi tambahan: pastikan ikon Material Symbols bawaan Streamlit
-             (selectbox, multiselect, date picker, expander, dsb.) tidak ikut
-             ter-override font-family-nya oleh rule '*' di atas ── */
-        [data-testid="stIconMaterial"] {
-            font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
-            font-weight: normal !important;
-            font-style: normal !important;
-            letter-spacing: normal !important;
-            text-transform: none !important;
-            white-space: nowrap !important;
-            word-wrap: normal !important;
-            direction: ltr !important;
-            -webkit-font-feature-settings: 'liga' !important;
-            font-feature-settings: 'liga' !important;
-            -webkit-font-smoothing: antialiased !important;
-        }
+def _market(df, choice):
+    if "Country" not in df.columns or choice in ("Semua", None):
+        return df
+    dom = df["Country"].astype(str).str.strip().str.upper().isin(DOMESTIC_ALIAS)
+    return df[dom] if choice in ("Domestik", "Indonesia") else df[~dom]
 
-        .stApp {
-            background: var(--clr-bg);
-        }
 
-        /* Sembunyikan hanya header bawaan Streamlit (bukan semua tag <header>,
-           agar judul bulan/tahun di kalender date picker tetap tampil) */
-        #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; }
-        div[data-baseweb="calendar"],
-        div[data-baseweb="calendar"] * { visibility: visible !important; }
-        /* Tombol untuk membuka kembali sidebar ada di dalam header, jadi tetap ditampilkan */
-        [data-testid="stExpandSidebarButton"],
-        [data-testid="stSidebarCollapsedControl"],
-        [data-testid="collapsedControl"],
-        [data-testid="stExpandSidebarButton"] *,
-        [data-testid="stSidebarCollapsedControl"] *,
-        [data-testid="collapsedControl"] * { visibility: visible !important; }
+def _date_col(df):
+    return next((c for c in ("Issue Time", "Check in Date", "Check out Date") if c in df.columns), None)
 
-        /* Cegah tampilan tergeser ke samping: wadah utama (sidebar + konten) tidak boleh
-           ikut tergulir horizontal saat isi konten sedikit lebih lebar dari layar
-           (gejala: sidebar terpotong di kiri & konten terpotong di kanan). */
-        .stApp, [data-testid="stAppViewContainer"] { overflow: clip !important; }
-        section[data-testid="stMain"], section.main { min-width: 0 !important; }
-        [data-testid="stSidebarContent"], [data-testid="stSidebarUserContent"] { overflow-x: hidden !important; }
 
-        /* ── NEWS TICKER ─────────────────────────────── */
-        .news-ticker {
-            background: linear-gradient(90deg, #d71c58 0%, #d71c58 100%);
-            color: white;
-            padding: 8px 0;
-            font-size: 0.85em;
-            overflow: hidden;
-            white-space: nowrap;
-            position: relative;
-            margin: -60px -60px 0 -60px;
-        }
+def _period_label(df):
+    dc = _date_col(df)
+    if not dc or df.empty:
+        return "Semua periode"
+    s = pd.to_datetime(df[dc], errors="coerce").dropna()
+    return f"{s.min():%d %b %Y} – {s.max():%d %b %Y}" if not s.empty else "Semua periode"
 
-        .news-ticker:hover .ticker-content {
-            animation-play-state: paused;
-        }
 
-        .ticker-content {
-            display: inline-block;
-            padding-left: 100%;
-            animation: ticker 70s linear infinite;
-        }
+def _cols(df, cols):
+    return df[[c for c in cols if c in df.columns]]
 
-        .news-item {
-            color: #ffffff !important;
-            text-decoration: none;
-            margin-right: 40px;
-            cursor: pointer;
-            transition: opacity 0.2s ease;
-        }
 
-        .news-item:hover {
-            opacity: 0.8;
-            text-decoration: underline;
-        }
+def _xlsx(df, sheet, **fmt):
+    return excel_bytes_with_formats(df, sheet[:31], **fmt)
 
-        @keyframes ticker {
-            0%   { transform: translateX(0); }
-            100% { transform: translateX(-100%); }
-        }
 
-        /* ── HEADER ──────────────────────────────────── */
-        .header {
-            background: var(--clr-surface);
-            padding: 25px 40px;
-            border-bottom: 2px solid var(--clr-primary);
-            margin: 0 -60px 30px -60px;
-        }
+def _dl(label, df, sheet, fname, key, **fmt):
+    if can_download():
+        st.download_button(label, _xlsx(df, sheet, **fmt), file_name=f"{fname}_{datetime.now():%Y%m%d}.xlsx",
+                           mime=XLSX_MIME, key=key)
 
-        .header-content {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
 
-        .header-title {
-            font-size: 1.8em;
-            font-weight: 700;
-            color: var(--clr-primary-dark);
-            letter-spacing: -0.02em;
-        }
+def _fig(fig, key, height=None):
+    fig.update_layout(**ui.PLOTLY_LAYOUT)
+    if height:
+        fig.update_layout(height=height)
+    st.plotly_chart(fig, width="stretch", key=key, config={"displaylogo": False})
 
-        .header-subtitle {
-            font-size: 0.9em;
-            color: var(--clr-text-muted);
-            margin-top: 4px;
-        }
 
-        .header-user { text-align: right; }
+def _hbar(labels, values, key, color=ui.BLUE, top_highlight=None, height=None, text=None):
+    colors = [color if (top_highlight is None or i < top_highlight) else "#B9D7EC" for i in range(len(values))]
+    fig = go.Figure(go.Bar(x=values, y=labels, orientation="h", marker_color=colors,
+                           text=text if text is not None else [ui.fmt_int(v) for v in values],
+                           textposition="outside", cliponaxis=False,
+                           hovertemplate="%{y}<br>%{x:,.0f}<extra></extra>"))
+    fig.update_layout(yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
+                      xaxis=dict(showgrid=True, gridcolor="#EEF1F4"), showlegend=False,
+                      margin=dict(l=10, r=60, t=10, b=20))
+    _fig(fig, key, height or max(260, 26 * len(values) + 40))
 
-        .user-name {
-            font-size: 0.95em;
-            color: var(--clr-text-main);
-            font-weight: 500;
-        }
 
-        .user-role {
-            font-size: 0.85em;
-            color: var(--clr-text-muted);
-            margin-top: 2px;
-        }
+def _pareto_fig(names, values, top_n, key, value_title):
+    total = float(np.nansum(values)) or 1.0
+    cum = np.cumsum(values) / total * 100
+    show = min(len(names), 50)
+    colors = [ui.BLUE if i < top_n else "#B9D7EC" for i in range(show)]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=names[:show], y=values[:show], marker_color=colors, name=value_title,
+                         hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>"))
+    fig.add_trace(go.Scatter(x=names[:show], y=cum[:show], yaxis="y2", mode="lines+markers", name="Kumulatif %",
+                             line=dict(color=ui.NAVY, width=2.5), marker=dict(size=4),
+                             hovertemplate="Kumulatif %{y:.1f}%<extra></extra>"))
+    fig.add_hline(y=80, yref="y2", line_dash="dash", line_color=ui.RED, opacity=0.7,
+                  annotation_text="80%", annotation_position="right")
+    fig.update_layout(yaxis=dict(title=value_title, gridcolor="#EEF1F4"),
+                      yaxis2=dict(overlaying="y", side="right", range=[0, 105], ticksuffix="%", showgrid=False),
+                      xaxis=dict(showticklabels=False), legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
+                      bargap=0.15)
+    _fig(fig, key, 380)
+    if len(names) > show:
+        st.caption(f"Grafik menampilkan {show} teratas dari {len(names)}.")
 
-        /* ── GLOBAL FILTER BAR ───────────────────────── */
-        .global-filter-bar {
-            background: var(--clr-surface);
-            border: 1px solid var(--clr-border);
-            border-left: 4px solid var(--clr-primary);
-            border-radius: 6px;
-            padding: 14px 20px 10px 20px;
-            margin-bottom: 20px;
-        }
-        .global-filter-label {
-            font-size: 0.72em;
-            font-weight: 700;
-            color: var(--clr-primary);
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            margin-bottom: 6px;
-        }
 
-        /* ── METRIC BOX ──────────────────────────────── */
-        .metric-box {
-            background: var(--clr-surface);
-            padding: 20px;
-            border-radius: 6px;
-            border-left: 3px solid var(--clr-primary);
-        }
+def _key_column(df, dim, merge, pmap):
+    if dim == "Hotel":
+        if merge:
+            d = apply_property_merge(df, pmap, hotel_col="Hotel Name", city_col="City")
+            return d, "Hotel / Properti"
+        d = df.copy()
+        d["Hotel / Properti"] = d["Hotel Name"].astype(str).str.strip()
+        return d, "Hotel / Properti"
+    return df.copy(), "City"
 
-        .metric-label {
-            font-size: 0.8em;
-            color: var(--clr-text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 8px;
-        }
 
-        .metric-value {
-            font-size: 2em;
-            font-weight: 600;
-            color: var(--clr-text-main);
-        }
-
-        /* ── STATS CARDS ─────────────────────────────── */
-        .stats-card {
-            background: var(--clr-surface);
-            padding: 25px;
-            border-radius: 6px;
-            text-align: center;
-            height: 100%;
-        }
-
-        .stats-number {
-            font-size: 2.5em;
-            font-weight: 700;
-            color: var(--clr-primary);
-            margin: 15px 0;
-        }
-
-        .stats-label {
-            font-size: 0.85em;
-            color: var(--clr-text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .stats-detail {
-            font-size: 0.9em;
-            color: var(--clr-text-muted);
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 1px solid var(--clr-bg);
-        }
-
-        /* ── SECTION TITLE ───────────────────────────── */
-        .section-title {
-            font-size: 1.2em;
-            font-weight: 600;
-            color: var(--clr-text-main);
-            margin: 30px 0 20px 0;
-        }
-
-        /* ── TABS ────────────────────────────────────── */
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 0;
-            background: var(--clr-surface);
-            border-bottom: 2px solid var(--clr-border);
-        }
-
-        .stTabs [data-baseweb="tab"] {
-            padding: 12px 20px;
-            font-weight: 500;
-            color: var(--clr-text-muted);
-            border-bottom: 2px solid transparent;
-        }
-
-        .stTabs [data-baseweb="tab"]:hover {
-            color: var(--clr-primary);
-        }
-
-        .stTabs [aria-selected="true"] {
-            color: var(--clr-primary);
-            border-bottom-color: var(--clr-primary);
-            background: transparent;
-        }
-
-        /* ── BUTTONS ─────────────────────────────────── */
-        .stButton > button {
-            border-radius: 4px;
-            font-weight: 500;
-            padding: 10px 20px;
-        }
-
-        .stButton > button[kind="primary"] {
-            background: linear-gradient(135deg, #1BA0E2 0%, #0D7FCC 100%);
-            color: white;
-            border: none;
-        }
-
-        .stTabs [data-baseweb="tab-highlight"] {
-            background-color: #a6ce39 !important;  # ← ganti warna sesuai keinginan
-        }
-
-        .stButton > button[kind="primary"]:hover {
-            background: linear-gradient(135deg, #1494C6 0%, #0D7FCC 100%);
-        }
-
-        /* ── SIDEBAR ─────────────────────────────────── */
-        section[data-testid="stSidebar"] {
-            background: var(--clr-surface);
-            border-right: 1px solid var(--clr-border);
-        }
-
-        section[data-testid="stSidebar"] .stMarkdown h3 {
-            color: var(--clr-primary-dark);
-            font-size: 0.9em;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        /* ── STREAMLIT METRIC ────────────────────────── */
-        .stMetric {
-            background: var(--clr-surface);
-            padding: 18px;
-            border-radius: 6px;
-            border-left: 3px solid var(--clr-primary);
-        }
-
-        .stMetric label {
-            color: var(--clr-text-muted) !important;
-            font-size: 0.8em !important;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .stMetric [data-testid="stMetricValue"] {
-            color: var(--clr-text-main) !important;
-            font-size: 1.8em !important;
-        }
-
-        /* ── PROGRESS ────────────────────────────────── */
-        .stProgress > div > div {
-            background: linear-gradient(90deg, #1BA0E2, #0D7FCC);
-        }
-
-        /* ── DIVIDER ─────────────────────────────────── */
-        .divider {
-            height: 1px;
-            background: var(--clr-border);
-            margin: 30px 0;
-        }
-
-        /* ── SELECTBOX ───────────────────────────────── */
-        .stSelectbox > div > div {
-            border-radius: 4px;
-        }
-
-        /* ── ACCENT BADGE HELPERS ────────────────────── */
-        .badge-green  { background:#98ea16; color:#1e4000; padding:2px 8px; border-radius:20px; font-size:0.75em; font-weight:600; }
-        .badge-red    { background:#e13230; color:#fff;    padding:2px 8px; border-radius:20px; font-size:0.75em; font-weight:600; }
-        .badge-orange { background:#ff5e1f; color:#fff;    padding:2px 8px; border-radius:20px; font-size:0.75em; font-weight:600; }
-        .badge-yellow { background:#ffdc00; color:#433000; padding:2px 8px; border-radius:20px; font-size:0.75em; font-weight:600; }
-        .badge-pink   { background:#d61b54; color:#fff;    padding:2px 8px; border-radius:20px; font-size:0.75em; font-weight:600; }
-        .badge-blue   { background:#1BA0E2; color:#fff;    padding:2px 8px; border-radius:20px; font-size:0.75em; font-weight:600; }
-        </style>
-    """, unsafe_allow_html=True)
-
-    # NEWS TICKER
-    news_data = fetch_rss_news()
-    render_news_ticker(news_data)
-
-    # HEADER
-    greet, now = get_greeting()
-    role_display = st.session_state.get("role", "User")
-    username_display = st.session_state.get("username", "User")
-
-    st.markdown(f"""
-        <div class='header'>
-            <div class='header-content'>
-                <div>
-                    <div class='header-title'>MTRAX</div>
-                    <div class='header-subtitle'>Corporate Travel Analytics</div>
-                </div>
-                <div class='header-user'>
-                    <div class='user-name'>{greet}, {username_display.title()}</div>
-                    <div class='user-role'>{role_display} · {now.strftime('%d %b %Y')}</div>
-                </div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # ======================================
-    # SIDEBAR MODE STATE
-    # ======================================
-    if "sidebar_mode" not in st.session_state:
-        st.session_state.sidebar_mode = "expanded"
-
-    # ======================================
-    # SIDEBAR
-    # ======================================
-    def load_logo_base64(path):
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-
-    logo_base64 = load_logo_base64("assets/LOGO M FIX.png")
-    # ===== LOGO =====
-#    if logo_base64:
-#        logo_size = 60 if st.session_state.sidebar_mode == "expanded" else 35
-
-#        st.markdown(f"""
-#            <div style='text-align:center;padding:10px 0 15px 0;'>
-#                <img src='data:image/png;base64,{logo_base64}' width='{logo_size}'/>
-#            </div>
-#        """, unsafe_allow_html=True)
-
-    # ======================================
-    # SIDEBAR WIDTH CONTROL (DYNAMIC)
-    # ======================================
-
-    sidebar_width = 260 if st.session_state.sidebar_mode == "expanded" else 90
-
-    st.markdown(f"""
-    <style>
-
-    /* Sidebar width: lebar dikunci HANYA di mode compact. Di mode expanded lebar
-       diatur Streamlit sendiri — memaksa width/min-width !important membuat
-       sidebar tidak bisa collapse/expand dengan benar (terpotong & tombol buka hilang). */
-    {f"section[data-testid='stSidebar'] {{ width:{sidebar_width}px !important; min-width:{sidebar_width}px !important; max-width:{sidebar_width}px !important; }}" if st.session_state.sidebar_mode == "compact" else ""}
-
-    /* Hide labels in compact mode */
-    {"section[data-testid='stSidebar'] label { display:none !important; }" if st.session_state.sidebar_mode == "compact" else ""}
-
-    /* Hide select text in compact mode */
-    {"section[data-testid='stSidebar'] .stSelectbox div div div { font-size:0 !important; }" if st.session_state.sidebar_mode == "compact" else ""}
-
-    </style>
-    """, unsafe_allow_html=True)
-
+# ---------------------------------------------------------------- sidebar & header
+def render_sidebar():
     with st.sidebar:
-        # ===============================
-        # TOGGLE BUTTON
-        # ===============================
-#        col1, col2 = st.columns([1,1])
-
-#        with col1:
-#            if st.button("☰", use_container_width=True):
-#                if st.session_state.sidebar_mode == "expanded":
-#                    st.session_state.sidebar_mode = "compact"
-#                else:
-#                    st.session_state.sidebar_mode = "expanded"
-#                st.rerun()
-
-#        with col2:
-#            if st.session_state.sidebar_mode == "expanded":
-#                st.markdown("<div style='font-size:12px;color:gray;padding-top:8px;'>Menu</div>", unsafe_allow_html=True)
-
-#        st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
-
-
-        st.markdown(f"""
-            <div style='text-align:center;padding:20px 0;'>
-                <img src='data:image/png;base64,{logo_base64}' width='60'/>
-            </div>
-        """, unsafe_allow_html=True)
-
-        if not login_required():
-            st.warning(f"🔓 Mode tanpa login (sementara). Semua pengunjung masuk sebagai "
-                       f"'{GUEST_USERNAME}' dengan role {guest_role()}. Aktifkan lagi login di "
-                       f"secrets.toml: [access] login_required = true.")
-
-        # ── 2FA Status Badge di Sidebar ──────────────────────────────
-        _uname_side   = st.session_state.get("username", "")
-        _enrolled     = st.session_state.totp_enrolled.get(_uname_side, False)
-        # BUG FIX: secret TOTP bersifat shared milik 'admin' (lihat _load_totp_secrets),
-        # bukan per-username. Sebelumnya kode di sini mengecek
-        # st.secrets["totp"][_uname_side] — hampir selalu False untuk user selain
-        # 'admin' walau 2FA sebenarnya sudah aktif lewat secret bersama, sehingga
-        # badge salah menampilkan "Setup Required" padahal 2FA sudah aktif.
-        _from_toml = bool(_own_totp_secret(_uname_side))
-        _2fa_active = _enrolled or _from_toml
-        _badge_color = "#3dab7a" if _2fa_active else "#e05a2b"
-        _badge_text  = "Active ✅" if _2fa_active else "Setup Required"
-        st.markdown(f"""
-        <div style='background:white;border-radius:6px;padding:10px 14px;
-                    border-left:3px solid {_badge_color};margin-bottom:4px;
-                    font-size:0.78em;'>
-            <div style='color:#888;font-size:0.85em;text-transform:uppercase;
-                        letter-spacing:0.06em;margin-bottom:3px;'>🔐 2FA Status</div>
-            <div style='color:{_badge_color};font-weight:600;'>{_badge_text}</div>
-            <div style='color:#bbb;font-size:0.88em;'>Google Authenticator · TOTP</div>
-        </div>""", unsafe_allow_html=True)
-        
-        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-        if is_demo_user():
-            # Akun demo: data riil yang disamarkan, periode terbatas, tanpa upload/refresh.
-            st.info("🧪 Mode demo — nomor transaksi & nominal disamarkan. Download dinonaktifkan.")
-            _dcfg = _demo_config() or {"periods": []}
-            _all_folders = dict(st.secrets["drive_folders"])
-            _demo_periods = [p for p in _all_folders if not _dcfg["periods"] or p in _dcfg["periods"]]
-            if not _demo_periods:
-                st.warning("Tidak ada periode yang diizinkan untuk demo.")
-            else:
-                _demo_period = st.selectbox("Select Data Period", options=_demo_periods)
-                if st.button("Get Data", use_container_width=True, type="primary"):
-                    with st.spinner(f"Loading {_demo_period} data..."):
-                        try:
-                            _raw = load_drive_data(_all_folders[_demo_period],
-                                                   ["Unnamed: 0", "Travel Request Number.1"])
-                            st.session_state.df_all = prepare_demo_dataset(_raw)
-                            del _raw
-                            st.session_state.data_loaded = True
-                            st.session_state.data_period = _demo_period
-                            st.session_state._demo_masked = True
-                            st.session_state._id_masked = False
-                            st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
-                            _demo_audit(f"loaded period={_demo_period}")
-                            st.rerun()
-                        except Exception:
-                            st.error("Gagal memuat data demo.")
+        st.markdown('<div class="mx-brand"><div class="m">MTX</div><div class="t">MTRAX</div></div>',
+                    unsafe_allow_html=True)
+        uname = st.session_state.get("username", "")
+        role = st.session_state.get("role", "")
+        if uname == GUEST_USERNAME:
+            tfa = f'<div class="t" style="color:#8A4B00">🔓 Mode tanpa login</div>'
+        elif _own_totp_secret(uname):
+            tfa = f'<div class="t" style="color:{ui.GREEN}">🔒 2FA pribadi aktif</div>'
+        elif role == "Demo":
+            tfa = '<div class="t" style="color:#5A6B7A">Akun demo</div>'
         else:
-            # Drive options
-            drive_options = dict(st.secrets["drive_folders"])  # ID folder disimpan di Secrets, bukan di kode
-        
-            selected_period = st.selectbox(
-                "Select Data Period",
-                options=list(drive_options.keys()),
-                help="Choose which year's data to load"
-            )
-        
-            _btn_col1, _btn_col2 = st.columns([2, 1])
-            with _btn_col1:
-                _get_data_clicked = st.button("Get Data", use_container_width=True, type="primary")
-            with _btn_col2:
-                _refresh_clicked = st.button("🔄", use_container_width=True,
-                                              help="Bersihkan cache & ambil ulang data terbaru dari Drive (pakai ini kalau ada file baru yang baru diupload ke folder Drive)")
+            tfa = '<div class="t" style="color:#8A4B00">2FA belum diaktifkan</div>'
+        st.markdown(f'<div class="mx-userbox"><div class="n">{ui.esc(uname)}</div>'
+                    f'<div class="r">{ui.esc(role)}</div>{tfa}</div>', unsafe_allow_html=True)
+        if not login_required():
+            st.caption(f"Login sementara dimatikan. Aktifkan lagi: [access] login_required = true.")
 
-            if _refresh_clicked:
-                load_drive_data.clear()  # hapus cache lama supaya file baru di folder Drive ikut terbaca
-                st.toast("Cache dibersihkan. Klik 'Get Data' lagi untuk ambil data terbaru.", icon="🔄")
-
-            if _get_data_clicked:
-                with st.spinner(f"Loading {selected_period} data..."):
-                    progress_bar = st.progress(0)
+        all_folders = dict(st.secrets.get("drive_folders", {}))
+        if is_demo_user():
+            cfg = _demo_config() or {"periods": []}
+            periods = [p for p in all_folders if not cfg["periods"] or p in cfg["periods"]]
+        else:
+            periods = list(all_folders.keys())
+        if periods:
+            sel = st.selectbox("Periode data", periods, key="sb_period")
+            c1, c2 = st.columns([3, 1]) if is_admin() else (st.container(), None)
+            with c1:
+                go_clicked = st.button("Get Data", type="primary", width="stretch", key="sb_get")
+            if c2 is not None:
+                with c2:
+                    if st.button("🔄", width="stretch", key="sb_refresh",
+                                 help="Bersihkan cache & tarik ulang (kode TR/Booking ID ikut berganti)"):
+                        load_drive_data.clear()
+                        st.toast("Cache dibersihkan. Klik Get Data.")
+            if go_clicked:
+                with st.spinner(f"Memuat data {sel}…"):
                     try:
-                        folder_id = drive_options[selected_period]
-                        drop_cols = ["Unnamed: 0", "Travel Request Number.1"]
-                    
-                        progress_bar.progress(20)
-                        loaded_data = load_drive_data(folder_id, drop_cols)
-                    
-                        progress_bar.progress(100)
-                        st.session_state.df_all = loaded_data
-                        st.session_state._id_masked = False
-                        st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
+                        raw = load_drive_data(all_folders[sel], ["Unnamed: 0", "Travel Request Number.1"])
+                        if is_demo_user():
+                            raw = prepare_demo_dataset(raw)
+                            st.session_state._demo_masked = True
+                            audit("demo_muat_data", periode=sel)
+                        st.session_state.df_all = raw
                         st.session_state.data_loaded = True
-                        st.session_state.data_period = selected_period
-                    
-                        st.success(f"✅ Loaded {len(loaded_data):,} records")
+                        st.session_state.data_period = sel
+                        st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error: {e}")
-
-            uploaded_files = st.file_uploader(
-                "Upload Excel Files (Admin)",
-                type=["xlsx", "xls"],
-                accept_multiple_files=True,
-                help="Hanya 13 kolom transaksi hotel yang dipakai; kolom lain otomatis dibuang."
-            ) if is_admin() else None
-
-            if uploaded_files:
-                if st.button("Process Uploaded Files", use_container_width=True):
-                    with st.spinner("Processing..."):
-                        try:
-                            dfs = []
-                            drop_cols = ["Unnamed: 0", "Travel Request Number.1"]
-                        
-                            for file in uploaded_files:
-                                df = pd.read_excel(file)
-                                df = select_columns(df)[0]
-                                dfs.append(trim_string_columns(df))
-
-                            st.session_state.df_all = mask_dataframe(pd.concat(dfs, ignore_index=True))
-                            audit("upload_manual", files=len(uploaded_files))
-                            st.session_state._id_masked = False
-                            st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
-                            st.session_state.data_loaded = True
-                            st.session_state.data_period = "Manual Upload"
-                        
-                            st.success(f"✅ Processed {len(uploaded_files)} files")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error: {e}")
-
-        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-        # Data status
-        if st.session_state.data_loaded and not st.session_state.df_all.empty:
-            period_info = f" ({st.session_state.data_period})" if st.session_state.data_period else ""
-            st.success(f"✅ {len(st.session_state.df_all):,} records{period_info}")
-            _fx = st.session_state.get("_fx_info") or {}
-            if _fx.get("missing"):
-                st.warning(f"{_fx['missing']:,} booking dengan mata uang tanpa kurs "
-                           f"({', '.join(_fx.get('missing_currencies', []))}). Nilainya dikosongkan.")
+                        st.error("Gagal memuat data." if is_demo_user() else f"Gagal memuat data: {e}")
         else:
-            st.info("ℹ️ No data loaded")
-        st.caption("Sumber: 13 kolom transaksi hotel tanpa identitas pekerja. No. TR & Booking ID "
-                   "berupa kode acak yang berganti setiap data ditarik.")
+            st.info("Belum ada folder data ([drive_folders] di Secrets).")
 
-        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+        if st.session_state.get("data_loaded") and not st.session_state.df_all.empty:
+            st.success(f"{len(st.session_state.df_all):,} records · {st.session_state.get('data_period', '')}"
+                       .replace(",", "."))
+            fx = st.session_state.get("_fx_info") or {}
+            if fx.get("missing"):
+                st.warning(f"{fx['missing']:,} booking tanpa kurs ({', '.join(fx.get('missing_currencies', []))}).")
 
-        # BMKG Info
-        st.markdown("### 🌏 BMKG INFO")
-        
-        quake_data = get_bmkg_realtime_quake()
-        
-        if quake_data:
-            st.markdown(f"""
-                <div style='background:white;padding:12px;border-radius:4px;border-left:3px solid #1BA0E2;'>
-                    <div style='font-weight:600;color:#1494C6;font-size:0.85em;'>Latest Earthquake</div>
-                    <div style='font-size:0.8em;color:#666;margin-top:8px;'>
-                        📍 {quake_data.get('Wilayah', 'N/A')}<br>
-                        📊 M {quake_data.get('Magnitude', 'N/A')}<br>
-                        🕐 {quake_data.get('Tanggal', 'N/A')} {quake_data.get('Jam', 'N/A')}
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.info("No recent data")
+        if is_admin():
+            with st.expander("Upload Excel (Admin)"):
+                files = st.file_uploader("File transaksi", type=["xlsx", "xls"], accept_multiple_files=True,
+                                         key="sb_upload", label_visibility="collapsed")
+                if files and st.button("Proses file", key="sb_process"):
+                    dfs = [trim_string_columns(select_columns(pd.read_excel(f))[0]) for f in files]
+                    st.session_state.df_all = mask_dataframe(pd.concat(dfs, ignore_index=True))
+                    st.session_state.data_loaded = True
+                    st.session_state.data_period = "Upload manual"
+                    st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
+                    audit("upload_manual", files=len(files))
+                    st.rerun()
 
-        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="mx-src"><b>Sumber data</b><br>13 kolom transaksi hotel, tanpa identitas pekerja. '
+                    'No. TR &amp; Booking ID berupa kode acak yang berganti setiap data ditarik. '
+                    'Invoice non-Rupiah dikonversi dengan kurs.</div>', unsafe_allow_html=True)
 
-        # Logout
-        if st.button("Logout", use_container_width=True, type="primary"):
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+        if is_admin():
+            if st.session_state.get("view") == "akses":
+                if st.button("← Kembali ke dashboard", width="stretch", key="sb_back"):
+                    st.session_state.view = "main"
+                    st.rerun()
+            elif st.button("Akun & akses", width="stretch", key="sb_akses"):
+                st.session_state.view = "akses"
+                st.rerun()
+        if uname != GUEST_USERNAME and st.button("Logout", width="stretch", key="sb_logout"):
             _revoke_session_token(st.session_state.get("_session_token"))
             _clear_session_cookie()
             time.sleep(0.5)
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
+            for k in list(st.session_state.keys()):
+                del st.session_state[k]
             st.rerun()
 
-    # ======================================
-    # MAIN CONTENT
-    # ======================================
-    df_all = st.session_state.df_all
 
-    # Penjaga: sesi demo hanya boleh memegang data yang sudah disamarkan.
+def render_header():
+    greet, now = get_greeting()
+    uname = st.session_state.get("username", "")
+    role = st.session_state.get("role", "")
+    st.markdown(f'<div class="mx-h1">Corporate Travel Analytics</div>'
+                f'<div class="mx-sub">{greet}, {ui.esc(uname.title())} · {ui.esc(role)} · {now:%d %b %Y}</div>',
+                unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------- tab: Dashboard
+def tab_dashboard(df):
+    c1, c2 = st.columns([2, 3])
+    with c1:
+        market = ui.choice("Market", ["Semua", "Domestik", "Internasional"], key="db_market")
+    with c2:
+        st.markdown(f"<div style='padding-top:30px;font-size:13px;color:{ui.MUTED}'>Periode: {_period_label(df)} · "
+                    f"nilai dalam Rupiah</div>", unsafe_allow_html=True)
+    d = _market(df, market)
+    if d.empty:
+        st.info("Tidak ada data untuk pilihan ini.")
+        return
+    rn = d["Number of Rooms Night"].sum() if "Number of Rooms Night" in d else 0
+    inv = d["Invoice Amount"].sum() if "Invoice Amount" in d else 0
+    tr = d["Travel Request Number"].nunique() if "Travel Request Number" in d else len(d)
+    lead_txt, lead_sub = "-", ""
+    if {"Issue Time", "Check in Date"}.issubset(d.columns):
+        lt = (d["Check in Date"].dt.normalize() - d["Issue Time"].dt.normalize()).dt.days
+        lt = lt[lt >= 0]
+        if len(lt):
+            lead_txt, lead_sub = f"{lt.mean():.0f} hari", f"{(lt <= 2).mean() * 100:.0f}% last-minute"
+    ui.kpi_row([ui.kpi("Bookings", ui.fmt_int(len(d))), ui.kpi("Travel requests", ui.fmt_int(tr)),
+                ui.kpi("Hotels", ui.fmt_int(d["Hotel Name"].nunique() if "Hotel Name" in d else 0)),
+                ui.kpi("Room nights", ui.fmt_int(rn)),
+                ui.kpi("Avg rate / malam", f"Rp{inv / rn / 1000:,.0f}k".replace(",", ".") if rn else "-"),
+                ui.kpi("Lead time rata-rata", lead_txt, lead_sub)], 160)
+    multi = "-"
+    if "Travel Request Number" in d:
+        per_tr = d.groupby("Travel Request Number").size()
+        multi = ui.fmt_pct((per_tr > 1).mean() * 100, digits=0)
+    bf = ui.fmt_pct(d["Meal Plan"].astype(str).str.lower().str.contains("breakfast").mean() * 100, digits=0) \
+        if "Meal Plan" in d else "-"
+    ui.mini_row([("Kota", ui.fmt_int(d["City"].nunique() if "City" in d else 0)),
+                 ("Negara", ui.fmt_int(d["Country"].nunique() if "Country" in d else 0)),
+                 ("Multi-booking", multi), ("Breakfast included", bf)])
+
+    a, b = st.columns(2)
+    with a:
+        with st.container(border=True):
+            ui.section("Top kota tujuan (bookings)")
+            if "City" in d:
+                top = d["City"].value_counts().head(10)
+                _hbar(list(top.index), list(top.values), "db_cities")
+    with b:
+        with st.container(border=True):
+            ui.section("Domestik vs internasional")
+            if "Country" in d:
+                dom = d["Country"].astype(str).str.upper().isin(DOMESTIC_ALIAS)
+                fig = go.Figure(go.Pie(labels=["Domestik", "Internasional"], values=[int(dom.sum()), int((~dom).sum())],
+                                       hole=0.6, marker=dict(colors=[ui.BLUE, "#B9C6D1"]), textinfo="percent",
+                                       sort=False))
+                fig.update_layout(annotations=[dict(text=f"<b>{ui.fmt_int(len(d))}</b><br>bookings", x=0.5, y=0.5,
+                                                    showarrow=False, font=dict(size=14))],
+                                  legend=dict(orientation="h", y=-0.1))
+                _fig(fig, "db_market_pie", 300)
+    a, b = st.columns(2)
+    with a:
+        with st.container(border=True):
+            ui.section("Tren travel request bulanan")
+            if "Issue Time" in d and "Travel Request Number" in d:
+                m = d.dropna(subset=["Issue Time"]).assign(Bulan=lambda x: x["Issue Time"].dt.to_period("M").astype(str))
+                t = m.groupby("Bulan")["Travel Request Number"].nunique()
+                fig = go.Figure(go.Bar(x=list(t.index), y=list(t.values), marker_color=ui.BLUE_L,
+                                       hovertemplate="%{x}<br>%{y:,} TR<extra></extra>"))
+                fig.update_layout(yaxis=dict(gridcolor="#EEF1F4"))
+                _fig(fig, "db_trend", 300)
+    with b:
+        with st.container(border=True):
+            ui.section("Waktu pengajuan travel request", "Porsi travel request per hari & jam (Issue Time)")
+            if "Issue Time" in d:
+                h = d.dropna(subset=["Issue Time"]).copy()
+                if "Travel Request Number" in h:
+                    h = h.drop_duplicates("Travel Request Number")
+                dmap = {0: "Senin", 1: "Selasa–Kamis", 2: "Selasa–Kamis", 3: "Selasa–Kamis", 4: "Jumat",
+                        5: "Sabtu–Minggu", 6: "Sabtu–Minggu"}
+                h["Hari"] = h["Issue Time"].dt.weekday.map(dmap)
+                h["Jam"] = pd.cut(h["Issue Time"].dt.hour, [-1, 5, 8, 11, 14, 17, 23],
+                                  labels=["00–06", "06–09", "09–12", "12–15", "15–18", "18–24"])
+                pv = (h.groupby(["Hari", "Jam"], observed=False).size().unstack(fill_value=0)
+                      .reindex(["Senin", "Selasa–Kamis", "Jumat", "Sabtu–Minggu"]).fillna(0))
+                pct = pv / max(pv.values.sum(), 1) * 100
+                fig = go.Figure(go.Heatmap(z=pct.values, x=list(pct.columns), y=list(pct.index),
+                                           colorscale=[[0, "#EEF1F4"], [0.35, ui.BLUE_XL], [0.7, ui.BLUE], [1, ui.NAVY]],
+                                           text=[[f"{v:.0f}%" for v in r] for r in pct.values], texttemplate="%{text}",
+                                           showscale=False, hovertemplate="%{y} · %{x}<br>%{z:.1f}%<extra></extra>"))
+                fig.update_layout(yaxis=dict(autorange="reversed"))
+                _fig(fig, "db_heat", 300)
+    st.caption("Data transaksi hotel tanpa identitas pekerja, dipakai untuk negosiasi tarif dan pengendalian biaya "
+               "perjalanan dinas. Invoice non-Rupiah dikonversi dengan kurs.")
+
+
+# ---------------------------------------------------------------- tab: Price Intelligence
+def tab_price(df, pmap):
+    ui.page_title("Price Intelligence", "Konsentrasi spend Pareto 80/20 · benchmark rate hotel · simulator negosiasi")
+    with st.container(border=True):
+        c1, c2, c3, c4 = st.columns([1.3, 2, 1.2, 1.5])
+        with c1:
+            wil = ui.choice("Wilayah", ["Indonesia", "Internasional"], key="pi_wil")
+        d = _market(df, wil)
+        with c2:
+            hotels = st.multiselect("Filter hotel (opsional)", sorted(d["Hotel Name"].dropna().unique()),
+                                    placeholder="Semua hotel", key="pi_hotels")
+        with c3:
+            dim = st.selectbox("Dimensi Pareto", ["Hotel", "Kota"], key="pi_dim")
+        with c4:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            merge = st.checkbox("Gabungkan properti yang sama", value=True, key="pi_merge", disabled=dim != "Hotel")
+    if hotels:
+        d = d[d["Hotel Name"].isin(hotels)]
+    d = d[d["Invoice Amount"].notna()] if "Invoice Amount" in d else d.iloc[0:0]
+    if d.empty:
+        st.info("Tidak ada data untuk filter ini.")
+        return
+    d, key = _key_column(d, dim, merge, pmap)
+    g = d.groupby(key).agg(Spend=("Invoice Amount", "sum"), RN=("Number of Rooms Night", "sum"),
+                           Kota=("City", lambda s: s.mode().iat[0] if not s.mode().empty else ""),
+                           Bookings=("Travel Request Number", "nunique") if "Travel Request Number" in d else
+                           ("Invoice Amount", "size")).reset_index()
+    g = g.sort_values("Spend", ascending=False).reset_index(drop=True)
+    total = g["Spend"].sum()
+    g["Avg rate / malam"] = g["Spend"] / g["RN"].replace(0, np.nan)
+    g["Spend %"] = g["Spend"] / total * 100
+    g["Kumulatif %"] = g["Spend %"].cumsum().clip(upper=100)
+    n20 = max(1, int(len(g) * 0.2))
+    top_spend = g["Spend"].head(n20).sum()
+    ent = "properti" if dim == "Hotel" else "kota"
+    ui.kpi_row([ui.kpi(f"Total spend · {wil}", ui.fmt_big(total), _period_label(d), dark=True),
+                ui.kpi("Top 20%", ui.fmt_int(n20), f"dari {ui.fmt_int(len(g))} {ent}"),
+                ui.kpi("Kontribusi top 20%", ui.fmt_pct(top_spend / total * 100), "dari total spend"),
+                ui.kpi("Sisa 80%", ui.fmt_big(total - top_spend), f"{ui.fmt_int(len(g) - n20)} {ent}")])
+    with st.container(border=True):
+        ui.section("Konsentrasi spend — Pareto 80/20", "Batang biru tua = top 20% · garis = persentase kumulatif")
+        _pareto_fig(list(g[key]), g["Spend"].to_numpy(), n20, "pi_pareto", "Spend (Rp)")
+    with st.container(border=True):
+        h1, h2 = st.columns([4, 1])
+        with h1:
+            ui.section("Top contributors", f"Top 20% {ent} dengan spend terbesar")
+        top = g.head(n20).rename(columns={key: "Hotel / properti" if dim == "Hotel" else "Kota"})
+        cols = [top.columns[0]] + (["Kota"] if dim == "Hotel" else []) + ["Spend", "RN", "Bookings", "Avg rate / malam",
+                                                                            "Spend %", "Kumulatif %"]
+        top = top[cols].rename(columns={"RN": "Room nights", "Spend": "Spend (Rp)"})
+        with h2:
+            _dl("⬇️ Unduh Excel", top, "Top contributors", "pareto_spend", "pi_dl",
+                money_cols=("Spend (Rp)", "Avg rate / malam"), int_cols=("Room nights", "Bookings"),
+                pct_cols=("Spend %", "Kumulatif %"))
+        show = top.copy()
+        show["Spend (Rp)"] = show["Spend (Rp)"].map(ui.fmt_big)
+        show["Room nights"] = show["Room nights"].map(ui.fmt_int)
+        show["Avg rate / malam"] = show["Avg rate / malam"].map(ui.fmt_rp)
+        show["Spend %"] = show["Spend %"].map(ui.fmt_pct)
+        show["Kumulatif %"] = show["Kumulatif %"].map(ui.fmt_pct)
+        show.index = show.index + 1
+        st.dataframe(show, width="stretch", height=min(420, 38 * len(show) + 40))
+    with st.container(border=True):
+        h1, h2 = st.columns([3, 2])
+        with h1:
+            ui.section("Hotel price intelligence & simulator negosiasi")
+        hd = d.copy()
+        hd["_rate"] = hd["Invoice Amount"] / hd["Number of Rooms Night"].replace(0, np.nan)
+        hd = hd[hd["_rate"].notna()]
+        order = list(g[key]) if dim == "Hotel" else list(hd.groupby("Hotel / Properti" if "Hotel / Properti" in hd
+                                                                     else "Hotel Name")["Invoice Amount"].sum()
+                                                         .sort_values(ascending=False).index)
+        hcol = key if dim == "Hotel" else ("Hotel / Properti" if "Hotel / Properti" in hd else "Hotel Name")
+        with h2:
+            pick = st.selectbox("Pilih hotel", order, key="pi_pick")
+        x = hd[hd[hcol] == pick]
+        if x.empty:
+            st.info("Data rate hotel ini belum cukup.")
+            return
+        avg = x["Invoice Amount"].sum() / x["Number of Rooms Night"].sum()
+        ui.kpi_row([ui.kpi("Avg rate", ui.fmt_rp(avg)), ui.kpi("Median rate", ui.fmt_rp(x["_rate"].median())),
+                    ui.kpi("Max rate", ui.fmt_rp(x["_rate"].max())), ui.kpi("Min rate", ui.fmt_rp(x["_rate"].min())),
+                    ui.kpi("Room nights", ui.fmt_int(x["Number of Rooms Night"].sum()))], 150)
+        s1, s2, s3 = st.columns([2, 1, 1])
+        with s1:
+            disc = st.slider("Target diskon (%)", 0, 30, 10, key="pi_disc")
+        nego = avg * (1 - disc / 100)
+        with s2:
+            st.metric("Negotiated rate", ui.fmt_rp(nego))
+        with s3:
+            st.metric("Estimated saving", ui.fmt_big((avg - nego) * x["Number of Rooms Night"].sum()))
+
+
+# ---------------------------------------------------------------- tab: Room Intelligence
+def tab_room(df, pmap):
+    ui.page_title("Room Intelligence", "Konsentrasi room nights · simulator volume leverage · detail per properti")
+    with st.container(border=True):
+        c1, c2, c3, c4 = st.columns([1.3, 2, 1.2, 1.5])
+        with c1:
+            wil = ui.choice("Wilayah", ["Indonesia", "Internasional"], key="ri_wil")
+        d = _market(df, wil)
+        with c2:
+            hotels = st.multiselect("Filter hotel (opsional)", sorted(d["Hotel Name"].dropna().unique()),
+                                    placeholder="Semua hotel", key="ri_hotels")
+        with c3:
+            dim = st.selectbox("Dimensi Pareto", ["Hotel", "Kota"], key="ri_dim")
+        with c4:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            merge = st.checkbox("Gabungkan properti yang sama", value=True, key="ri_merge", disabled=dim != "Hotel")
+    if hotels:
+        d = d[d["Hotel Name"].isin(hotels)]
+    d = d[d["Number of Rooms Night"] > 0]
+    if d.empty:
+        st.info("Tidak ada data room night untuk filter ini.")
+        return
+    d, key = _key_column(d, dim, True if dim != "Hotel" else merge, pmap)
+    if "Hotel / Properti" not in d.columns:
+        d = apply_property_merge(d, pmap, hotel_col="Hotel Name", city_col="City")
+    g = d.groupby(key).agg(RN=("Number of Rooms Night", "sum"), Spend=("Invoice Amount", "sum"),
+                           Bookings=("Travel Request Number", "nunique") if "Travel Request Number" in d else
+                           ("Number of Rooms Night", "size")).reset_index().sort_values("RN", ascending=False)
+    g = g.reset_index(drop=True)
+    tot = g["RN"].sum()
+    n20 = max(1, int(len(g) * 0.2))
+    top_rn = g["RN"].head(n20).sum()
+    ent = "properti" if dim == "Hotel" else "kota"
+    ui.kpi_row([ui.kpi(f"Total room nights · {wil}", ui.fmt_int(tot), _period_label(d), dark=True),
+                ui.kpi("Top 20%", ui.fmt_int(n20), f"dari {ui.fmt_int(len(g))} {ent}"),
+                ui.kpi("Kontribusi top 20%", ui.fmt_pct(top_rn / tot * 100), "dari total room nights"),
+                ui.kpi("Rata-rata lama menginap", f"{tot / max(g['Bookings'].sum(), 1):.1f} malam".replace(".", ","),
+                       "per booking")])
+    with st.container(border=True):
+        ui.section("Konsentrasi room nights — Pareto 80/20")
+        _pareto_fig(list(g[key]), g["RN"].to_numpy(), n20, "ri_pareto", "Room nights")
+        with st.expander("Detail data top 20%"):
+            t = g.head(n20).copy()
+            t["Avg rate / malam"] = t["Spend"] / t["RN"].replace(0, np.nan)
+            t["RN %"] = t["RN"] / tot * 100
+            t = t.rename(columns={key: "Hotel / properti" if dim == "Hotel" else "Kota", "RN": "Room nights",
+                                  "Spend": "Spend (Rp)"})
+            _dl("⬇️ Unduh Excel", t, "Top room nights", "pareto_room_nights", "ri_dl",
+                money_cols=("Spend (Rp)", "Avg rate / malam"), int_cols=("Room nights", "Bookings"), pct_cols=("RN %",))
+            st.dataframe(t, width="stretch", hide_index=True,
+                         column_config={"Spend (Rp)": st.column_config.NumberColumn(format="%,.0f"),
+                                        "Avg rate / malam": st.column_config.NumberColumn(format="%,.0f"),
+                                        "RN %": st.column_config.NumberColumn(format="%.2f%%")})
+    with st.container(border=True):
+        ui.section("Simulator volume leverage", "Konsolidasi room nights ke properti top 20% untuk diskon tier volume")
+        s1, s2 = st.columns(2)
+        with s1:
+            shift = st.slider("Room nights dialihkan dari 80% bawah (%)", 0, 50, 10, key="ri_shift")
+        with s2:
+            disc = st.slider("Diskon tier volume top 20% (%)", 0, 20, 5, key="ri_vdisc")
+        top_inv = g["Spend"].head(n20).sum()
+        rate = top_inv / top_rn if top_rn else 0
+        proj = top_rn + (tot - top_rn) * shift / 100
+        ui.kpi_row([ui.kpi("Room nights top 20% saat ini", ui.fmt_int(top_rn)),
+                    ui.kpi("Proyeksi setelah konsolidasi", ui.fmt_int(proj)),
+                    ui.kpi("Potensi saving (simulasi)", ui.fmt_big(proj * rate * disc / 100),
+                           f"avg rate top 20% {ui.fmt_rp(rate)}", dark=True)], 220)
+    with st.container(border=True):
+        h1, h2 = st.columns([3, 2])
+        with h1:
+            ui.section("Detail properti")
+        pr = d.groupby("Hotel / Properti")["Number of Rooms Night"].sum().sort_values(ascending=False)
+        with h2:
+            pick = st.selectbox("Pilih properti", list(pr.index), key="ri_pick",
+                                format_func=lambda x: f"{x} · {ui.fmt_int(pr[x])} RN")
+        x = d[d["Hotel / Properti"] == pick]
+        rn = x["Number of Rooms Night"].sum()
+        bk = x["Travel Request Number"].nunique() if "Travel Request Number" in x else len(x)
+        ui.kpi_row([ui.kpi("Room nights", ui.fmt_int(rn)), ui.kpi("Bookings", ui.fmt_int(bk)),
+                    ui.kpi("Lama menginap", f"{rn / max(bk, 1):.1f} malam".replace(".", ",")),
+                    ui.kpi("Share room nights", ui.fmt_pct(rn / d["Number of Rooms Night"].sum() * 100, digits=2)),
+                    ui.kpi("Avg rate / malam", ui.fmt_rp(x["Invoice Amount"].sum() / rn if rn else np.nan))], 150)
+        if "Check in Date" in x:
+            m = x.dropna(subset=["Check in Date"]).groupby(x["Check in Date"].dt.to_period("M").astype(str))[
+                "Number of Rooms Night"].sum()
+            fig = go.Figure(go.Bar(x=list(m.index), y=list(m.values), marker_color=ui.BLUE,
+                                   hovertemplate="%{x}<br>%{y:,.0f} RN<extra></extra>"))
+            fig.update_layout(yaxis=dict(gridcolor="#EEF1F4"))
+            st.markdown("<div style='font-size:13px;font-weight:600'>Tren room nights bulanan (check-in)</div>",
+                        unsafe_allow_html=True)
+            _fig(fig, "ri_month", 260)
+
+
+# ---------------------------------------------------------------- tab: Sankey
+def tab_sankey(df):
+    ui.page_title("Sankey Flow", "Alur spend berbasis Invoice Amount: Negara → Kota → Hotel")
+    with st.container(border=True):
+        c1, c2, c3, c4 = st.columns([2, 1, 1, 1.2])
+        with c1:
+            wil = ui.choice("Wilayah", ["Semua", "Domestik", "Internasional"], key="sk_wil")
+        with c2:
+            n_city = st.selectbox("Top kota", [5, 8, 10, 15, 20], index=2, key="sk_city")
+        with c3:
+            n_hotel = st.selectbox("Top hotel", [10, 15, 20, 30, 50], index=2, key="sk_hotel")
+    base = _market(df, wil).dropna(subset=["Country", "City", "Hotel Name", "Invoice Amount"])
+    if base.empty:
+        st.info("Tidak ada data.")
+        return
+    tc = base.groupby("City")["Invoice Amount"].sum().nlargest(n_city).index
+    th = base.groupby("Hotel Name")["Invoice Amount"].sum().nlargest(n_hotel).index
+    d = base[base["City"].isin(tc) & base["Hotel Name"].isin(th)]
+    flow = d["Invoice Amount"].sum()
+    exp = d.groupby(["Country", "City", "Hotel Name"])["Invoice Amount"].sum().reset_index().sort_values(
+        "Invoice Amount", ascending=False).rename(columns={"Invoice Amount": "Spend (Rp)"})
+    with c4:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        _dl("⬇️ Unduh Excel", exp, "Sankey Flow", "sankey_flow", "sk_dl", money_cols=("Spend (Rp)",))
+    ui.kpi_row([ui.kpi("Negara", ui.fmt_int(d["Country"].nunique())), ui.kpi("Kota tujuan", ui.fmt_int(d["City"].nunique())),
+                ui.kpi("Hotel", ui.fmt_int(d["Hotel Name"].nunique())),
+                ui.kpi("Total spend dalam alur", ui.fmt_big(flow),
+                       f"{ui.fmt_pct(flow / base['Invoice Amount'].sum() * 100, digits=0)} dari total", dark=True)])
+    if d.empty:
+        st.info("Tidak ada alur untuk kombinasi top kota & hotel ini.")
+        return
+    a = d.groupby(["Country", "City"])["Invoice Amount"].sum().reset_index()
+    b = d.groupby(["City", "Hotel Name"])["Invoice Amount"].sum().reset_index()
+    countries, cities, hotels = list(a["Country"].unique()), list(a["City"].unique()), list(b["Hotel Name"].unique())
+    labels = countries + [f"{c} " for c in cities] + hotels
+    idx = {n: i for i, n in enumerate(labels)}
+    src = [idx[r.Country] for r in a.itertuples()] + [idx[f"{r.City} "] for r in b.itertuples()]
+    tgt = [idx[f"{r.City} "] for r in a.itertuples()] + [idx[r._2] for r in b.itertuples()]
+    val = list(a["Invoice Amount"]) + list(b["Invoice Amount"])
+    fig = go.Figure(go.Sankey(arrangement="snap",
+                              node=dict(label=labels, pad=18, thickness=14, color=ui.NAVY,
+                                        line=dict(color="white", width=0.5)),
+                              link=dict(source=src, target=tgt, value=val, color="rgba(13,127,204,0.22)")))
+    with st.container(border=True):
+        ui.section("Alur spend: Negara → Kota → Hotel", "Ketebalan alur = Invoice Amount (Rupiah)")
+        _fig(fig, "sk_fig", max(460, 26 * len(hotels) + 80))
+    c1, c2 = st.columns(2)
+    for col, title, grp in ((c1, "Top kota", "City"), (c2, "Top hotel", "Hotel Name")):
+        with col:
+            with st.container(border=True):
+                ui.section(title)
+                t = d.groupby(grp)["Invoice Amount"].sum().sort_values(ascending=False).head(10).reset_index()
+                t["Spend"] = t["Invoice Amount"].map(ui.fmt_big)
+                st.dataframe(t[[grp, "Spend"]].rename(columns={grp: "Kota" if grp == "City" else "Hotel"}),
+                             hide_index=True, width="stretch")
+
+
+# ---------------------------------------------------------------- tab: Top Hotel/City
+def tab_top(df):
+    ui.page_title("Top Hotel / City", "Peringkat hotel dan kota berdasarkan total room nights")
+    wil = ui.choice("Wilayah", ["Domestik", "Internasional"], key="th_wil")
+    d = _market(df, wil)
+    if d.empty:
+        st.info("Tidak ada data.")
+        return
+    c1, c2 = st.columns(2)
+    with c1:
+        with st.container(border=True):
+            h = d.groupby("Hotel Name")["Number of Rooms Night"].sum().sort_values(ascending=False).head(100)
+            city = d.dropna(subset=["City"]).groupby("Hotel Name")["City"].agg(lambda s: s.mode().iat[0])
+            rate = d.groupby("Hotel Name").apply(lambda x: x["Invoice Amount"].sum() /
+                                                 max(x["Number of Rooms Night"].sum(), 1), include_groups=False)
+            t = pd.DataFrame({"Hotel Name": h.index, "City": h.index.map(city), "Number of Rooms Night": h.values,
+                              "Average Room Rate": h.index.map(rate).round(0)})
+            a, b = st.columns([3, 2])
+            with a:
+                ui.section("Top 100 hotel", "Biru tua = top 20 · room nights")
+            with b:
+                _dl("⬇️ Unduh Excel", t, "Top 100 Hotels", "top_100_hotels", "th_dl_h",
+                    money_cols=("Average Room Rate",), int_cols=("Number of Rooms Night",))
+            with st.container(height=640, border=False):
+                _hbar(list(h.index), list(h.values), "th_h", top_highlight=20, height=26 * len(h) + 40)
+    with c2:
+        with st.container(border=True):
+            c = d.groupby("City")["Number of Rooms Night"].sum().sort_values(ascending=False).head(100)
+            a, b = st.columns([3, 2])
+            with a:
+                ui.section("Top 100 kota", "Biru tua = top 20 · room nights")
+            with b:
+                _dl("⬇️ Unduh Excel", c.reset_index(), "Top 100 Cities", "top_100_cities", "th_dl_c",
+                    int_cols=("Number of Rooms Night",))
+            with st.container(height=640, border=False):
+                _hbar(list(c.index), list(c.values), "th_c", top_highlight=20, height=26 * len(c) + 40)
+    st.caption("File unduhan hotel berisi kota dan Average Room Rate (total Invoice Amount ÷ total room nights).")
+
+
+# ---------------------------------------------------------------- tab: Dendrogram
+def tab_dendro(df):
+    from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
+    from sklearn.preprocessing import normalize
+    ui.page_title("Hierarchical Clustering — Dendrogram",
+                  "Mengelompokkan kota atau hotel berdasarkan kemiripan pola bulanan")
+    with st.container(border=True):
+        c = st.columns(5)
+        ent = c[0].selectbox("Entitas", ["Kota", "Hotel"], key="dd_ent")
+        metric = c[1].selectbox("Metric", ["Invoice Amount", "Number of Rooms Night"], key="dd_metric",
+                                format_func=lambda m: "Spend (Rupiah)" if m == "Invoice Amount" else "Room nights")
+        method = c[2].selectbox("Linkage", ["ward", "complete", "average", "single"], key="dd_link")
+        top_n = c[3].selectbox("Top N", [12, 20, 30, 50], key="dd_n")
+        k = c[4].selectbox("Jumlah klaster", [4, 3, 5, 6], key="dd_k")
+    col = "City" if ent == "Kota" else "Hotel Name"
+    d = df.dropna(subset=[col, metric, "Issue Time"]).copy()
+    d["Bulan"] = d["Issue Time"].dt.to_period("M").astype(str)
+    top = d.groupby(col)[metric].sum().nlargest(top_n).index
+    pv = d[d[col].isin(top)].groupby([col, "Bulan"])[metric].sum().unstack(fill_value=0)
+    if len(pv) < 3:
+        st.info("Data belum cukup (minimal 3 entitas).")
+        return
+    X = normalize(pv.values, norm="l2")
+    Z = linkage(X, method=method)
+    k = min(k, len(pv) - 1)
+    cl = fcluster(Z, t=k, criterion="maxclust")
+    palette = [ui.BLUE, ui.ORANGE, ui.GREEN, ui.NAVY, "#47B5E8", "#8A4B00"]
+    labels = list(pv.index)
+    dn = dendrogram(Z, labels=labels, no_plot=True, orientation="left")
+    fig = go.Figure()
+    for xs, ys in zip(dn["dcoord"], dn["icoord"]):
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#8A99A6", width=1.6),
+                                 hoverinfo="skip", showlegend=False))
+    leaf_y = [5 + 10 * i for i in range(len(dn["ivl"]))]
+    leaf_col = [palette[(cl[labels.index(l)] - 1) % len(palette)] for l in dn["ivl"]]
+    fig.add_trace(go.Scatter(x=[0] * len(leaf_y), y=leaf_y, mode="markers+text", text=dn["ivl"],
+                             textposition="middle right", marker=dict(size=10, color=leaf_col),
+                             textfont=dict(size=11), hoverinfo="text", showlegend=False, cliponaxis=False))
+    cut = Z[-(k - 1), 2] if k > 1 else 0
+    fig.add_vline(x=cut, line_dash="dash", line_color=ui.RED, annotation_text=f"potong: {k} klaster")
+    mx = max(max(x) for x in dn["dcoord"])
+    fig.update_layout(xaxis=dict(range=[mx * 1.05, -mx * 0.45], title="Dissimilarity", gridcolor="#EEF1F4"),
+                      yaxis=dict(showticklabels=False, showgrid=False))
+    with st.container(border=True):
+        ui.section(f"Dendrogram — {ent}", f"Kemiripan pola bulanan · linkage {method}")
+        _fig(fig, "dd_fig", max(420, 26 * len(labels) + 60))
+    tot = d[d[col].isin(top)][metric].sum()
+    vals = d[d[col].isin(top)].groupby(col)[metric].sum()
+    cols = st.columns(min(k, 4))
+    for i in range(1, k + 1):
+        mem = [l for l, c_ in zip(labels, cl) if c_ == i]
+        v = vals.reindex(mem).sum()
+        shown = ", ".join(mem[:4]) + (f" +{len(mem) - 4} lainnya" if len(mem) > 4 else "")
+        valtxt = ui.fmt_big(v) if metric == "Invoice Amount" else f"{ui.fmt_int(v)} RN"
+        with cols[(i - 1) % len(cols)]:
+            st.markdown(f'<div class="mx-cluster" style="border-top:4px solid {palette[(i - 1) % len(palette)]}">'
+                        f'<strong>Klaster {i} · {len(mem)} entitas</strong><span style="color:#3A4A58">{ui.esc(shown)}</span>'
+                        f'<span style="font-weight:600">{valtxt} · {ui.fmt_pct(v / tot * 100, digits=0)}</span></div>',
+                        unsafe_allow_html=True)
+    ui.note("Entitas dalam satu klaster punya pola perjalanan serupa, sehingga bisa dinegosiasikan dengan strategi "
+            "yang sama, misalnya satu paket corp rate untuk kota-kota dalam satu klaster.")
+
+
+# ---------------------------------------------------------------- tab: Patra Jasa
+def tab_patra(df):
+    ui.page_title("Patra Jasa Group vs Non-Patra Jasa", "Perbandingan hotel domestik (Country = Indonesia)")
+    d = _market(df, "Domestik").copy()
+    if d.empty or "Hotel Name" not in d:
+        st.info("Tidak ada data domestik.")
+        return
+    norm = {h.lower().strip(): h for h in PATRA_JASA_HOTELS}
+    norm.update({str(standardize_name(h)).lower().strip(): h for h in PATRA_JASA_HOTELS})
+    d["_h"] = d["Hotel Name"].astype(str).str.lower().str.strip()
+    d["Grup"] = np.where(d["_h"].isin(norm), "Patra Jasa Group", "Non-Patra Jasa")
+    d["_dt"] = d["Issue Time"].fillna(d.get("Check in Date")) if "Issue Time" in d else d.get("Check in Date")
+    years = sorted(d["_dt"].dropna().dt.year.unique().astype(int), reverse=True)
+    with st.container(border=True):
+        c1, c2, c3 = st.columns([1, 1, 2])
+        year = c1.selectbox("Tahun (tabel bulanan)", years, key="pj_year") if years else None
+        met = c2.selectbox("Metrik tabel", ["Invoice (TR unik)", "Room nights"], key="pj_met")
+    tr = "Travel Request Number" in d
+    cnt = lambda x: x["Travel Request Number"].nunique() if tr else len(x)  # noqa: E731
+    pj, npj = d[d["Grup"] == "Patra Jasa Group"], d[d["Grup"] == "Non-Patra Jasa"]
+    tot = cnt(pj) + cnt(npj)  # satu travel request bisa menginap di kedua grup
+    ui.kpi_row([ui.kpi("Total invoice domestik", ui.fmt_int(tot), "travel request unik per grup"),
+                ui.kpi("Patra Jasa Group", ui.fmt_int(cnt(pj)), f"{ui.fmt_pct(cnt(pj) / max(tot, 1) * 100)} dari total",
+                       dark=True),
+                ui.kpi("Non-Patra Jasa", ui.fmt_int(cnt(npj)), f"{ui.fmt_pct(cnt(npj) / max(tot, 1) * 100)} dari total"),
+                ui.kpi("Total room nights domestik", ui.fmt_int(d["Number of Rooms Night"].sum()))], 200)
+    a, b = st.columns(2)
+    for col, title, v1, v2, center, key in (
+            (a, "Invoice unik — Patra vs Non-Patra", cnt(pj), cnt(npj), "invoice", "pj_d1"),
+            (b, "Room nights — Patra vs Non-Patra", pj["Number of Rooms Night"].sum(),
+             npj["Number of Rooms Night"].sum(), "room nights", "pj_d2")):
+        with col:
+            with st.container(border=True):
+                ui.section(title)
+                fig = go.Figure(go.Pie(labels=["Patra Jasa Group", "Non-Patra Jasa"], values=[v1, v2], hole=0.6,
+                                       marker=dict(colors=[ui.BLUE, ui.ORANGE]), sort=False, textinfo="percent"))
+                fig.update_layout(annotations=[dict(text=f"<b>{ui.fmt_int(v1 + v2)}</b><br>{center}", x=0.5, y=0.5,
+                                                    showarrow=False, font=dict(size=14))],
+                                  legend=dict(orientation="h", y=-0.1))
+                _fig(fig, key, 300)
+    if year is None:
+        return
+    y = d[d["_dt"].dt.year == year].copy()
+    y["_m"] = y["_dt"].dt.month
+    if met.startswith("Invoice") and tr:
+        pv = y.groupby(["Grup", "_m"])["Travel Request Number"].nunique().unstack(fill_value=0)
+    else:
+        pv = y.groupby(["Grup", "_m"])["Number of Rooms Night"].sum().unstack(fill_value=0)
+    pv = pv.reindex(index=["Patra Jasa Group", "Non-Patra Jasa"], columns=range(1, 13), fill_value=0)
+    names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"]
+    rows = ""
+    for grp, color, bg in (("Patra Jasa Group", "#0A6AAD", "#F2F8FD"), ("Non-Patra Jasa", "#8A4B00", "#FFF9F0")):
+        vals = pv.loc[grp]
+        rows += f'<tr style="background:{bg}"><td style="font-weight:500">{grp}</td>' + "".join(
+            f'<td style="color:{color}">{ui.fmt_int(v) if v else "—"}</td>' for v in vals) + \
+            f'<td style="font-weight:600;background:#E6F0F8">{ui.fmt_int(vals.sum())}</td></tr>'
+    tot_m = pv.sum()
+    rows += '<tr style="font-style:italic"><td style="color:#5A6B7A">% Patra Jasa</td>' + "".join(
+        f'<td style="color:#5A6B7A">{(pv.loc["Patra Jasa Group", m] / t * 100):.0f}%</td>' if t else
+        '<td style="color:#A0AAB4">—</td>' for m, t in tot_m.items()) + \
+        f'<td style="color:#5A6B7A;background:#E6F0F8">{pv.loc["Patra Jasa Group"].sum() / max(tot_m.sum(), 1) * 100:.0f}%</td></tr>'
+    with st.container(border=True):
+        h1, h2 = st.columns([4, 1])
+        with h1:
+            ui.section(f"Perbandingan bulanan — {met.lower()} · {year}")
+        with h2:
+            out = pv.copy()
+            out.columns = names
+            out["Total"] = out.sum(axis=1)
+            _dl("⬇️ Unduh Excel", out.reset_index().rename(columns={"Grup": "Grup hotel"}), "Patra vs Non-Patra",
+                "patra_jasa_comparison", "pj_dl")
+        st.markdown('<div style="overflow-x:auto"><table class="mx-table"><thead><tr><th>Grup hotel</th>' +
+                    "".join(f"<th>{n}</th>" for n in names) + "<th>Total</th></tr></thead><tbody>" + rows +
+                    "</tbody></table></div>", unsafe_allow_html=True)
+    with st.expander(f"Detail per hotel Patra Jasa Group · {year}"):
+        p = y[y["Grup"] == "Patra Jasa Group"].copy()
+        p["Hotel"] = p["_h"].map(norm).fillna(p["Hotel Name"])
+        t = p.groupby("Hotel").agg(**{"Travel requests": ("Travel Request Number", "nunique") if tr else
+                                      ("Hotel Name", "size"), "Room nights": ("Number of Rooms Night", "sum")})
+        st.dataframe(t.sort_values("Travel requests", ascending=False), width="stretch")
+
+
+# ---------------------------------------------------------------- tab: Laporan
+def tab_laporan(df):
+    import cost_avoidance as ca
+    ui.page_title("Laporan", "Semua unduhan berupa laporan agregat dalam format Excel dan tercatat atas nama akun Anda")
+    r = df.copy()
+    has_tr = "Travel Request Number" in r
+
+    def agg(x, keys):
+        g = x.groupby(keys, dropna=False).agg(**{"Room nights": ("Number of Rooms Night", "sum"),
+                                                 "Spend (Rp)": ("Invoice Amount", "sum")})
+        if has_tr:
+            g["Travel requests"] = x.groupby(keys, dropna=False)["Travel Request Number"].nunique()
+        g["Avg rate / malam (Rp)"] = (g["Spend (Rp)"] / g["Room nights"].replace(0, np.nan)).round(0)
+        return g.reset_index().sort_values("Room nights", ascending=False)
+
+    reps = [("Ringkasan per hotel", "Hotel, kota, room nights, spend, rata-rata rate per malam",
+             agg(r, ["Hotel Name", "City"]), "ringkasan_per_hotel"),
+            ("Ringkasan per kota", "Negara, kota, room nights, spend, rata-rata rate per malam",
+             agg(r, ["Country", "City"]), "ringkasan_per_kota")]
+    if "Issue Time" in r:
+        m = r.dropna(subset=["Issue Time"]).copy()
+        m["Bulan"] = m["Issue Time"].dt.to_period("M").astype(str)
+        m["Market"] = np.where(m["Country"].astype(str).str.upper().isin(DOMESTIC_ALIAS), "Domestik", "Internasional")
+        reps.append(("Tren bulanan", "Travel request, room nights dan spend per bulan, domestik vs internasional",
+                     agg(m, ["Bulan", "Market"]).sort_values(["Bulan", "Market"]), "tren_bulanan"))
+    cp = ca.corp_path()
+    if cp.exists():
+        try:
+            corp, _ = ca.prepare_corp(pd.read_excel(cp), "Nett", standardize_name, _normalize_city_key)
+            b = ca.prepare_bookings(r, standardize_name, _normalize_city_key)
+            mm = ca.match_bookings(b, corp)
+            pools = ca.market_pools(b)
+            s = ca.summarize_matched(mm, pools)
+            if not s.empty:
+                reps.append(("Cost avoidance per hotel & tipe kamar",
+                             "Corp rate, rate dibayar, selisih, potensi avoidance, status daya saing",
+                             _cols(s, ["Hotel", "Kota", "Room type", "Meal plan", "Corp", "Avg dibayar", "Selisih %",
+                                       "RN", "Potensi", "Malam < corp %", "Posisi kota", "Daya saing"])
+                             .rename(columns={"Corp": "Corp rate", "RN": "Room nights"}), "cost_avoidance"))
+            lk = ca.leakage(mm, corp, 100)
+            if not lk.empty:
+                reps.append(("Kebocoran non-kontrak", "Top 100 hotel non-kontrak dan potensi pengalihan",
+                             _cols(lk, ["Hotel", "Kota", "Room type", "Meal plan", "RN", "Avg dibayar", "Setara",
+                                        "Selisih %", "Potensi"]).rename(columns={"RN": "Room nights",
+                                                                                 "Setara": "Corp rate setara"}),
+                             "kebocoran_non_kontrak"))
+            md = ca.load_manual()
+            rg = ca.renegotiation(s, pools, 40, dict(zip(md["key"].astype(str), pd.to_numeric(md["persen"], errors="coerce"))))
+            if not rg.empty:
+                reps.append(("Target renegosiasi", "Target P40 kota / target turun manual dan hard savings",
+                             _cols(rg, ["Hotel", "Kota", "Room type", "Meal plan", "Daya saing", "Corp",
+                                        "Target dipakai", "Sumber target", "Turun %", "RN", "Hard savings"])
+                             .rename(columns={"Corp": "Corp rate", "RN": "Room nights"}), "target_renegosiasi"))
+        except Exception as e:
+            st.caption(f"Laporan Cost Avoidance dilewati: {e}")
+    cols = st.columns(3)
+    for i, (title, desc, data, fname) in enumerate(reps):
+        with cols[i % 3]:
+            with st.container(border=True):
+                st.markdown(f"<div class='mx-h2' style='font-size:15px'>{ui.esc(title)}</div>"
+                            f"<div class='mx-h2sub'>{ui.esc(desc)}<br>{ui.fmt_int(len(data))} baris</div>",
+                            unsafe_allow_html=True)
+                if can_download():
+                    _dl("⬇️ Unduh Excel", data, title, fname, f"lap_{fname}",
+                        money_cols=tuple(c for c in data.columns if "(Rp)" in c or c in
+                                         ("Corp rate", "Avg dibayar", "Potensi", "Target dipakai", "Hard savings",
+                                          "Corp rate setara")),
+                        int_cols=tuple(c for c in data.columns if c in ("Room nights", "Travel requests", "RN")))
+                else:
+                    st.caption("🔒 Unduhan tidak tersedia untuk akun ini.")
+    ui.note("<b>Data per transaksi tidak bisa diunduh dari dashboard.</b> Kebutuhan data per booking diajukan lewat "
+            "permintaan data dan disetujui atasan serta Pejabat Pelindungan Data Pribadi.")
+    if is_super_admin():
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            ui.section("Audit log", "Login dan unduhan · 200 catatan terakhir · hanya Super Admin")
+            log = read_audit_tail(200)
+            if log.empty:
+                st.caption("Belum ada catatan.")
+            else:
+                st.dataframe(log, hide_index=True, width="stretch", height=min(360, 36 * len(log) + 40))
+
+
+# ---------------------------------------------------------------- halaman Akun & akses
+def page_akses():
+    ui.page_title("Akun, role & akses", "Lima akun tetap. Password & 2FA diatur di Secrets (bukan di kode).")
+    yes, no = "Ya", "Tidak"
+    matrix = [
+        ("Data yang dimuat", "13 kolom transaksi hotel", "13 kolom", "13 kolom", "13 kolom", "13 kolom, nominal disamarkan"),
+        ("Semua tab analisis", yes, yes, yes, yes, yes),
+        ("Data identitas pekerja", "Tidak ada di sumber", "Tidak ada di sumber", "Tidak ada di sumber",
+         "Tidak ada di sumber", "Tidak ada di sumber"),
+        ("Unduh laporan agregat", "Ya, tercatat", "Ya, tercatat", "Ya, tercatat", "Ya, tercatat", no),
+        ("Upload Excel, corp rate & target manual", yes, yes, no, no, no),
+        ("Lihat audit log", yes, no, no, no, no),
+    ]
+    head = "".join(f"<th>{h}</th>" for h in ["Kemampuan", "superadmin", "admin", "ssc", "dtm", "demo"])
+    body = "".join("<tr>" + "".join(f"<td style='text-align:left'>{ui.esc(c)}</td>" for c in r) + "</tr>" for r in matrix)
+    with st.container(border=True):
+        ui.section("Hak akses per akun")
+        st.markdown(f"<div style='overflow-x:auto'><table class='mx-table' style='font-size:13px'><thead><tr>{head}"
+                    f"</tr></thead><tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+    a, b = st.columns(2)
+    with a:
+        with st.container(border=True):
+            ui.section("Akun")
+            rows = []
+            for name, role in USER_ROLES.items():
+                aktif = name in USERS
+                rows.append({"Akun": name, "Role": role, "Status": "Aktif" if aktif else "Belum ada password",
+                             "2FA": "Aktif" if _own_totp_secret(name) else ("Tidak dipakai" if role == "Demo" else "Belum")})
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    with b:
+        with st.container(border=True):
+            ui.section("Keamanan login")
+            argon = all(str(u["password"]).startswith("$argon2") for u in USERS.values()) if USERS else False
+            ui.mini_row([("Login", "Wajib" if login_required() else "Dimatikan sementara")])
+            ui.mini_row([("Hash password", "Argon2id" if argon else "Sebagian masih SHA-256")])
+            ui.mini_row([("Kunci akun setelah gagal", f"{MAX_LOGIN_ATTEMPTS}× · {LOCKOUT_SECONDS // 60} menit")])
+            ui.mini_row([("Batas waktu sesi", f"{SESSION_TIMEOUT // 60} menit")])
+
+
+# ---------------------------------------------------------------- main
+def main_app():
+    st.set_page_config(page_title="MTRAX | Travel Analytics", layout="wide", initial_sidebar_state="expanded")
+    if st.session_state.get("_session_token"):
+        _set_session_cookie(st.session_state._session_token)
+    ui.inject_css()
+    render_sidebar()
+    render_header()
+
+    if st.session_state.get("view") == "akses" and is_admin():
+        page_akses()
+        return
+
     if is_demo_user() and not st.session_state.get("_demo_masked"):
         st.session_state.df_all = pd.DataFrame()
         st.session_state.data_loaded = False
-        df_all = st.session_state.df_all
-    if is_demo_user():
-        # Sembunyikan tombol unduh/fullscreen bawaan tabel (lapisan tambahan, bukan kontrol utama)
-        st.markdown("<style>[data-testid='stElementToolbar'],[data-testid='stDownloadButton'],"
-                    ".stDownloadButton,.modebar,.modebar-container{display:none !important;}</style>",
-                    unsafe_allow_html=True)
+    raw = st.session_state.df_all
+    if raw is None or raw.empty:
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        ui.note("Pilih <b>periode data</b> di sidebar lalu klik <b>Get Data</b>.")
+        return
+
+    key = (st.session_state.get("_data_ver", 0), st.session_state.get("username", ""))
+    prep = st.session_state.get("_prep2")
+    if prep is None or prep["key"] != key:
+        with st.spinner("Menyiapkan data…"):
+            d_all, pmap = prepare_data(raw)
+        st.session_state._prep2 = prep = {"key": key, "df": d_all, "pmap": pmap}
+    df, pmap = prep["df"], prep["pmap"]
+
+    dc = _date_col(df)
+    if dc:
+        dates = df[dc].dropna()
+        lo, hi = dates.min().date(), dates.max().date()
+        with st.sidebar:
+            rng = st.date_input("Rentang tanggal (semua tab)", (lo, hi), min_value=lo, max_value=hi,
+                                format="DD/MM/YYYY", key=f"gf_range_{key[0]}")
+        if isinstance(rng, (list, tuple)) and len(rng) == 2:
+            df = df[(df[dc].dt.date >= rng[0]) & (df[dc].dt.date <= rng[1])]
+
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    t = st.tabs(["Dashboard", "Price Intelligence", "Cost Avoidance", "Room Intelligence", "Sankey Flow",
+                 "Top Hotel/City", "Dendrogram", "Patra Jasa", "Laporan"])
+    with t[0]:
+        tab_dashboard(df)
+    with t[1]:
+        tab_price(df, pmap)
+    with t[2]:
+        render_cost_avoidance(df, can_download=can_download(), can_edit=is_admin(),
+                              username=st.session_state.get("username", ""), excel_fn=excel_bytes_with_formats,
+                              standardize_name=standardize_name, normalize_city=_normalize_city_key)
+    with t[3]:
+        tab_room(df, pmap)
+    with t[4]:
+        tab_sankey(df)
+    with t[5]:
+        tab_top(df)
+    with t[6]:
+        tab_dendro(df)
+    with t[7]:
+        tab_patra(df)
+    with t[8]:
+        tab_laporan(df)
+
+    st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+    ui.note("<b>Disclaimer &amp; Compliance Notice</b><br>Aplikasi ini untuk analisis internal. Output tidak bersifat "
+            "final dan harus divalidasi sesuai kebijakan perusahaan.")
+    st.markdown("<div style='text-align:center;padding:18px;color:#5A6B7A;font-size:12px'>© 2026 Dikembangkan oleh "
+                "<a href='https://www.linkedin.com/in/rifyalt/' target='_blank'>Rifyal Tumber</a> · MTRAX Travel Analytics"
+                "</div>", unsafe_allow_html=True)
 
-    if not df_all.empty:
-        # Helper functions
-        def prepare_monthly_trend(df, date_col, value_col, agg="count"):
-            if date_col not in df.columns:
-                return pd.DataFrame()
-            
-            df_copy = df.copy()
-            df_copy[date_col] = pd.to_datetime(df_copy[date_col], errors="coerce", dayfirst=True)
-            df_copy = df_copy.dropna(subset=[date_col])
-            df_copy["YearMonth"] = df_copy[date_col].dt.to_period("M").astype(str)
-
-            if agg == "count":
-                trend = df_copy.groupby("YearMonth")[value_col].count().reset_index(name="Value")
-            elif agg == "nunique":
-                trend = df_copy.groupby("YearMonth")[value_col].nunique().reset_index(name="Value")
-            elif agg == "sum":
-                trend = df_copy.groupby("YearMonth")[value_col].sum().reset_index(name="Value")
-            else:
-                trend = df_copy.groupby("YearMonth").size().reset_index(name="Value")
-
-            return trend
-
-    # ======================================
-    # DATA CLEANING
-    # ======================================
-    if not df_all.empty:
-        # ======================================
-        # PEMROSESAN DATA SEKALI PER PEMUATAN
-        # Pembersihan, penyeragaman nama hotel, normalisasi kota, mapping
-        # perusahaan & peta penggabungan properti hanya dijalankan saat data
-        # baru dimuat (atau user berganti). Hasilnya disimpan di session,
-        # jadi klik filter/dropdown tidak lagi mengulang proses berat ini.
-        # ======================================
-        _prep_key = (st.session_state.get("_data_ver", 0), st.session_state.get("username", ""))
-        _prep = st.session_state.get("_prep")
-        if _prep is not None and _prep.get("key") == _prep_key:
-            df_all = st.session_state.df_all
-            hotel_mapping = _prep["hotel_mapping"]
-            property_merge_map = _prep["property_merge_map"]
-        else:
-            # Bersihkan Invoice Amount lalu konversi ke Rupiah (kolom Currency)
-            if "Invoice Amount" in df_all.columns:
-                df_all["Invoice Amount"] = pd.to_numeric(
-                    df_all["Invoice Amount"].astype(str).str.replace("$", "").str.replace(",", ""),
-                    errors="coerce"
-                )
-                df_all, st.session_state["_fx_info"] = convert_currency_to_idr(df_all)
-        
-            # Bersihkan Number of Rooms Night
-            if "Number of Rooms Night" in df_all.columns:
-                df_all["Number of Rooms Night"] = pd.to_numeric(df_all["Number of Rooms Night"], errors="coerce")
-        
-            # Convert dates
-            if "Check in Date" in df_all.columns:
-                df_all["Check in Date"] = pd.to_datetime(df_all["Check in Date"], errors="coerce", dayfirst=True)
-        
-            if "Check out Date" in df_all.columns:
-                df_all["Check out Date"] = pd.to_datetime(df_all["Check out Date"], errors="coerce", dayfirst=True)
-        
-            if "Issue Time" in df_all.columns:
-                df_all["Issue Time"] = pd.to_datetime(df_all["Issue Time"], errors="coerce", dayfirst=True)
-
-
-            # ======================================
-            # PENYERAGAMAN NAMA HOTEL & SUPPLIER
-            # Aturan merek (Meliá, Mövenpick, éL Hotel, Marriott) + kamus standar
-            # data/unique_hotels.xlsx. Idempoten, aman dijalankan setiap rerun.
-            # ======================================
-            try:
-                df_all = standardize_hotel_columns(df_all)
-                st.session_state.df_all = df_all
-            except Exception as _e_std:
-                st.warning(f"Penyeragaman nama hotel dilewati: {_e_std}")
-
-            # ======================================
-            # AUTO-NORMALISASI
-            # ======================================
-            hotel_mapping = pd.DataFrame()  # default agar tidak NameError jika kolom "Hotel Name" tidak ada
-            if "Hotel Name" in df_all.columns:
-                df_all, hotel_mapping = auto_canonical_hotel_mapping(
-                    df_all,
-                    hotel_col="Hotel Name",
-                    threshold=0.88
-                )
-
-            # ======================================
-            # GLOBAL CITY STANDARDIZATION
-            # ======================================
-
-            if "City" in df_all.columns:
-                df_all["City"] = (
-                    df_all["City"]
-                    .astype(str)
-                    .str.strip()
-                    .str.replace(r"\s+", " ", regex=True)
-                    .str.lower()
-                    .str.title()
-                )
-                df_all.loc[df_all["City"] == "Nan", "City"] = np.nan
-
-            if "City Destination" in df_all.columns:
-                df_all["City Destination"] = (
-                    df_all["City Destination"]
-                    .astype(str)
-                    .str.strip()
-                    .str.replace(r"\s+", " ", regex=True)
-                    .str.lower()
-                    .str.title()
-                )
-                df_all.loc[df_all["City Destination"] == "Nan", "City Destination"] = np.nan
-
-            # ======================================
-            # PETA PENGGABUNGAN PROPERTI HOTEL
-            # Dihitung dari data penuh (setelah standardisasi City & masking demo,
-            # sebelum filter global) agar pengelompokan stabil. Dipakai di tab
-            # Price Intelligence & Room Intelligence.
-            # ======================================
-            property_merge_map = get_property_merge_map(df_all, hotel_col="Hotel Name", city_col="City")
-
-            st.session_state.df_all = df_all
-            st.session_state._prep = {"key": _prep_key, "hotel_mapping": hotel_mapping,
-                                      "property_merge_map": property_merge_map}
-
-        # ======================================
-        # GLOBAL FILTERS
-        # ======================================
-        st.markdown("""
-            <div class='global-filter-label'>🔍 Global Filters — berlaku di seluruh tab</div>
-        """, unsafe_allow_html=True)
-
-        gcol1, gcol2, gcol3 = st.columns([2, 1.5, 1.5])
-
-        selected_companies = []  # kolom perusahaan tidak ada di sumber data
-        with gcol1:
-            st.caption("Rentang tanggal di samping berlaku di seluruh tab. Nilai uang dalam Rupiah "
-                       "(invoice non-Rupiah sudah dikonversi).")
-
-        # Tentukan kolom tanggal untuk filter (From / To)
-        _date_col_for_filter = None
-        for _candidate_col in ["Issue Time", "Check in Date", "Check out Date"]:
-            if _candidate_col in df_all.columns:
-                _date_col_for_filter = _candidate_col
-                break
-
-        if _date_col_for_filter:
-            _valid_dates = pd.to_datetime(df_all[_date_col_for_filter], errors="coerce", dayfirst=True).dropna()
-            _min_date = _valid_dates.min().date() if not _valid_dates.empty else None
-            _max_date = _valid_dates.max().date() if not _valid_dates.empty else None
-        else:
-            _min_date = _max_date = None
-
-        # Inisialisasi nilai default di session_state agar tidak reset tiap rerun
-        if _min_date and "gf_date_from_init" not in st.session_state:
-            st.session_state["gf_date_from_init"] = _min_date
-        if _max_date and "gf_date_to_init" not in st.session_state:
-            st.session_state["gf_date_to_init"] = _max_date
-
-        # Reset init jika data baru dimuat (periode berubah)
-        _current_period = st.session_state.get("data_period", "")
-        if st.session_state.get("_last_data_period") != _current_period:
-            st.session_state["_last_data_period"] = _current_period
-            if _min_date:
-                st.session_state["gf_date_from_init"] = _min_date
-            if _max_date:
-                st.session_state["gf_date_to_init"] = _max_date
-
-        with gcol2:
-            if _min_date:
-                # Gunakan nilai dari session_state sebagai default, bukan langsung _min_date
-                _default_from = st.session_state.get("gf_date_from_init", _min_date)
-                # Pastikan default_from masih dalam range yang valid
-                if _default_from < _min_date:
-                    _default_from = _min_date
-                if _default_from > _max_date:
-                    _default_from = _min_date
-                filter_date_from = st.date_input(
-                    "📅 From",
-                    value=_default_from,
-                    min_value=_min_date,
-                    max_value=_max_date,
-                    key="gf_date_from",
-                    format="YYYY/MM/DD"
-                )
-                # Simpan pilihan user ke session_state agar persisten
-                st.session_state["gf_date_from_init"] = filter_date_from
-            else:
-                filter_date_from = None
-                st.info("Kolom tanggal tidak ditemukan.")
-
-        with gcol3:
-            if _max_date:
-                _default_to = st.session_state.get("gf_date_to_init", _max_date)
-                # Pastikan default_to masih dalam range yang valid
-                if _default_to > _max_date:
-                    _default_to = _max_date
-                if _default_to < _min_date:
-                    _default_to = _max_date
-                filter_date_to = st.date_input(
-                    "📅 To",
-                    value=_default_to,
-                    min_value=_min_date,
-                    max_value=_max_date,
-                    key="gf_date_to",
-                    format="YYYY/MM/DD"
-                )
-                # Simpan pilihan user ke session_state agar persisten
-                st.session_state["gf_date_to_init"] = filter_date_to
-            else:
-                filter_date_to = None
-
-        # Validasi: pastikan from <= to
-        if filter_date_from and filter_date_to and filter_date_from > filter_date_to:
-            st.warning("⚠️ Tanggal 'From' tidak boleh lebih besar dari 'To'. Filter tanggal diabaikan.")
-            filter_date_from = _min_date
-            filter_date_to = _max_date
-
-        # Terapkan filter ke df_all
-        df_filtered = df_all.copy()
-
-        if selected_companies:
-            df_filtered = df_filtered[df_filtered["Nama Perusahaan"].isin(selected_companies)]
-
-        if _date_col_for_filter and filter_date_from and filter_date_to:
-            _date_series = pd.to_datetime(df_filtered[_date_col_for_filter], errors="coerce", dayfirst=True)
-            df_filtered = df_filtered[
-                (_date_series.dt.date >= filter_date_from) &
-                (_date_series.dt.date <= filter_date_to)
-            ]
-
-        # Tampilkan info jumlah data setelah filter
-        _total = len(df_all)
-        _filtered = len(df_filtered)
-        _pct = (_filtered / _total * 100) if _total > 0 else 0
-        _filter_active = bool(selected_companies) or (filter_date_from != _min_date or filter_date_to != _max_date) if _min_date else bool(selected_companies)
-
-        if _filter_active:
-            st.markdown(f"""
-            <div style='background:#e6f4fb;border:1px solid #b8d9f0;border-left:4px solid #1BA0E2;
-                        border-radius:6px;padding:8px 16px;margin:8px 0 18px 0;font-size:0.83em;color:#0D7FCC;
-                        display:flex;gap:20px;align-items:center;'>
-                🔎 <b>Filter aktif</b> &nbsp;|&nbsp; Menampilkan 
-                <b>{_filtered:,}</b> dari <b>{_total:,}</b> records 
-                <span style='background:#1BA0E2;color:white;border-radius:20px;padding:1px 10px;font-size:0.9em;'>{_pct:.1f}%</span>
-            </div>""", unsafe_allow_html=True)
-        
-        # Gunakan df_filtered di seluruh tab (menggantikan df_all)
-        df_all = df_filtered
-
-        st.markdown("<div class='divider' style='margin: 4px 0 18px 0;'></div>", unsafe_allow_html=True)
-
-        # ======================================
-        # ======================================
-        # TAB
-        # ======================================
-        tab2, tab6, tab_cost, tab_room, tab7, tab8, tab9, tab10, tab11 = st.tabs([
-            "Dashboard",
-            "Price Intelligence",
-            "Cost Avoidance",
-            "Room Intelligence",
-            "Sankey Flow",
-            "Top Hotel/City",
-            "Dendrogram",
-            "Patra Jasa",
-            "Laporan",
-        ])
-
-        # ======================================
-        # TAB 2: DASHBOARD
-        # ======================================
-        with tab2:
-
-        # ======================================
-        # FILTER OVERVIEW — NAMA PERUSAHAAN
-        # ======================================
-            df_overview = df_all.copy()
-
-            # ======================================
-            # FILTER DOMESTIK & INTERNASIONAL
-            # ======================================
-            if "Country" in df_overview.columns:
-                _country_upper = df_overview["Country"].astype(str).str.strip().str.upper()
-                _has_domestic   = (_country_upper == "INDONESIA").any()
-                _has_intl       = (_country_upper != "INDONESIA").any()
-
-                st.markdown("""
-                <style>
-                div[data-testid="stRadio"] > label {
-                    font-size: 0.85em !important;
-                    color: #555 !important;
-                    font-weight: 500 !important;
-                }
-                div[data-testid="stRadio"] [data-baseweb="radio"] label {
-                    font-size: 0.875em !important;
-                }
-                </style>
-                """, unsafe_allow_html=True)
-
-                _market_options = ["Semua", "Domestik 🇮🇩", "Internasional 🌍"]
-                _market_filter = st.radio(
-                    "🌐 Market",
-                    options=_market_options,
-                    index=0,
-                    horizontal=True,
-                    key="db_market_filter"
-                )
-
-                if _market_filter == "Domestik 🇮🇩":
-                    df_overview = df_overview[
-                        df_overview["Country"].astype(str).str.strip().str.upper() == "INDONESIA"
-                    ]
-                    _market_badge = (
-                        "<span style='background:#e6f4fb;color:#0D7FCC;border:1px solid #b8d9f0;"
-                        "border-radius:20px;padding:2px 12px;font-size:0.8em;font-weight:600;"
-                        "margin-left:8px;'>🇮🇩 Domestik</span>"
-                    )
-                elif _market_filter == "Internasional 🌍":
-                    df_overview = df_overview[
-                        df_overview["Country"].astype(str).str.strip().str.upper() != "INDONESIA"
-                    ]
-                    _market_badge = (
-                        "<span style='background:#fff4e6;color:#b05a00;border:1px solid #f5c891;"
-                        "border-radius:20px;padding:2px 12px;font-size:0.8em;font-weight:600;"
-                        "margin-left:8px;'>🌍 Internasional</span>"
-                    )
-                else:
-                    _market_badge = (
-                        "<span style='background:#f0f5e9;color:#3a6b00;border:1px solid #bdd99a;"
-                        "border-radius:20px;padding:2px 12px;font-size:0.8em;font-weight:600;"
-                        "margin-left:8px;'>🌐 Semua Market</span>"
-                    )
-
-                # Info badge jumlah data setelah filter market
-                _n_market = len(df_overview)
-                st.markdown(
-                    f"<div style='margin:4px 0 14px 0;font-size:0.82em;color:#666;'>"
-                    f"Menampilkan <b>{_n_market:,}</b> records{_market_badge}</div>",
-                    unsafe_allow_html=True
-                )
-
-
-            st.markdown("<div class='section-title'>Overview</div>", unsafe_allow_html=True)
-            
-            # Primary Metrics
-            col1, col2, col3, col4, col5 = st.columns(5)
-
-            with col1:
-                total_rows = len(df_overview)
-                st.markdown(f"""
-                    <div class='metric-box'>
-                        <div class='metric-label'>Bookings</div>
-                        <div class='metric-value'>{total_rows:,}</div>
-                    </div>
-                """, unsafe_allow_html=True)
-
-            with col2:
-                if "Travel Request Number" in df_overview.columns:
-                    unique_tr = df_overview["Travel Request Number"].nunique()
-                    st.markdown(f"""
-                        <div class='metric-box'>
-                            <div class='metric-label'>Trvl Requests</div>
-                            <div class='metric-value'>{unique_tr:,}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-            with col3:
-                if "Invoice Amount" in df_overview.columns and "Number of Rooms Night" in df_overview.columns:
-                    _rn_sum = pd.to_numeric(df_overview["Number of Rooms Night"], errors="coerce").sum()
-                    _avg_rate = df_overview["Invoice Amount"].sum() / _rn_sum if _rn_sum else 0
-                    st.markdown(f"""
-                        <div class='metric-box'>
-                            <div class='metric-label'>Avg Rate / Night</div>
-                            <div class='metric-value'>{_avg_rate/1000:,.0f}k</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-            with col4:
-                if "Hotel Name" in df_overview.columns:
-                    unique_hotels = df_overview["Hotel Name"].nunique()
-                    st.markdown(f"""
-                        <div class='metric-box'>
-                            <div class='metric-label'>Hotels</div>
-                            <div class='metric-value'>{unique_hotels:,}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-            with col5:
-                if "Number of Rooms Night" in df_overview.columns:
-                    total_nights = df_overview["Number of Rooms Night"].sum()
-                    st.markdown(f"""
-                        <div class='metric-box'>
-                            <div class='metric-label'>Room Nights</div>
-                            <div class='metric-value'>{total_nights:,.0f}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-            # Secondary Metrics
-            st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                if "Meal Plan" in df_overview.columns and len(df_overview):
-                    _bf = df_overview["Meal Plan"].astype(str).str.lower().str.contains("breakfast").mean() * 100
-                    st.metric("Breakfast Included", f"{_bf:.0f}%")
-
-            with col2:
-                if "Currency" in df_overview.columns:
-                    _non_idr = (df_overview["Currency"].astype(str).str.upper().str.strip() != "IDR").sum()
-                    st.metric("Booking non-IDR", f"{_non_idr:,}")
-
-            with col3:
-                if "City" in df_overview.columns:
-                    unique_cities = df_overview["City"].nunique()
-                    st.metric("Cities", f"{unique_cities:,}")
-
-            with col4:
-                if "Country" in df_overview.columns:
-                    unique_countries = df_overview["Country"].nunique()
-                    st.metric("Countries", f"{unique_countries:,}")
-
-            # Travel Request Analysis
-            if "Travel Request Number" in df_overview.columns:
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-                st.markdown("<div class='section-title'>Travel Request Analysis</div>", unsafe_allow_html=True)
-                
-                col1, col2, col3, col4, col5 = st.columns(5)
-                
-                with col1:
-                    tr_bookings = df_overview.groupby("Travel Request Number").size()
-                    avg_booking = tr_bookings.mean()
-                    max_booking = tr_bookings.max()
-                    
-                    st.markdown(f"""
-                        <div class='stats-card'>
-                            <div class='stats-label'>Avg Bookings</div>
-                            <div class='stats-number'>{avg_booking:.1f}</div>
-                            <div class='stats-detail'>Max: {max_booking}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-                
-                with col2:
-                    if "Number of Rooms Night" in df_overview.columns:
-                        tr_nights = df_overview.groupby("Travel Request Number")["Number of Rooms Night"].sum()
-                        avg_nights = tr_nights.mean()
-                        max_nights = tr_nights.max()
-                        
-                        st.markdown(f"""
-                            <div class='stats-card'>
-                                <div class='stats-label'>Avg Nights</div>
-                                <div class='stats-number'>{avg_nights:.1f}</div>
-                                <div class='stats-detail'>Max: {max_nights:.0f}</div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                
-                with col3:
-                    tr_with_multiple = (tr_bookings > 1).sum()
-                    tr_single = (tr_bookings == 1).sum()
-                    multi_percentage = (tr_with_multiple / len(tr_bookings) * 100)
-                    
-                    st.markdown(f"""
-                        <div class='stats-card'>
-                            <div class='stats-label'>Multi-Booking</div>
-                            <div class='stats-number'>{multi_percentage:.0f}%</div>
-                            <div class='stats-detail'>{tr_with_multiple:,} / {tr_single:,}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-                
-                with col4:
-                    if "Invoice Amount" in df_overview.columns and "Number of Rooms Night" in df_overview.columns:
-                        valid_rows = (df_overview["Invoice Amount"].notna()) & \
-                                    (df_overview["Number of Rooms Night"].notna()) & \
-                                    (df_overview["Number of Rooms Night"] > 0)
-                        df_valid = df_overview[valid_rows].copy()
-                        df_valid["Price Per Night"] = df_valid["Invoice Amount"] / df_valid["Number of Rooms Night"]
-                        
-                        avg_price = df_valid["Price Per Night"].mean()
-                        
-                        st.markdown(f"""
-                            <div class='stats-card'>
-                                <div class='stats-label'>Avg Rate</div>
-                                <div class='stats-number'>{avg_price/1000:.0f}k</div>
-                                <div class='stats-detail'>Per Night</div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                
-                with col5:
-                    date_cols = ["Issue Time", "Check in Date"]
-                    for col in date_cols:
-                        if col in df_overview.columns:
-                            df_overview[col] = pd.to_datetime(df_overview[col], errors="coerce", dayfirst=True)
-
-                    if "Issue Time" in df_all.columns and "Check in Date" in df_all.columns:
-                        df_lead = df_overview[
-                            df_overview["Issue Time"].notna() &
-                            df_overview["Check in Date"].notna()
-                        ].copy()
-
-                        df_lead["Lead Time (Days)"] = (
-                            df_lead["Check in Date"].dt.normalize() -
-                            df_lead["Issue Time"].dt.normalize()
-                        ).dt.days
-
-                        lead_valid = df_lead[df_lead["Lead Time (Days)"] >= 0]
-                        avg_lead = lead_valid["Lead Time (Days)"].mean()
-                        last_minute_pct = (
-                            (lead_valid["Lead Time (Days)"] <= 2).sum() / len(lead_valid) * 100
-                            if len(lead_valid) > 0 else 0
-                        )
-
-                        st.markdown(f"""
-                            <div class='stats-card'>
-                                <div class='stats-label'>Lead Time</div>
-                                <div class='stats-number'>{avg_lead:.0f}</div>
-                                <div class='stats-detail'>{last_minute_pct:.0f}% last-minute</div>
-                            </div>
-                        """, unsafe_allow_html=True)
-
-            if "Issue Time" in df_overview.columns and "Travel Request Number" in df_overview.columns:
-                df_heat = df_overview[
-                    df_overview["Issue Time"].notna() &
-                    df_overview["Travel Request Number"].notna()
-                ].copy()
-
-                df_heat["Issue Hour"] = df_heat["Issue Time"].dt.hour
-                df_heat["Issue Day"] = df_heat["Issue Time"].dt.day_name()
-
-                day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                pivot_core = (
-                    df_heat
-                    .groupby(["Issue Day", "Issue Hour"])["Travel Request Number"]
-                    .nunique()
-                    .reset_index(name="TR_Count")
-                    .pivot(index="Issue Day", columns="Issue Hour", values="TR_Count")
-                    .reindex(day_order)
-                    .fillna(0)
-                )
-
-                total_day = pivot_core.sum(axis=1)
-                total_hour = pivot_core.sum(axis=0)
-                grand_total = total_day.sum()
-
-                fig = px.imshow(
-                    pivot_core,
-                    text_auto=True,
-                    aspect="auto",
-                    color_continuous_scale=["#ffffff", "#ddd", "#1BA0E2"]
-                )
-
-                annotations = []
-
-                for i, day in enumerate(pivot_core.index):
-                    annotations.append(dict(
-                        x=len(pivot_core.columns),
-                        y=i,
-                        text=f"<b>{int(total_day.loc[day])}</b>",
-                        showarrow=False,
-                        font=dict(color="black", size=12)
-                    ))
-
-                for j, hour in enumerate(pivot_core.columns):
-                    annotations.append(dict(
-                        x=j,
-                        y=len(pivot_core.index),
-                        text=f"<b>{int(total_hour.loc[hour])}</b>",
-                        showarrow=False,
-                        font=dict(color="black", size=12)
-                    ))
-
-                annotations.append(dict(
-                    x=len(pivot_core.columns),
-                    y=len(pivot_core.index),
-                    text=f"<b>{int(grand_total)}</b>",
-                    showarrow=False,
-                    font=dict(color="black", size=13)
-                ))
-
-                fig.update_layout(
-                    title="Travel Request Heatmap (Issue Time)",
-                    xaxis_title="Issue Hour",
-                    yaxis_title="Issue Day",
-                    annotations=annotations,
-                    height=420,
-                    plot_bgcolor="white",
-                    paper_bgcolor="white",
-                    margin=dict(l=40, r=60, t=60, b=60),
-                    font=dict(size=11)
-                )
-
-                fig.update_xaxes(range=[-0.5, len(pivot_core.columns) + 0.5])
-                fig.update_yaxes(range=[len(pivot_core.index) + 0.5, -0.5])
-
-                st.plotly_chart(fig, use_container_width=True)
-
-                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                _city_c = "City Destination" if "City Destination" in df_overview.columns else "City"
-                if _city_c in df_overview.columns:
-                    top_cities = df_overview[_city_c].value_counts().head(10)
-
-                    fig_cities = px.bar(
-                        x=top_cities.values,
-                        y=top_cities.index,
-                        orientation="h",
-                        text=top_cities.values
-                    )
-
-                    fig_cities.update_traces(
-                        marker_color="#1BA0E2",
-                        texttemplate="%{text:,}",
-                        textposition="outside",
-                        textfont=dict(size=11)
-                    )
-
-                    fig_cities.update_layout(
-                        height=380,
-                        title="Top 10 Cities",
-                        xaxis_title="",
-                        yaxis_title="",
-                        yaxis=dict(autorange="reversed"),
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=10, r=40, t=50, b=10),
-                        showlegend=False
-                    )
-
-                    st.plotly_chart(fig_cities, use_container_width=True)
-
-            with col2:
-                _ctry_c = "Country Destination" if "Country Destination" in df_overview.columns else "Country"
-                if _ctry_c in df_overview.columns:
-                    top_countries = df_overview[_ctry_c].value_counts().head(10)
-
-                    fig_countries = px.pie(
-                        values=top_countries.values,
-                        names=top_countries.index,
-                        hole=0.4,
-                        color_discrete_sequence=["#1BA0E2", "#47b5e8", "#75caf0", "#a3dcf6", "#d1eefb"]
-                    )
-
-                    fig_countries.update_layout(
-                        height=380,
-                        title="Top 10 Countries",
-                        plot_bgcolor="white",
-                        paper_bgcolor="white"
-                    )
-
-                    st.plotly_chart(fig_countries, use_container_width=True)
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.markdown("<div style='height:25px;'></div>", unsafe_allow_html=True)
-
-                if "Issue Time" in df_overview.columns and "Travel Request Number" in df_overview.columns:
-
-                    trend_df = prepare_monthly_trend(
-                        df_overview,
-                        date_col="Issue Time",
-                        value_col="Travel Request Number",
-                        agg="nunique"
-                    )
-
-                    fig_trend = px.line(
-                        trend_df,
-                        x="YearMonth",
-                        y="Value",
-                        markers=True,
-                        labels={"Value": "Unique Travel Requests", "YearMonth": "Month"}
-                    )
-
-                    fig_trend.update_traces(
-                        line=dict(color="#1BA0E2", width=3), 
-                        marker=dict(size=8, color="#1BA0E2")
-                    )
-                    
-                    fig_trend.update_layout(
-                        height=380,
-                        title="Monthly Travel Request Trend",
-                        xaxis_title="",
-                        yaxis_title="Travel Requests",
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=40, r=20, t=50, b=40),
-                        hovermode="x unified"
-                    )
-
-                    st.plotly_chart(fig_trend, use_container_width=True)
-                    
-                    output_tr_trend = BytesIO()
-                    trend_df.to_excel(
-                        output_tr_trend,
-                        index=False,
-                        sheet_name="Monthly Travel Request Trend"
-                    )
-                    output_tr_trend.seek(0)
-
-                    if can_download():
-                        st.download_button(
-                            label="⬇️ Download Data",
-                            data=output_tr_trend,
-                            file_name="monthly_travel_request_trend.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_monthly_tr_trend")
-                    else:
-                        st.markdown("""
-                        <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
-                        border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;
-                        display:flex;align-items:center;gap:8px;'>
-                            <span>🔒</span><span>Download tidak tersedia untuk akun ini</span>
-                        </div>""", unsafe_allow_html=True)
-
-            with col2:
-                if "Country" in df_overview.columns:
-                    df_all["Country"] = df_overview["Country"].astype(str).str.strip().str.upper()
-
-                    indo = df_overview[df_overview["Country"] == "INDONESIA"].shape[0]
-                    intl = df_overview[df_overview["Country"] != "INDONESIA"].shape[0]
-
-                    pie_df = pd.DataFrame({
-                        "Market": ["Domestic", "International"],
-                        "Bookings": [indo, intl]
-                    })
-
-                    fig_pie = px.pie(
-                        pie_df,
-                        names="Market",
-                        values="Bookings",
-                        hole=0.5,
-                        color_discrete_sequence=["#1BA0E2", "#cccccc"]
-                    )
-
-                    fig_pie.update_traces(
-                        textinfo="percent+label", 
-                        textfont=dict(size=12),
-                        marker=dict(line=dict(color='white', width=2))
-                    )
-
-                    total = pie_df["Bookings"].sum()
-
-                    fig_pie.update_layout(
-                        height=380,
-                        title="Market Distribution (Dom vs Int)",
-                        showlegend=True,
-                        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5),
-                        margin=dict(l=10, r=30, t=50, b=10),
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        annotations=[dict(
-                            text=f"<b>{total:,}</b><br>Total", 
-                            x=0.5, y=0.5, font=dict(size=16), showarrow=False
-                        )]
-                    )
-
-                    st.plotly_chart(fig_pie, use_container_width=True)
-
-                st.markdown("<div style='height:25px;'></div>", unsafe_allow_html=True)
-
-                if "Issue Time" in df_overview.columns and "Number of Rooms Night" in df_overview.columns:
-
-                    trend_df = prepare_monthly_trend(
-                        df_overview,
-                        date_col="Issue Time",
-                        value_col="Number of Rooms Night",
-                        agg="sum"
-                    )
-
-                    fig_trend = px.line(
-                        trend_df,
-                        x="YearMonth",
-                        y="Value",
-                        markers=True,
-                        labels={"Value": "Total Room Nights", "YearMonth": "Month"}
-                    )
-
-                    fig_trend.update_traces(
-                        line=dict(color="#1BA0E2", width=3), 
-                        marker=dict(size=8, color="#1BA0E2")
-                    )
-                    
-                    fig_trend.update_layout(
-                        height=380,
-                        title="Monthly Room Nights Trend",
-                        xaxis_title="",
-                        yaxis_title="Room Nights",
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        margin=dict(l=40, r=20, t=50, b=40),
-                        hovermode="x unified"
-                    )
-
-                    st.plotly_chart(fig_trend, use_container_width=True)
-
-                    output_rn_trend = BytesIO()
-                    trend_df.to_excel(
-                        output_rn_trend,
-                        index=False,
-                        sheet_name="Monthly Room Nights Trend"
-                    )
-                    output_rn_trend.seek(0)
-
-                    if can_download():
-                        st.download_button(
-                            label="⬇️ Download Data",
-                            data=output_rn_trend,
-                            file_name="monthly_room_nights_trend.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_monthly_rn_trend")
-                    else:
-                        st.markdown("""
-                        <div style='background:#f9f9f9;border:1px solid #b8d9f0;border-left:3px solid #1BA0E2;
-                        border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;
-                        display:flex;align-items:center;gap:8px;'>
-                            <span>🔒</span><span>Download tidak tersedia untuk akun ini</span>
-                        </div>""", unsafe_allow_html=True)
-                else:
-                    st.info("Column 'Issue Time' or 'Number of Rooms Night' not available.")
-
-            for city_col in ["City", "City Destination"]:
-                if city_col in df_overview.columns:
-                    df_overview[city_col] = (
-                        df_overview[city_col]
-                        .astype(str).str.strip().str.lower().str.title()
-                    )
-        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-        # ======================================
-        # TAB 6: PRICE INTELLIGENCE — Global Filters
-        # ======================================
-        with tab6:
-            def _render_tab6():
-
-                st.markdown("""
-                <style>
-                :root {
-                    --pi-blue:      #1BA0E2;
-                    --pi-blue-mid:  #1494C6;
-                    --pi-blue-dark: #0D7FCC;
-                    --pi-navy:      #062440;
-                    --pi-lime:      #e2f871;
-                    --pi-bg:        #f0f8ff;
-                    --pi-border:    #cce4f4;
-                    --pi-surface:   #ffffff;
-                    --pi-muted:     #6a8fa0;
-                }
-
-                .pi-header {
-                    background: linear-gradient(135deg, #062440 0%, #0D7FCC 50%, #1BA0E2 100%);
-                    border-radius: 14px; padding: 28px 36px; margin-bottom: 24px;
-                    position: relative; overflow: hidden;
-                    box-shadow: 0 8px 32px rgba(13,127,204,0.26);
-                }
-                .pi-header::before {
-                    content: ''; position: absolute; top: -70px; right: -50px;
-                    width: 240px; height: 240px; border-radius: 50%;
-                    background: rgba(255,255,255,0.05); pointer-events: none;
-                }
-                .pi-header::after {
-                    content: ''; position: absolute; bottom: -50px; left: 25%;
-                    width: 200px; height: 200px; border-radius: 50%;
-                    background: rgba(226,248,113,0.07); pointer-events: none;
-                }
-                .pi-header-inner {
-                    display: flex; align-items: center; gap: 16px;
-                    position: relative; z-index: 1;
-                }
-                .pi-header-icon {
-                    width: 52px; height: 52px; border-radius: 12px;
-                    background: rgba(255,255,255,0.14);
-                    border: 1px solid rgba(255,255,255,0.22);
-                    display: flex; align-items: center; justify-content: center;
-                    font-size: 1.6em; flex-shrink: 0;
-                }
-                .pi-header-title { color: #fff; font-size: 1.45em; font-weight: 700; margin: 0; }
-                .pi-header-sub   { color: rgba(255,255,255,0.58); font-size: 0.82em; margin-top: 4px; }
-                .pi-header-badge {
-                    margin-left: auto;
-                    display: inline-flex; align-items: center; gap: 7px;
-                    background: rgba(255,255,255,0.12);
-                    border: 1px solid rgba(255,255,255,0.22);
-                    border-radius: 100px; padding: 6px 16px;
-                    font-size: 0.72em; font-weight: 600;
-                    color: rgba(255,255,255,0.85); letter-spacing: 0.06em;
-                    white-space: nowrap;
-                }
-                .pi-badge-dot {
-                    width: 6px; height: 6px; border-radius: 50%;
-                    background: var(--pi-lime); box-shadow: 0 0 6px var(--pi-lime);
-                    animation: pi-blink 2s ease infinite;
-                }
-                @keyframes pi-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-                /* ── Global Filter Bar ── */
-                .pi-global-filter {
-                    background: var(--pi-surface);
-                    border: 1px solid var(--pi-border);
-                    border-left: 4px solid var(--pi-blue);
-                    border-radius: 10px; padding: 16px 22px 14px;
-                    margin-bottom: 24px;
-                    box-shadow: 0 2px 10px rgba(13,127,204,0.07);
-                }
-                .pi-global-filter-title {
-                    font-size: 0.70em; font-weight: 700; color: var(--pi-blue);
-                    text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 10px;
-                    display: flex; align-items: center; gap: 8px;
-                }
-                .pi-filter-active-badge {
-                    display: inline-flex; align-items: center; gap: 5px;
-                    background: var(--pi-blue); color: white;
-                    border-radius: 100px; padding: 2px 10px;
-                    font-size: 0.85em; font-weight: 600; letter-spacing: 0.04em;
-                }
-                .pi-filter-dot {
-                    width: 5px; height: 5px; border-radius: 50%;
-                    background: var(--pi-lime); display: inline-block;
-                }
-
-                /* ── Section Divider ── */
-                .pi-section-divider {
-                    display: flex; align-items: center; gap: 14px;
-                    margin: 28px 0 20px;
-                    font-size: 0.70em; font-weight: 700;
-                    color: var(--pi-muted); letter-spacing: 0.14em;
-                    text-transform: uppercase;
-                }
-                .pi-section-divider::before,
-                .pi-section-divider::after {
-                    content: ''; flex: 1; height: 1px; background: var(--pi-border);
-                }
-
-                /* ── KPI Cards ── */
-                .pi-kpi-grid {
-                    display: grid; grid-template-columns: repeat(4,1fr);
-                    gap: 14px; margin-bottom: 20px;
-                }
-                .pi-kpi {
-                    background: var(--pi-surface); border-radius: 10px;
-                    padding: 18px 16px 14px;
-                    border-top: 3px solid var(--pi-blue);
-                    box-shadow: 0 2px 10px rgba(13,127,204,0.08);
-                    transition: transform .18s, box-shadow .18s;
-                }
-                .pi-kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(13,127,204,0.14); }
-                .pi-kpi-label {
-                    font-size: 0.68em; font-weight: 600; color: var(--pi-muted);
-                    text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 8px;
-                }
-                .pi-kpi-value { font-size: 1.30em; font-weight: 700; color: var(--pi-navy); line-height: 1.2; }
-                .pi-kpi-sub   { font-size: 0.72em; color: var(--pi-muted); margin-top: 4px; }
-
-                /* ── Hotel KPI Cards ── */
-                .pi-hotel-kpi-grid {
-                    display: grid; grid-template-columns: repeat(5,1fr);
-                    gap: 12px; margin-bottom: 22px;
-                }
-                .pi-hotel-kpi {
-                    background: var(--pi-surface); border-radius: 10px;
-                    padding: 16px 14px 12px;
-                    border-top: 3px solid var(--pi-color, #1BA0E2);
-                    box-shadow: 0 2px 8px rgba(13,127,204,0.07);
-                    text-align: center;
-                    transition: transform .18s, box-shadow .18s;
-                }
-                .pi-hotel-kpi:hover { transform: translateY(-2px); box-shadow: 0 5px 16px rgba(13,127,204,0.13); }
-                .pi-hotel-kpi-icon  { font-size: 1.35em; margin-bottom: 6px; display: block; }
-                .pi-hotel-kpi-label {
-                    font-size: 0.65em; font-weight: 600; color: var(--pi-muted);
-                    text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 6px;
-                }
-                .pi-hotel-kpi-value {
-                    font-size: 1.05em; font-weight: 700;
-                    color: var(--pi-color, #1BA0E2); line-height: 1.25;
-                }
-
-                /* ── Saving Sim Cards ── */
-                .pi-sim-grid {
-                    display: grid; grid-template-columns: repeat(3,1fr);
-                    gap: 14px; margin: 16px 0;
-                }
-                .pi-sim-card {
-                    border-radius: 10px; padding: 20px 18px;
-                    border: 1px solid var(--pi-border);
-                }
-                .pi-sim-card-label {
-                    font-size: 0.68em; font-weight: 700;
-                    text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 10px;
-                }
-                .pi-sim-card-value { font-size: 1.30em; font-weight: 700; line-height: 1.2; }
-                .pi-sim-card-sub   { font-size: 0.74em; margin-top: 5px; }
-
-                .pi-sim-current { background: var(--pi-bg); border-color: var(--pi-border); }
-                .pi-sim-current .pi-sim-card-label { color: var(--pi-blue); }
-                .pi-sim-current .pi-sim-card-value { color: var(--pi-navy); }
-                .pi-sim-current .pi-sim-card-sub   { color: var(--pi-muted); }
-
-                .pi-sim-neg { background: #f0fbf4; border-color: #b8e8cc; }
-                .pi-sim-neg .pi-sim-card-label { color: #2e8a57; }
-                .pi-sim-neg .pi-sim-card-value { color: #1a5c38; }
-                .pi-sim-neg .pi-sim-card-sub   { color: #5aaa7e; }
-
-                .pi-sim-saving {
-                    background: linear-gradient(135deg, #062440 0%, #0D7FCC 55%, #1BA0E2 100%);
-                    border-color: transparent; position: relative; overflow: hidden;
-                }
-                .pi-sim-saving::after {
-                    content: ''; position: absolute; top: -30px; right: -30px;
-                    width: 120px; height: 120px; border-radius: 50%;
-                    background: rgba(226,248,113,0.12);
-                }
-                .pi-sim-saving .pi-sim-card-label { color: rgba(255,255,255,0.65); position: relative; z-index: 1; }
-                .pi-sim-saving .pi-sim-card-value { color: #fff; font-size: 1.45em; position: relative; z-index: 1; }
-                .pi-sim-saving .pi-sim-card-sub   { color: rgba(255,255,255,0.60); position: relative; z-index: 1; }
-                .pi-sim-saving-icon { display: block; font-size: 1.4em; margin-bottom: 6px; position: relative; z-index: 1; }
-
-                /* ── Insight Box ── */
-                .pi-insight {
-                    background: var(--pi-bg); border: 1px solid var(--pi-border);
-                    border-left: 4px solid var(--pi-blue); border-radius: 8px;
-                    padding: 16px 20px; font-size: 0.88em;
-                    color: #2a3a4a; line-height: 1.7;
-                }
-                .pi-insight strong { color: var(--pi-navy); }
-                .pi-insight em     { color: var(--pi-blue); font-style: normal; font-weight: 600; }
-
-                .pi-locked {
-                    background: var(--pi-bg); border: 1px solid var(--pi-border);
-                    border-left: 3px solid var(--pi-blue); border-radius: 6px;
-                    padding: 10px 16px; font-size: 0.82em; color: var(--pi-blue);
-                    display: flex; align-items: center; gap: 8px; margin-top: 8px;
-                }
-
-                /* ── Empty state ── */
-                .pi-empty {
-                    background: var(--pi-bg); border: 1px solid var(--pi-border);
-                    border-left: 4px solid var(--pi-blue); border-radius: 8px;
-                    padding: 20px 24px; font-size: 0.88em; color: var(--pi-navy);
-                    text-align: center;
-                }
-
-                /* ── Radio pill override ── */
-                div[data-testid="stRadio"].st-key-pi_country_radio > div[role="radiogroup"] {
-                    display:inline-flex!important; background:#1BA0E2;
-                    border-radius:50px; padding:3px; gap:0;
-                }
-                div[data-testid="stRadio"].st-key-pi_country_radio > div[role="radiogroup"] > label {
-                    cursor:pointer; padding:5px 18px!important; border-radius:50px!important;
-                    font-size:0.78em!important; font-weight:500!important;
-                    color:rgba(255,255,255,0.80)!important; margin:0!important;
-                }
-                div[data-testid="stRadio"].st-key-pi_country_radio > div[role="radiogroup"] > label > div:first-child { display:none!important; }
-                div[data-testid="stRadio"].st-key-pi_country_radio > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background:white!important; }
-                div[data-testid="stRadio"].st-key-pi_country_radio > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color:#1BA0E2!important; font-weight:700!important; }
-                div[data-testid="stRadio"].st-key-pi_country_radio > label { display:none!important; }
-                </style>
-
-                <!-- Header -->
-                <div class="pi-header">
-                    <div class="pi-header-inner">
-                        <div class="pi-header-icon">💹</div>
-                        <div>
-                            <div class="pi-header-title">Price Intelligence</div>
-                            <div class="pi-header-sub">Pareto 80/20 Spend Concentration · Hotel Rate Benchmarking · Negotiation Simulator</div>
-                        </div>
-                        <div class="pi-header-badge">
-                            <span class="pi-badge-dot"></span>LIVE ANALYSIS
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # ══════════════════════════════════════════════════════
-                #  GLOBAL FILTERS — berlaku untuk SEMUA section di tab6
-                # ══════════════════════════════════════════════════════
-                st.markdown("""
-                <div class="pi-global-filter">
-                    <div class="pi-global-filter-title">
-                        🔍 Global Filters
-                        <span style="color:var(--pi-muted);font-weight:400;letter-spacing:0;text-transform:none;font-size:1.1em;">
-                            — berlaku untuk seluruh analisis di tab ini
-                        </span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                gf_col1, gf_col2, gf_col3 = st.columns([1.2, 2, 2])
-                gd_col1, gd_col2, gd_col3 = st.columns([1.2, 1.2, 2.8])
-
-                # ── Filter 1: Wilayah ────────────────────────────────────────
-                with gf_col1:
-                    st.markdown("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;'>Wilayah</div>", unsafe_allow_html=True)
-                    if "Country" in df_all.columns:
-                        pi_country_filter = st.radio(
-                            label="pi_wilayah",
-                            options=["Indonesia", "Internasional"],
-                            index=0, horizontal=True,
-                            label_visibility="collapsed",
-                            key="pi_country_radio"
-                        )
-                    else:
-                        pi_country_filter = "Semua"
-                        st.info("Kolom Country tidak tersedia")
-
-                # ── Apply wilayah filter ke base dataframe ───────────────────
-                df_pi_base = df_all.copy()
-
-                if "Country" in df_pi_base.columns and pi_country_filter in ["Indonesia", "Internasional"]:
-                    df_pi_base["_cu"] = df_pi_base["Country"].astype(str).str.strip().str.upper()
-                    domestic_alias    = ["INDONESIA", "ID", "IDN"]
-                    if pi_country_filter == "Indonesia":
-                        df_pi_base    = df_pi_base[df_pi_base["_cu"].isin(domestic_alias)]
-                        filter_label  = "🇮🇩 Indonesia"
-                    else:
-                        df_pi_base    = df_pi_base[~df_pi_base["_cu"].isin(domestic_alias)]
-                        filter_label  = "🌐 Internasional"
-                    df_pi_base.drop(columns=["_cu"], inplace=True)
-                else:
-                    filter_label = "🌏 Semua Wilayah"
-
-                # ── Filter tanggal From / To (khusus tab ini) ────────────────
-                df_pi_base, pi_period_label = tab_date_range_filter(
-                    df_pi_base, _date_col_for_filter, "pi", gd_col1, gd_col2)
-
-                # ── Filter 2: Nama Hotel (multiselect) ───────────────────────
-                with gf_col2:
-                    st.markdown("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;'>Filter Hotel (opsional)</div>", unsafe_allow_html=True)
-                    if "Hotel Name" in df_pi_base.columns:
-                        hotel_options = sorted(df_pi_base["Hotel Name"].dropna().unique().tolist())
-                        pi_hotel_filter = st.multiselect(
-                            label="pi_hotel_ms",
-                            options=hotel_options,
-                            default=[],
-                            placeholder="Semua hotel (pilih untuk filter spesifik)…",
-                            label_visibility="collapsed",
-                            key="pi_hotel_multiselect"
-                        )
-                    else:
-                        pi_hotel_filter = []
-
-                # ── Filter 3: Dimensi Pareto ─────────────────────────────────
-                with gf_col3:
-                    st.markdown("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;'>Dimensi Pareto</div>", unsafe_allow_html=True)
-                    dimension_options = [c for c in ["Hotel Name", "City", "Supplier Name"] if c in df_pi_base.columns]
-                    if dimension_options:
-                        pi_dimension = st.selectbox(
-                            label="pi_dim",
-                            options=dimension_options,
-                            label_visibility="collapsed",
-                            key="pi_dimension_select"
-                        )
-                    else:
-                        pi_dimension = None
-
-                # ── Apply hotel filter ───────────────────────────────────────
-                if pi_hotel_filter:
-                    df_pi_base = df_pi_base[df_pi_base["Hotel Name"].isin(pi_hotel_filter)]
-
-                # ── Toggle penggabungan properti (hanya untuk dimensi Hotel Name) ──
-                if pi_dimension == "Hotel Name":
-                    _toggle = getattr(st, "toggle", st.checkbox)
-                    pi_merge_property = _toggle(
-                        "🔗 Gabungkan properti yang sama (nama hotel mirip di kota yang sama)",
-                        value=True, key="pi_merge_toggle",
-                        help="KPI, grafik Pareto, dan tabel Detail Data akan memakai data properti gabungan."
-                    )
-                else:
-                    pi_merge_property = False
-
-                # ── Filter summary badge ─────────────────────────────────────
-                total_records  = len(df_all)
-                filtered_records = len(df_pi_base)
-                filter_pct     = (filtered_records / total_records * 100) if total_records > 0 else 0
-                hotel_label    = f"{len(pi_hotel_filter)} hotel dipilih" if pi_hotel_filter else "Semua hotel"
-
-                st.markdown(f"""
-                <div style='background:#e6f4fb;border:1px solid #cce4f4;border-left:4px solid #1BA0E2;
-                            border-radius:8px;padding:10px 18px;margin:4px 0 22px 0;
-                            font-size:0.82em;color:#0D7FCC;display:flex;gap:20px;align-items:center;flex-wrap:wrap;'>
-                    <span>🔎 <b>Filter aktif</b></span>
-                    <span>Wilayah: <b>{filter_label}</b></span>
-                    <span>Periode: <b>{pi_period_label}</b></span>
-                    <span>Hotel: <b>{hotel_label}</b></span>
-                    <span>Menampilkan <b>{filtered_records:,}</b> dari <b>{total_records:,}</b> records
-                        <span style='background:#1BA0E2;color:white;border-radius:20px;
-                                     padding:1px 10px;font-size:0.88em;margin-left:4px;'>{filter_pct:.1f}%</span>
-                    </span>
-                </div>
-                """, unsafe_allow_html=True)
-
-                if df_pi_base.empty:
-                    st.markdown('<div class="pi-empty">⚠️ Tidak ada data yang sesuai dengan filter yang dipilih.</div>',
-                                unsafe_allow_html=True)
-                    return  # keluar dari tab ini saja, tidak menghentikan tab lain
-
-                # ══════════════════════════════════════════════════════
-                #  SECTION 1 — PARETO SPEND CONCENTRATION
-                # ══════════════════════════════════════════════════════
-                st.markdown('<div class="pi-section-divider">Spend Concentration — Pareto 80/20</div>',
-                            unsafe_allow_html=True)
-
-                if "Invoice Amount" not in df_pi_base.columns or pi_dimension is None:
-                    st.markdown('<div class="pi-insight">⚠️ Kolom <strong>Invoice Amount</strong> atau dimensi tidak tersedia.</div>',
-                                unsafe_allow_html=True)
-                else:
-                    df_sc = df_pi_base.dropna(subset=["Invoice Amount"]).copy()
-
-                    if df_sc.empty:
-                        st.markdown('<div class="pi-insight">⚠️ Tidak ada data setelah filter.</div>',
-                                    unsafe_allow_html=True)
-                    else:
-                        # ── Kunci pengelompokan: properti gabungan atau nama asli ──
-                        is_hotel_dim = (pi_dimension == "Hotel Name")
-                        if is_hotel_dim and pi_merge_property:
-                            df_sc = apply_property_merge(df_sc, property_merge_map,
-                                                         hotel_col="Hotel Name", city_col="City")
-                            df_sc["_pareto_key"] = df_sc["Hotel / Properti"]
-                        else:
-                            df_sc["_pareto_key"] = df_sc[pi_dimension].astype(str).str.strip()
-                        # buang baris tanpa nama (setara perilaku groupby lama yang mengabaikan NaN)
-                        df_sc = df_sc[df_sc["_pareto_key"].notna()
-                                      & df_sc["_pareto_key"].astype(str).str.strip().ne("")
-                                      & df_sc["_pareto_key"].astype(str).str.lower().ne("nan")]
-
-                        has_rn  = "Number of Rooms Night" in df_sc.columns
-                        has_trn = "Travel Request Number" in df_sc.columns
-                        agg_map = {"Invoice Amount": ("Invoice Amount", "sum")}
-                        if has_rn:
-                            agg_map["Room Nights"] = ("Number of Rooms Night", "sum")
-                        # Basis rata-rata: booking unik (Travel Request Number),
-                        # fallback ke jumlah baris jika kolom tidak tersedia
-                        agg_map["Bookings"] = (("Travel Request Number", "nunique") if has_trn
-                                               else ("Invoice Amount", "size"))
-
-                        pareto_df = (df_sc.groupby("_pareto_key").agg(**agg_map)
-                                     .reset_index()
-                                     .rename(columns={"_pareto_key": pi_dimension})
-                                     .sort_values("Invoice Amount", ascending=False)
-                                     .reset_index(drop=True))
-                        if not has_rn:
-                            pareto_df["Room Nights"] = np.nan
-
-                        _bk = pareto_df["Bookings"].replace(0, np.nan)
-                        pareto_df["Avg Spend / Booking"]      = pareto_df["Invoice Amount"] / _bk
-                        pareto_df["Avg Room Night / Booking"] = pareto_df["Room Nights"] / _bk
-                        pareto_df["Avg Rate/Night"] = pareto_df["Invoice Amount"] / pareto_df["Room Nights"].replace(0, np.nan)
-
-                        # Daftar nama hotel asli per properti (untuk tabel, Excel & tooltip)
-                        if is_hotel_dim:
-                            members = build_member_names(df_sc, "_pareto_key", hotel_col="Hotel Name",
-                                                         weight_col="Invoice Amount")
-                            pareto_df["Nama Hotel Tergabung"] = (
-                                pareto_df[pi_dimension].map(members).fillna(pareto_df[pi_dimension]))
-                            pareto_df["_n_members"] = pareto_df["Nama Hotel Tergabung"].str.count(";") + 1
-                        else:
-                            pareto_df["Nama Hotel Tergabung"] = pareto_df[pi_dimension]
-                            pareto_df["_n_members"] = 1
-
-                        total_spend           = pareto_df["Invoice Amount"].sum()
-                        pareto_df["Spend %"]  = pareto_df["Invoice Amount"] / total_spend * 100
-                        pareto_df["Cumulative %"] = pareto_df["Spend %"].cumsum().clip(upper=100)
-                        pareto_df["Rank"]     = range(1, len(pareto_df) + 1)
-
-                        top_20_pct_count  = max(1, int(len(pareto_df) * 0.2))
-                        top_contributors  = pareto_df.head(top_20_pct_count)
-                        top_spend         = top_contributors["Invoice Amount"].sum()
-                        top_spend_pct     = top_spend / total_spend * 100
-
-                        # Info penggabungan
-                        if is_hotel_dim and pi_merge_property:
-                            n_raw    = df_sc["Hotel Name"].astype(str).str.strip().nunique()
-                            n_prop   = len(pareto_df)
-                            n_merged = int((pareto_df["_n_members"] > 1).sum())
-                            st.markdown(f"""
-                            <div style='background:#f0f8ff;border:1px solid #cce4f4;border-left:3px solid #1BA0E2;
-                                        border-radius:6px;padding:8px 16px;margin-bottom:14px;
-                                        font-size:0.82em;color:#0D7FCC;'>
-                                🔗 <b>{n_raw:,} nama hotel</b> digabung menjadi <b>{n_prop:,} properti</b>
-                                ({n_merged:,} properti memiliki lebih dari satu nama) · KPI, grafik &amp; tabel
-                                memakai data gabungan
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                        # KPI Cards
-                        st.markdown(f"""
-                        <div class="pi-kpi-grid">
-                            <div class="pi-kpi" style="border-top-color:#1BA0E2;">
-                                <div class="pi-kpi-label">Total Spend · {filter_label}</div>
-                                <div class="pi-kpi-value">Rp{total_spend:,.0f}</div>
-                                <div class="pi-kpi-sub">keseluruhan periode</div>
-                            </div>
-                            <div class="pi-kpi" style="border-top-color:#1494C6;">
-                                <div class="pi-kpi-label">Top 20% Count</div>
-                                <div class="pi-kpi-value">{top_20_pct_count}</div>
-                                <div class="pi-kpi-sub">{"properti" if is_hotel_dim and pi_merge_property else pi_dimension} teratas</div>
-                            </div>
-                            <div class="pi-kpi" style="border-top-color:#0D7FCC;">
-                                <div class="pi-kpi-label">Top 20% Contribution</div>
-                                <div class="pi-kpi-value" style="color:#0D7FCC;">{top_spend_pct:.1f}%</div>
-                                <div class="pi-kpi-sub">dari total spend</div>
-                            </div>
-                            <div class="pi-kpi" style="border-top-color:#062440;">
-                                <div class="pi-kpi-label">Bottom 80% Spend</div>
-                                <div class="pi-kpi-value">Rp{(total_spend - top_spend):,.0f}</div>
-                                <div class="pi-kpi-sub">sisa {len(pareto_df) - top_20_pct_count} entitas</div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        # Pareto Chart (mengikuti data gabungan)
-                        colors = ["#1BA0E2" if i < top_20_pct_count else "#d4e8f8"
-                                  for i in range(len(pareto_df))]
-                        _hover_members = pareto_df.apply(
-                            lambda r: ("<br><i>Tergabung dari:</i><br>• " + r["Nama Hotel Tergabung"].replace("; ", "<br>• "))
-                            if r["_n_members"] > 1 else "", axis=1)
-                        _hover_rn = pareto_df["Room Nights"].apply(
-                            lambda v: f"{v:,.0f} room nights" if pd.notna(v) else "-")
-                        fig = go.Figure()
-                        fig.add_trace(go.Bar(
-                            x=pareto_df[pi_dimension], y=pareto_df["Invoice Amount"],
-                            name="Spend", marker=dict(color=colors),
-                            customdata=np.stack([_hover_rn, _hover_members], axis=-1),
-                            hovertemplate="<b>%{x}</b><br>Rp%{y:,.0f} · %{customdata[0]}%{customdata[1]}<extra></extra>"
-                        ))
-                        fig.add_trace(go.Scatter(
-                            x=pareto_df[pi_dimension], y=pareto_df["Cumulative %"],
-                            name="Cumulative %", yaxis="y2", mode="lines+markers",
-                            line=dict(color="#062440", width=2.5),
-                            marker=dict(size=5, color="#062440"),
-                            hovertemplate="Cumulative: %{y:.1f}%<extra></extra>"
-                        ))
-                        fig.add_hline(y=80, yref="y2", line_dash="dash",
-                                      line_color="#1BA0E2", opacity=0.5,
-                                      annotation_text="80%", annotation_position="right",
-                                      annotation_font_color="#1BA0E2")
-                        fig.update_layout(
-                            template="plotly_white",
-                            yaxis=dict(title="Spend (Rp)", gridcolor="#e8f4fd"),
-                            yaxis2=dict(title="Cumulative %", overlaying="y", side="right",
-                                        range=[0, 100], showgrid=False, ticksuffix="%"),
-                            height=460, plot_bgcolor="white", paper_bgcolor="white",
-                            legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                                        xanchor="right", x=1,
-                                        bgcolor="rgba(240,248,255,0.9)",
-                                        bordercolor="#cce4f4", borderwidth=1),
-                            margin=dict(l=60, r=80, t=40, b=100),
-                            xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
-                            hovermode="x unified"
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-
-                        # Sub-tabs
-                        tab_sim, tab_detail, tab_insight = st.tabs([
-                            "💰  Saving Simulation", "📋  Detail Data", "💡  Insight"
-                        ])
-
-                        with tab_sim:
-                            renegotiation_rate = st.slider(
-                                "Target diskon pada Top 20% contributors (%)", 0, 25, 5, 1,
-                                key="pi_pareto_disc"
-                            )
-                            potential_saving = top_spend * (renegotiation_rate / 100)
-                            st.markdown(f"""
-                            <div class="pi-sim-grid">
-                                <div class="pi-sim-card pi-sim-current">
-                                    <div class="pi-sim-card-label">Top 20% Spend</div>
-                                    <div class="pi-sim-card-value">Rp{top_spend:,.0f}</div>
-                                    <div class="pi-sim-card-sub">{top_20_pct_count} {pi_dimension} · {top_spend_pct:.1f}% of all</div>
-                                </div>
-                                <div class="pi-sim-card pi-sim-neg">
-                                    <div class="pi-sim-card-label">Setelah Diskon {renegotiation_rate}%</div>
-                                    <div class="pi-sim-card-value">Rp{top_spend*(1-renegotiation_rate/100):,.0f}</div>
-                                    <div class="pi-sim-card-sub">spend setelah renegosiasi</div>
-                                </div>
-                                <div class="pi-sim-card pi-sim-saving">
-                                    <span class="pi-sim-saving-icon">💰</span>
-                                    <div class="pi-sim-card-label">Potensi Saving</div>
-                                    <div class="pi-sim-card-value">Rp{potential_saving:,.0f}</div>
-                                    <div class="pi-sim-card-sub">dengan target diskon {renegotiation_rate}%</div>
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                        with tab_detail:
-                            name_col = "Hotel / Properti" if is_hotel_dim else pi_dimension
-                            detail_df = top_contributors.rename(columns={pi_dimension: name_col})
-                            detail_cols = [name_col]
-                            if is_hotel_dim:
-                                detail_cols.append("Nama Hotel Tergabung")
-                            detail_cols += ["Invoice Amount", "Room Nights", "Bookings",
-                                            "Avg Spend / Booking", "Avg Room Night / Booking",
-                                            "Spend %", "Cumulative %", "Rank"]
-                            detail_df = detail_df[detail_cols].reset_index(drop=True)
-
-                            st.dataframe(
-                                detail_df.style
-                                .format({"Invoice Amount": "Rp{:,.0f}",
-                                         "Room Nights": "{:,.0f}",
-                                         "Bookings": "{:,.0f}",
-                                         "Avg Spend / Booking": "Rp{:,.0f}",
-                                         "Avg Room Night / Booking": "{:.2f}",
-                                         "Avg Rate/Night": "Rp{:,.0f}",                                         
-                                         "Spend %": "{:.2f}%",
-                                         "Cumulative %": "{:.2f}%"}, na_rep="-")
-                                .background_gradient(subset=["Spend %"], cmap="Blues"),
-                                use_container_width=True, hide_index=True
-                            )
-                            if not has_trn:
-                                st.caption("Bookings dihitung dari jumlah baris data "
-                                           "(kolom Travel Request Number tidak tersedia).")
-
-                            output_excel = excel_bytes_with_formats(
-                                detail_df, "Top Contributors",
-                                pct_cols=("Spend %", "Cumulative %"),
-                                money_cols=("Invoice Amount", "Avg Spend / Booking", "Avg Rate/Night"),
-                                int_cols=("Room Nights", "Bookings", "Rank"),
-                                dec_cols=("Avg Room Night / Booking",))
-                            if can_download():
-                                st.download_button(
-                                    label="⬇️ Download Excel", data=output_excel,
-                                    file_name=f"pareto_{pi_dimension.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    key="dl_pareto_contributors")
-                            else:
-                                st.markdown('<div class="pi-locked">🔒 Download tidak tersedia untuk akun ini</div>',
-                                            unsafe_allow_html=True)
-
-                        with tab_insight:
-                            st.markdown(f"""
-                            <div class="pi-insight">
-                                <strong>Konsentrasi Spending · {filter_label} · {hotel_label}</strong><br>
-                                Top 20% (<em>{top_20_pct_count} {pi_dimension}</em>) menyumbang
-                                <em>{top_spend_pct:.1f}%</em> dari total pengeluaran
-                                <strong>Rp{total_spend:,.0f}</strong>.<br><br>
-                                Fokus renegosiasi pada kelompok ini memberikan dampak finansial terbesar.
-                                Dengan target diskon 10%, estimasi saving yang dapat dicapai adalah
-                                <em>Rp{top_spend * 0.10:,.0f}</em>.
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                # ══════════════════════════════════════════════════════
-                #  SECTION 2 — HOTEL PRICE INTELLIGENCE
-                # ══════════════════════════════════════════════════════
-                st.markdown('<div class="pi-section-divider">Hotel Price Intelligence</div>',
-                            unsafe_allow_html=True)
-
-                # Build hotel display name dari df_pi_base (sudah terfilter wilayah + hotel)
-                df_pi_hotel = df_pi_base.copy()
-
-                if "Canonical Hotel Name" in df_pi_hotel.columns:
-                    df_pi_hotel["Hotel Display"] = (df_pi_hotel["Canonical Hotel Name"].astype(str)
-                                                    .str.strip().str.replace(r"\s+", " ", regex=True).str.title())
-                elif "Hotel Name" in df_pi_hotel.columns:
-                    df_pi_hotel["Hotel Display"] = (df_pi_hotel["Hotel Name"].astype(str)
-                                                    .str.strip().str.replace(r"\s+", " ", regex=True).str.title())
-                else:
-                    st.markdown('<div class="pi-insight">⚠️ Kolom Hotel Name tidak tersedia.</div>',
-                                unsafe_allow_html=True)
-                    return  # keluar dari tab ini saja, tidak menghentikan tab lain
-
-                hotel_list_intel = sorted(df_pi_hotel["Hotel Display"].dropna().unique())
-
-                if not hotel_list_intel:
-                    st.markdown(f"""
-                    <div class="pi-insight">
-                        ⚠️ Tidak ada data hotel untuk filter:
-                        <strong>{filter_label}</strong>
-                        {f"· <strong>{hotel_label}</strong>" if pi_hotel_filter else ""}.
-                        Coba ubah filter di atas.
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    # Tampilkan info berapa hotel tersedia
-                    st.markdown(f"""
-                    <div style='background:#f0f8ff;border:1px solid #cce4f4;border-left:3px solid #1BA0E2;
-                                border-radius:6px;padding:10px 16px;margin-bottom:14px;
-                                font-size:0.82em;color:#0D7FCC;'>
-                        🏨 <b>{len(hotel_list_intel):,} hotel</b> tersedia untuk
-                        <b>{filter_label}</b>
-                        {f"· filter: <b>{hotel_label}</b>" if pi_hotel_filter else ""}
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    selected_hotel = st.selectbox(
-                        "Pilih hotel untuk analisis detail",
-                        hotel_list_intel,
-                        label_visibility="collapsed",
-                        key="pi_hotel_detail_select"
-                    )
-
-                    df_hotel = df_pi_hotel[df_pi_hotel["Hotel Display"] == selected_hotel].copy()
-
-                    if not df_hotel.empty and "Invoice Amount" in df_hotel.columns and "Number of Rooms Night" in df_hotel.columns:
-                        df_valid = df_hotel[
-                            df_hotel["Invoice Amount"].notna() &
-                            (df_hotel["Number of Rooms Night"] > 0)
-                        ].copy()
-                        df_valid["Price Per Night"] = df_valid["Invoice Amount"] / df_valid["Number of Rooms Night"]
-
-                        if df_valid.empty:
-                            st.markdown('<div class="pi-insight">⚠️ Tidak ada data harga yang valid untuk hotel ini.</div>',
-                                        unsafe_allow_html=True)
-                        else:
-                            avg_rate          = df_valid["Price Per Night"].mean()
-                            median_rate       = df_valid["Price Per Night"].median()
-                            max_rate          = df_valid["Price Per Night"].max()
-                            min_rate          = df_valid["Price Per Night"].min()
-                            total_room_nights = df_valid["Number of Rooms Night"].sum()
-
-                            # Hotel KPI Cards
-                            st.markdown(f"""
-                            <div class="pi-hotel-kpi-grid">
-                                <div class="pi-hotel-kpi" style="--pi-color:#1BA0E2;">
-                                    <span class="pi-hotel-kpi-icon">📊</span>
-                                    <div class="pi-hotel-kpi-label">Avg Rate</div>
-                                    <div class="pi-hotel-kpi-value">Rp {avg_rate:,.0f}</div>
-                                </div>
-                                <div class="pi-hotel-kpi" style="--pi-color:#1494C6;">
-                                    <span class="pi-hotel-kpi-icon">📍</span>
-                                    <div class="pi-hotel-kpi-label">Median Rate</div>
-                                    <div class="pi-hotel-kpi-value">Rp {median_rate:,.0f}</div>
-                                </div>
-                                <div class="pi-hotel-kpi" style="--pi-color:#d9534f;">
-                                    <span class="pi-hotel-kpi-icon">🔺</span>
-                                    <div class="pi-hotel-kpi-label">Max Rate</div>
-                                    <div class="pi-hotel-kpi-value">Rp {max_rate:,.0f}</div>
-                                </div>
-                                <div class="pi-hotel-kpi" style="--pi-color:#2e8a57;">
-                                    <span class="pi-hotel-kpi-icon">🔻</span>
-                                    <div class="pi-hotel-kpi-label">Min Rate</div>
-                                    <div class="pi-hotel-kpi-value">Rp {min_rate:,.0f}</div>
-                                </div>
-                                <div class="pi-hotel-kpi" style="--pi-color:#0D7FCC;">
-                                    <span class="pi-hotel-kpi-icon">🌙</span>
-                                    <div class="pi-hotel-kpi-label">Total Room Nights</div>
-                                    <div class="pi-hotel-kpi-value">{total_room_nights:,.0f}</div>
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                            # Negotiation Simulator
-                            st.markdown('<div class="pi-section-divider">Negotiation Simulator</div>',
-                                        unsafe_allow_html=True)
-
-                            target_discount  = st.slider("🎯 Target Discount (%)", 0, 30, 10, key="pi_hotel_disc")
-                            negotiated_rate  = avg_rate * (1 - target_discount / 100)
-                            estimated_saving = (avg_rate - negotiated_rate) * total_room_nights
-
-                            st.markdown(f"""
-                            <div class="pi-sim-grid">
-                                <div class="pi-sim-card pi-sim-current">
-                                    <div class="pi-sim-card-label">Current Avg Rate / Malam</div>
-                                    <div class="pi-sim-card-value">Rp {avg_rate:,.0f}</div>
-                                    <div class="pi-sim-card-sub">basis {total_room_nights:,.0f} room nights</div>
-                                </div>
-                                <div class="pi-sim-card pi-sim-neg">
-                                    <div class="pi-sim-card-label">Negotiated Rate (–{target_discount}%)</div>
-                                    <div class="pi-sim-card-value">Rp {negotiated_rate:,.0f}</div>
-                                    <div class="pi-sim-card-sub">target rate kontrak</div>
-                                </div>
-                                <div class="pi-sim-card pi-sim-saving">
-                                    <span class="pi-sim-saving-icon">💰</span>
-                                    <div class="pi-sim-card-label">Estimated Saving</div>
-                                    <div class="pi-sim-card-value">Rp {estimated_saving:,.0f}</div>
-                                    <div class="pi-sim-card-sub">total potensi hemat</div>
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                            with st.expander("📘 Cara Perhitungan Estimated Saving", expanded=False):
-                                st.markdown(f"""
-                                <div class="pi-insight">
-                                    <strong>Formula:</strong><br>
-                                    Saving = (Avg Rate − Negotiated Rate) × Total Room Nights<br><br>
-                                    = (Rp {avg_rate:,.0f} − Rp {negotiated_rate:,.0f})
-                                    × <em>{total_room_nights:,.0f} malam</em><br>
-                                    = <strong>Rp {estimated_saving:,.0f}</strong>
-                                </div>
-                                """, unsafe_allow_html=True)
-                    else:
-                        st.markdown('<div class="pi-insight">⚠️ Data tidak cukup untuk hotel yang dipilih.</div>',
-                                    unsafe_allow_html=True)
-
-            # ======================================
-            # TAB 7: SANKEY FLOW — MTRAX Blue Theme
-            # ======================================
-            _render_tab6()
-
-        # ======================================
-        # TAB ROOM INTELLIGENCE — konsep sama dengan Price Intelligence,
-        # parameter utama: Room Nights
-        # ======================================
-        with tab_room:
-            def _render_tab_room():
-                # Kelas CSS pi-* sudah didefinisikan di tab Price Intelligence (global
-                # di halaman). Di sini hanya ditambah style untuk radio & header tab ini.
-                st.markdown("""
-                <style>
-                div[data-testid="stRadio"].st-key-ri_country_radio > div[role="radiogroup"] {
-                    display:inline-flex!important; background:#1BA0E2;
-                    border-radius:50px; padding:3px; gap:0;
-                }
-                div[data-testid="stRadio"].st-key-ri_country_radio > div[role="radiogroup"] > label {
-                    cursor:pointer; padding:5px 18px!important; border-radius:50px!important;
-                    font-size:0.78em!important; font-weight:500!important;
-                    color:rgba(255,255,255,0.80)!important; margin:0!important;
-                }
-                div[data-testid="stRadio"].st-key-ri_country_radio > div[role="radiogroup"] > label > div:first-child { display:none!important; }
-                div[data-testid="stRadio"].st-key-ri_country_radio > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background:white!important; }
-                div[data-testid="stRadio"].st-key-ri_country_radio > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color:#1BA0E2!important; font-weight:700!important; }
-                div[data-testid="stRadio"].st-key-ri_country_radio > label { display:none!important; }
-                </style>
-
-                <div class="pi-header">
-                    <div class="pi-header-inner">
-                        <div class="pi-header-icon">🛏️</div>
-                        <div>
-                            <div class="pi-header-title">Room Intelligence</div>
-                            <div class="pi-header-sub">Pareto 80/20 Room Night Concentration · Hotel Room Night Benchmarking · Volume Leverage Simulator</div>
-                        </div>
-                        <div class="pi-header-badge">
-                            <span class="pi-badge-dot"></span>LIVE ANALYSIS
-                        </div>
-                    </div>
-                </div>
-
-                <div class="pi-global-filter">
-                    <div class="pi-global-filter-title">
-                        🔍 Global Filters
-                        <span style="color:var(--pi-muted);font-weight:400;letter-spacing:0;text-transform:none;font-size:1.1em;">
-                            — berlaku untuk seluruh analisis di tab ini
-                        </span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                RN_COL = "Number of Rooms Night"
-                if RN_COL not in df_all.columns:
-                    st.markdown('<div class="pi-empty">⚠️ Kolom <b>Number of Rooms Night</b> tidak tersedia pada data.</div>',
-                                unsafe_allow_html=True)
-                    return
-
-                _lbl = ("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;"
-                        "letter-spacing:0.08em;margin-bottom:6px;'>{}</div>")
-                rf_col1, rf_col2, rf_col3 = st.columns([1.2, 2, 2])
-                rd_col1, rd_col2, rd_col3 = st.columns([1.2, 1.2, 2.8])
-
-                # ── Filter 1: Wilayah ──
-                with rf_col1:
-                    st.markdown(_lbl.format("Wilayah"), unsafe_allow_html=True)
-                    if "Country" in df_all.columns:
-                        ri_country_filter = st.radio(
-                            label="ri_wilayah", options=["Indonesia", "Internasional"],
-                            index=0, horizontal=True, label_visibility="collapsed",
-                            key="ri_country_radio")
-                    else:
-                        ri_country_filter = "Semua"
-                        st.info("Kolom Country tidak tersedia")
-
-                df_ri_base = df_all.copy()
-                if "Country" in df_ri_base.columns and ri_country_filter in ["Indonesia", "Internasional"]:
-                    _cu = df_ri_base["Country"].astype(str).str.strip().str.upper()
-                    _dom = _cu.isin(["INDONESIA", "ID", "IDN"])
-                    if ri_country_filter == "Indonesia":
-                        df_ri_base, ri_filter_label = df_ri_base[_dom], "🇮🇩 Indonesia"
-                    else:
-                        df_ri_base, ri_filter_label = df_ri_base[~_dom], "🌐 Internasional"
-                else:
-                    ri_filter_label = "🌏 Semua Wilayah"
-
-                # ── Filter tanggal From / To (khusus tab ini) ──
-                df_ri_base, ri_period_label = tab_date_range_filter(
-                    df_ri_base, _date_col_for_filter, "ri", rd_col1, rd_col2)
-
-                # ── Filter 2: Hotel ──
-                with rf_col2:
-                    st.markdown(_lbl.format("Filter Hotel (opsional)"), unsafe_allow_html=True)
-                    if "Hotel Name" in df_ri_base.columns:
-                        ri_hotel_filter = st.multiselect(
-                            label="ri_hotel_ms",
-                            options=sorted(df_ri_base["Hotel Name"].dropna().unique().tolist()),
-                            default=[], placeholder="Semua hotel (pilih untuk filter spesifik)…",
-                            label_visibility="collapsed", key="ri_hotel_multiselect")
-                    else:
-                        ri_hotel_filter = []
-
-                # ── Filter 3: Dimensi Pareto ──
-                with rf_col3:
-                    st.markdown(_lbl.format("Dimensi Pareto"), unsafe_allow_html=True)
-                    ri_dim_options = [c for c in ["Hotel Name", "City", "Supplier Name"] if c in df_ri_base.columns]
-                    ri_dimension = (st.selectbox("ri_dim", ri_dim_options, label_visibility="collapsed",
-                                                 key="ri_dimension_select") if ri_dim_options else None)
-
-                if ri_hotel_filter:
-                    df_ri_base = df_ri_base[df_ri_base["Hotel Name"].isin(ri_hotel_filter)]
-
-                if ri_dimension == "Hotel Name":
-                    _toggle = getattr(st, "toggle", st.checkbox)
-                    ri_merge_property = _toggle(
-                        "🔗 Gabungkan properti yang sama (nama hotel mirip di kota yang sama)",
-                        value=True, key="ri_merge_toggle",
-                        help="KPI, grafik Pareto, tabel, dan analisis per properti memakai data properti gabungan.")
-                else:
-                    ri_merge_property = False
-
-                # Hanya baris dengan room night valid
-                df_ri_base = df_ri_base.copy()
-                df_ri_base[RN_COL] = pd.to_numeric(df_ri_base[RN_COL], errors="coerce")
-                df_ri_base = df_ri_base[df_ri_base[RN_COL] > 0]
-
-                ri_total_records = len(df_all)
-                ri_filtered      = len(df_ri_base)
-                ri_pct           = (ri_filtered / ri_total_records * 100) if ri_total_records else 0
-                ri_hotel_label   = f"{len(ri_hotel_filter)} hotel dipilih" if ri_hotel_filter else "Semua hotel"
-
-                st.markdown(f"""
-                <div style='background:#e6f4fb;border:1px solid #cce4f4;border-left:4px solid #1BA0E2;
-                            border-radius:8px;padding:10px 18px;margin:4px 0 22px 0;
-                            font-size:0.82em;color:#0D7FCC;display:flex;gap:20px;align-items:center;flex-wrap:wrap;'>
-                    <span>🔎 <b>Filter aktif</b></span>
-                    <span>Wilayah: <b>{ri_filter_label}</b></span>
-                    <span>Periode: <b>{ri_period_label}</b></span>
-                    <span>Hotel: <b>{ri_hotel_label}</b></span>
-                    <span>Menampilkan <b>{ri_filtered:,}</b> dari <b>{ri_total_records:,}</b> records (room night &gt; 0)
-                        <span style='background:#1BA0E2;color:white;border-radius:20px;
-                                     padding:1px 10px;font-size:0.88em;margin-left:4px;'>{ri_pct:.1f}%</span>
-                    </span>
-                </div>
-                """, unsafe_allow_html=True)
-
-                if df_ri_base.empty or ri_dimension is None:
-                    st.markdown('<div class="pi-empty">⚠️ Tidak ada data room night yang sesuai dengan filter.</div>',
-                                unsafe_allow_html=True)
-                    return
-
-                # Properti gabungan dipakai di Section 1 & 2 agar konsisten
-                ri_use_merge = ("Hotel Name" in df_ri_base.columns) and (ri_dimension != "Hotel Name" or ri_merge_property)
-                if "Hotel Name" in df_ri_base.columns:
-                    if ri_dimension == "Hotel Name" and not ri_merge_property:
-                        df_ri_base["Hotel / Properti"] = df_ri_base["Hotel Name"].astype(str).str.strip()
-                    else:
-                        df_ri_base = apply_property_merge(df_ri_base, property_merge_map,
-                                                          hotel_col="Hotel Name", city_col="City")
-
-                has_inv = "Invoice Amount" in df_ri_base.columns
-                has_trn = "Travel Request Number" in df_ri_base.columns
-
-                # ══════════════════════════════════════════════════════
-                #  SECTION 1 — PARETO ROOM NIGHT CONCENTRATION
-                # ══════════════════════════════════════════════════════
-                st.markdown('<div class="pi-section-divider">Room Night Concentration — Pareto 80/20</div>',
-                            unsafe_allow_html=True)
-
-                is_hotel_dim = (ri_dimension == "Hotel Name")
-                df_rc = df_ri_base.copy()
-                df_rc["_ri_key"] = (df_rc["Hotel / Properti"] if is_hotel_dim
-                                    else df_rc[ri_dimension].astype(str).str.strip())
-                df_rc = df_rc[df_rc["_ri_key"].notna()
-                              & df_rc["_ri_key"].astype(str).str.strip().ne("")
-                              & df_rc["_ri_key"].astype(str).str.lower().ne("nan")]
-                if df_rc.empty:
-                    st.markdown('<div class="pi-empty">⚠️ Tidak ada data untuk dimensi yang dipilih.</div>',
-                                unsafe_allow_html=True)
-                    return
-
-                agg = {"Room Nights": (RN_COL, "sum")}
-                agg["Bookings"] = ("Travel Request Number", "nunique") if has_trn else (RN_COL, "size")
-                if has_inv:
-                    agg["Invoice Amount"] = ("Invoice Amount", "sum")
-                rp = (df_rc.groupby("_ri_key").agg(**agg).reset_index()
-                        .rename(columns={"_ri_key": ri_dimension})
-                        .sort_values("Room Nights", ascending=False).reset_index(drop=True))
-                if not has_inv:
-                    rp["Invoice Amount"] = np.nan
-
-                if is_hotel_dim:
-                    _mem = build_member_names(df_rc, "_ri_key", hotel_col="Hotel Name", weight_col=RN_COL)
-                    rp["Nama Hotel Tergabung"] = rp[ri_dimension].map(_mem).fillna(rp[ri_dimension])
-                    rp["_n_members"] = rp["Nama Hotel Tergabung"].str.count(";") + 1
-                else:
-                    rp["Nama Hotel Tergabung"] = rp[ri_dimension]
-                    rp["_n_members"] = 1
-
-                total_rn = rp["Room Nights"].sum()
-                _rbk = rp["Bookings"].replace(0, np.nan)
-                rp["Avg Room Night / Booking"] = rp["Room Nights"] / _rbk
-                rp["Avg Spend / Booking"]      = rp["Invoice Amount"] / _rbk
-                rp["Avg Rate/Night"]  = rp["Invoice Amount"] / rp["Room Nights"].replace(0, np.nan)
-                rp["RN %"]            = rp["Room Nights"] / total_rn * 100
-                rp["Cumulative %"]    = rp["RN %"].cumsum().clip(upper=100)
-                rp["Rank"]            = range(1, len(rp) + 1)
-
-                ri_top_n   = max(1, int(len(rp) * 0.2))
-                ri_top     = rp.head(ri_top_n)
-                top_rn     = ri_top["Room Nights"].sum()
-                top_rn_pct = top_rn / total_rn * 100 if total_rn else 0
-                bottom_rn  = total_rn - top_rn
-                entity_lbl = "properti" if (is_hotel_dim and ri_merge_property) else ri_dimension
-
-                if is_hotel_dim and ri_merge_property:
-                    n_raw = df_rc["Hotel Name"].astype(str).str.strip().nunique()
-                    st.markdown(f"""
-                    <div style='background:#f0f8ff;border:1px solid #cce4f4;border-left:3px solid #1BA0E2;
-                                border-radius:6px;padding:8px 16px;margin-bottom:14px;font-size:0.82em;color:#0D7FCC;'>
-                        🔗 <b>{n_raw:,} nama hotel</b> digabung menjadi <b>{len(rp):,} properti</b>
-                        ({int((rp["_n_members"] > 1).sum()):,} properti memiliki lebih dari satu nama)
-                    </div>""", unsafe_allow_html=True)
-
-                st.markdown(f"""
-                <div class="pi-kpi-grid">
-                    <div class="pi-kpi" style="border-top-color:#1BA0E2;">
-                        <div class="pi-kpi-label">Total Room Nights · {ri_filter_label}</div>
-                        <div class="pi-kpi-value">{total_rn:,.0f}</div>
-                        <div class="pi-kpi-sub">keseluruhan periode</div>
-                    </div>
-                    <div class="pi-kpi" style="border-top-color:#1494C6;">
-                        <div class="pi-kpi-label">Top 20% Count</div>
-                        <div class="pi-kpi-value">{ri_top_n}</div>
-                        <div class="pi-kpi-sub">{entity_lbl} teratas</div>
-                    </div>
-                    <div class="pi-kpi" style="border-top-color:#0D7FCC;">
-                        <div class="pi-kpi-label">Top 20% Contribution</div>
-                        <div class="pi-kpi-value" style="color:#0D7FCC;">{top_rn_pct:.1f}%</div>
-                        <div class="pi-kpi-sub">dari total room nights</div>
-                    </div>
-                    <div class="pi-kpi" style="border-top-color:#062440;">
-                        <div class="pi-kpi-label">Bottom 80% Room Nights</div>
-                        <div class="pi-kpi-value">{bottom_rn:,.0f}</div>
-                        <div class="pi-kpi-sub">sisa {len(rp) - ri_top_n} entitas</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                _colors = ["#1BA0E2" if i < ri_top_n else "#d4e8f8" for i in range(len(rp))]
-                _hv_mem = rp.apply(
-                    lambda r: ("<br><i>Tergabung dari:</i><br>• " + r["Nama Hotel Tergabung"].replace("; ", "<br>• "))
-                    if r["_n_members"] > 1 else "", axis=1)
-                _hv_inv = rp["Invoice Amount"].apply(lambda v: f"Rp{v:,.0f}" if pd.notna(v) else "-")
-                fig_ri = go.Figure()
-                fig_ri.add_trace(go.Bar(
-                    x=rp[ri_dimension], y=rp["Room Nights"], name="Room Nights",
-                    marker=dict(color=_colors),
-                    customdata=np.stack([_hv_inv, _hv_mem], axis=-1),
-                    hovertemplate="<b>%{x}</b><br>%{y:,.0f} room nights · %{customdata[0]}%{customdata[1]}<extra></extra>"))
-                fig_ri.add_trace(go.Scatter(
-                    x=rp[ri_dimension], y=rp["Cumulative %"], name="Cumulative %", yaxis="y2",
-                    mode="lines+markers", line=dict(color="#062440", width=2.5),
-                    marker=dict(size=5, color="#062440"),
-                    hovertemplate="Cumulative: %{y:.1f}%<extra></extra>"))
-                fig_ri.add_hline(y=80, yref="y2", line_dash="dash", line_color="#1BA0E2", opacity=0.5,
-                                 annotation_text="80%", annotation_position="right",
-                                 annotation_font_color="#1BA0E2")
-                fig_ri.update_layout(
-                    template="plotly_white",
-                    yaxis=dict(title="Room Nights", gridcolor="#e8f4fd"),
-                    yaxis2=dict(title="Cumulative %", overlaying="y", side="right",
-                                range=[0, 100], showgrid=False, ticksuffix="%"),
-                    height=460, plot_bgcolor="white", paper_bgcolor="white",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-                                bgcolor="rgba(240,248,255,0.9)", bordercolor="#cce4f4", borderwidth=1),
-                    margin=dict(l=60, r=80, t=40, b=100),
-                    xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
-                    hovermode="x unified")
-                st.plotly_chart(fig_ri, use_container_width=True)
-
-                ri_tab_sim, ri_tab_detail, ri_tab_insight = st.tabs([
-                    "📦  Volume Leverage", "📋  Detail Data", "💡  Insight"])
-
-                top_inv       = ri_top["Invoice Amount"].sum() if has_inv else np.nan
-                top_avg_rate  = (top_inv / top_rn) if (has_inv and top_rn) else np.nan
-
-                with ri_tab_sim:
-                    sc1, sc2 = st.columns(2)
-                    with sc1:
-                        shift_pct = st.slider("Konsolidasi: % room night Bottom 80% dialihkan ke Top 20%",
-                                              0, 50, 10, 1, key="ri_shift_pct")
-                    with sc2:
-                        vol_disc = st.slider("Target diskon tier volume pada Top 20% (%)",
-                                             0, 20, 5, 1, key="ri_vol_disc")
-                    add_rn       = bottom_rn * shift_pct / 100
-                    proj_top_rn  = top_rn + add_rn
-                    vol_saving   = proj_top_rn * top_avg_rate * vol_disc / 100 if pd.notna(top_avg_rate) else np.nan
-                    _saving_txt  = f"Rp{vol_saving:,.0f}" if pd.notna(vol_saving) else "-"
-                    _rate_txt    = f"Rp{top_avg_rate:,.0f}" if pd.notna(top_avg_rate) else "-"
-
-                    st.markdown(f"""
-                    <div class="pi-sim-grid">
-                        <div class="pi-sim-card pi-sim-current">
-                            <div class="pi-sim-card-label">Top 20% Room Nights</div>
-                            <div class="pi-sim-card-value">{top_rn:,.0f}</div>
-                            <div class="pi-sim-card-sub">{ri_top_n} {entity_lbl} · avg rate {_rate_txt}/malam</div>
-                        </div>
-                        <div class="pi-sim-card pi-sim-neg">
-                            <div class="pi-sim-card-label">Setelah Konsolidasi +{shift_pct}%</div>
-                            <div class="pi-sim-card-value">{proj_top_rn:,.0f}</div>
-                            <div class="pi-sim-card-sub">+{add_rn:,.0f} room nights dari Bottom 80%</div>
-                        </div>
-                        <div class="pi-sim-card pi-sim-saving">
-                            <span class="pi-sim-saving-icon">💰</span>
-                            <div class="pi-sim-card-label">Potensi Saving (simulasi)</div>
-                            <div class="pi-sim-card-value">{_saving_txt}</div>
-                            <div class="pi-sim-card-sub">diskon tier volume {vol_disc}%</div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    with st.expander("📘 Cara Perhitungan Potensi Saving", expanded=False):
-                        st.markdown(f"""
-                        <div class="pi-insight">
-                            <strong>Formula:</strong><br>
-                            Tambahan RN = Bottom 80% RN × % konsolidasi
-                            = {bottom_rn:,.0f} × {shift_pct}% = <em>{add_rn:,.0f}</em><br>
-                            Proyeksi RN Top 20% = {top_rn:,.0f} + {add_rn:,.0f} = <em>{proj_top_rn:,.0f}</em><br>
-                            Saving = Proyeksi RN × Avg Rate Top 20% × Diskon tier<br>
-                            = {proj_top_rn:,.0f} × {_rate_txt} × {vol_disc}% = <strong>{_saving_txt}</strong><br><br>
-                            <em>Catatan:</em> ini simulasi berbasis asumsi. Diskon tier volume aktual
-                            bergantung pada hasil negosiasi dengan masing-masing hotel.
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                with ri_tab_detail:
-                    name_col = "Hotel / Properti" if is_hotel_dim else ri_dimension
-                    ri_detail = ri_top.rename(columns={ri_dimension: name_col})
-                    cols = [name_col] + (["Nama Hotel Tergabung"] if is_hotel_dim else []) + \
-                           ["Room Nights", "Bookings", "Avg Room Night / Booking",
-                            "Invoice Amount", "Avg Spend / Booking", "Avg Rate/Night",
-                            "RN %", "Cumulative %", "Rank"]
-                    ri_detail = ri_detail[cols].reset_index(drop=True)
-                    st.dataframe(
-                        ri_detail.style
-                        .format({"Room Nights": "{:,.0f}", "Bookings": "{:,.0f}",
-                                 "Avg Room Night / Booking": "{:.2f}",
-                                 "Invoice Amount": "Rp{:,.0f}",
-                                 "Avg Spend / Booking": "Rp{:,.0f}",
-                                 "Avg Rate/Night": "Rp{:,.0f}",
-                                 "RN %": "{:.2f}%", "Cumulative %": "{:.2f}%"}, na_rep="-")
-                        .background_gradient(subset=["RN %"], cmap="Blues"),
-                        use_container_width=True, hide_index=True)
-                    if not has_trn:
-                        st.caption("Bookings dihitung dari jumlah baris data (kolom Travel Request Number tidak tersedia).")
-                    if can_download():
-                        st.download_button(
-                            label="⬇️ Download Excel",
-                            data=excel_bytes_with_formats(
-                                ri_detail, "Top Room Nights",
-                                pct_cols=("RN %", "Cumulative %"),
-                                money_cols=("Invoice Amount", "Avg Spend / Booking", "Avg Rate/Night"),
-                                int_cols=("Room Nights", "Bookings", "Rank"),
-                                dec_cols=("Avg Room Night / Booking",)),
-                            file_name=f"room_pareto_{ri_dimension.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_room_pareto")
-                    else:
-                        st.markdown('<div class="pi-locked">🔒 Download tidak tersedia untuk akun ini</div>',
-                                    unsafe_allow_html=True)
-
-                with ri_tab_insight:
-                    avg_los_all = total_rn / rp["Bookings"].sum() if rp["Bookings"].sum() else 0
-                    st.markdown(f"""
-                    <div class="pi-insight">
-                        <strong>Konsentrasi Room Night · {ri_filter_label} · {ri_hotel_label}</strong><br>
-                        Top 20% (<em>{ri_top_n} {entity_lbl}</em>) menyerap
-                        <em>{top_rn_pct:.1f}%</em> dari total <strong>{total_rn:,.0f} room nights</strong>
-                        dengan rata-rata lama menginap <em>{avg_los_all:.2f} malam</em> per booking.<br><br>
-                        Volume yang terkonsentrasi ini menjadi posisi tawar untuk kontrak rate berbasis
-                        volume (tiered/volume commitment). Mengalihkan sebagian room night dari Bottom 80%
-                        ke hotel Top 20% memperkuat posisi negosiasi tersebut.
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                # ══════════════════════════════════════════════════════
-                #  SECTION 2 — HOTEL ROOM NIGHT INTELLIGENCE
-                # ══════════════════════════════════════════════════════
-                st.markdown('<div class="pi-section-divider">Hotel Room Night Intelligence</div>',
-                            unsafe_allow_html=True)
-
-                if "Hotel / Properti" not in df_ri_base.columns:
-                    st.markdown('<div class="pi-insight">⚠️ Kolom Hotel Name tidak tersedia.</div>',
-                                unsafe_allow_html=True)
-                    return
-
-                df_ri_base = df_ri_base[df_ri_base["Hotel / Properti"].astype(str).str.strip().ne("")
-                                        & df_ri_base["Hotel / Properti"].astype(str).str.lower().ne("nan")]
-                prop_rank = (df_ri_base.groupby("Hotel / Properti")[RN_COL].sum()
-                             .sort_values(ascending=False))
-                st.markdown(f"""
-                <div style='background:#f0f8ff;border:1px solid #cce4f4;border-left:3px solid #1BA0E2;
-                            border-radius:6px;padding:10px 16px;margin-bottom:14px;font-size:0.82em;color:#0D7FCC;'>
-                    🏨 <b>{len(prop_rank):,} {"properti" if ri_use_merge else "hotel"}</b> tersedia untuk
-                    <b>{ri_filter_label}</b> · diurutkan dari room night terbesar
-                </div>
-                """, unsafe_allow_html=True)
-
-                ri_selected = st.selectbox(
-                    "Pilih hotel/properti untuk analisis detail", prop_rank.index.tolist(),
-                    format_func=lambda x: f"{x}  ·  {prop_rank[x]:,.0f} RN",
-                    label_visibility="collapsed", key="ri_hotel_detail_select")
-
-                df_h = df_ri_base[df_ri_base["Hotel / Properti"] == ri_selected].copy()
-                h_rn       = df_h[RN_COL].sum()
-                h_book     = df_h["Travel Request Number"].nunique() if has_trn else len(df_h)
-                h_los      = h_rn / h_book if h_book else 0
-                h_share    = h_rn / df_ri_base[RN_COL].sum() * 100 if df_ri_base[RN_COL].sum() else 0
-                h_rate     = (df_h["Invoice Amount"].sum() / h_rn) if (has_inv and h_rn) else np.nan
-                h_rate_txt = f"Rp {h_rate:,.0f}" if pd.notna(h_rate) else "-"
-
-                h_members = df_h["Hotel Name"].astype(str).str.strip().unique().tolist()
-                if len(h_members) > 1:
-                    st.markdown(
-                        "<div style='font-size:0.80em;color:#6a8fa0;margin:-6px 0 12px;'>🔗 Tergabung dari: "
-                        + " · ".join(h_members) + "</div>", unsafe_allow_html=True)
-
-                st.markdown(f"""
-                <div class="pi-hotel-kpi-grid">
-                    <div class="pi-hotel-kpi" style="--pi-color:#1BA0E2;">
-                        <span class="pi-hotel-kpi-icon">🌙</span>
-                        <div class="pi-hotel-kpi-label">Total Room Nights</div>
-                        <div class="pi-hotel-kpi-value">{h_rn:,.0f}</div>
-                    </div>
-                    <div class="pi-hotel-kpi" style="--pi-color:#1494C6;">
-                        <span class="pi-hotel-kpi-icon">🧾</span>
-                        <div class="pi-hotel-kpi-label">Bookings</div>
-                        <div class="pi-hotel-kpi-value">{h_book:,.0f}</div>
-                    </div>
-                    <div class="pi-hotel-kpi" style="--pi-color:#0D7FCC;">
-                        <span class="pi-hotel-kpi-icon">⏱️</span>
-                        <div class="pi-hotel-kpi-label">Avg Length of Stay</div>
-                        <div class="pi-hotel-kpi-value">{h_los:.2f} malam</div>
-                    </div>
-                    <div class="pi-hotel-kpi" style="--pi-color:#2e8a57;">
-                        <span class="pi-hotel-kpi-icon">📊</span>
-                        <div class="pi-hotel-kpi-label">Share Room Nights</div>
-                        <div class="pi-hotel-kpi-value">{h_share:.2f}%</div>
-                    </div>
-                    <div class="pi-hotel-kpi" style="--pi-color:#062440;">
-                        <span class="pi-hotel-kpi-icon">💵</span>
-                        <div class="pi-hotel-kpi-label">Avg Rate / Night</div>
-                        <div class="pi-hotel-kpi-value">{h_rate_txt}</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # Tren room night bulanan
-                if "Check in Date" in df_h.columns:
-                    _d = pd.to_datetime(df_h["Check in Date"], errors="coerce")
-                    trend = (df_h.assign(_m=_d.dt.to_period("M").dt.to_timestamp())
-                             .dropna(subset=["_m"]).groupby("_m")[RN_COL].sum().reset_index())
-                    if not trend.empty:
-                        fig_tr = go.Figure(go.Bar(
-                            x=trend["_m"], y=trend[RN_COL], marker_color="#1BA0E2",
-                            hovertemplate="%{x|%b %Y}<br>%{y:,.0f} room nights<extra></extra>"))
-                        fig_tr.update_layout(
-                            template="plotly_white", height=300, plot_bgcolor="white", paper_bgcolor="white",
-                            title=dict(text="Tren Room Nights Bulanan (Check in Date)", font=dict(size=13)),
-                            yaxis=dict(title="Room Nights", gridcolor="#e8f4fd"),
-                            xaxis=dict(tickformat="%b %Y"), margin=dict(l=60, r=30, t=50, b=40))
-                        st.plotly_chart(fig_tr, use_container_width=True)
-
-                # Volume commitment simulator
-                st.markdown('<div class="pi-section-divider">Volume Commitment Simulator</div>',
-                            unsafe_allow_html=True)
-                vc1, vc2 = st.columns(2)
-                with vc1:
-                    commit_growth = st.slider("📈 Komitmen kenaikan volume (%)", 0, 50, 20, key="ri_commit_growth")
-                with vc2:
-                    commit_disc = st.slider("🎯 Target diskon atas komitmen volume (%)", 0, 20, 5, key="ri_commit_disc")
-                proj_rn     = h_rn * (1 + commit_growth / 100)
-                commit_save = proj_rn * h_rate * commit_disc / 100 if pd.notna(h_rate) else np.nan
-                _cs_txt     = f"Rp {commit_save:,.0f}" if pd.notna(commit_save) else "-"
-
-                st.markdown(f"""
-                <div class="pi-sim-grid">
-                    <div class="pi-sim-card pi-sim-current">
-                        <div class="pi-sim-card-label">Room Nights Saat Ini</div>
-                        <div class="pi-sim-card-value">{h_rn:,.0f}</div>
-                        <div class="pi-sim-card-sub">avg rate {h_rate_txt}/malam</div>
-                    </div>
-                    <div class="pi-sim-card pi-sim-neg">
-                        <div class="pi-sim-card-label">Proyeksi Komitmen +{commit_growth}%</div>
-                        <div class="pi-sim-card-value">{proj_rn:,.0f}</div>
-                        <div class="pi-sim-card-sub">room nights yang ditawarkan ke hotel</div>
-                    </div>
-                    <div class="pi-sim-card pi-sim-saving">
-                        <span class="pi-sim-saving-icon">💰</span>
-                        <div class="pi-sim-card-label">Estimated Saving (simulasi)</div>
-                        <div class="pi-sim-card-value">{_cs_txt}</div>
-                        <div class="pi-sim-card-sub">dengan diskon {commit_disc}%</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                with st.expander("📘 Cara Perhitungan Estimated Saving", expanded=False):
-                    st.markdown(f"""
-                    <div class="pi-insight">
-                        <strong>Formula:</strong><br>
-                        Proyeksi RN = RN saat ini × (1 + komitmen kenaikan)
-                        = {h_rn:,.0f} × (1 + {commit_growth}%) = <em>{proj_rn:,.0f}</em><br>
-                        Saving = Proyeksi RN × Avg Rate × Diskon
-                        = {proj_rn:,.0f} × {h_rate_txt} × {commit_disc}% = <strong>{_cs_txt}</strong><br><br>
-                        <em>Catatan:</em> simulasi ini mengasumsikan komitmen volume dapat dipenuhi
-                        dan hotel menyetujui diskon yang ditargetkan.
-                    </div>
-                    """, unsafe_allow_html=True)
-
-            _render_tab_room()
-
-
-        # ======================================
-        # TAB COST AVOIDANCE (modul cost_avoidance.py)
-        # ======================================
-        with tab_cost:
-            render_cost_avoidance(
-                df_all,
-                can_download=can_download(),
-                can_edit=is_admin(),
-                username=st.session_state.get("username", ""),
-                excel_fn=excel_bytes_with_formats,
-                standardize_name=standardize_name,
-                normalize_city=_normalize_city_key,
-            )
-
-        with tab7:
-
-            st.markdown("""
-            <style>
-            :root {
-                --sk-blue:      #1BA0E2;
-                --sk-blue-mid:  #1494C6;
-                --sk-blue-dark: #0D7FCC;
-                --sk-navy:      #062440;
-                --sk-lime:      #e2f871;
-                --sk-lime-v:    #98ea16;
-                --sk-bg:        #f0f8ff;
-                --sk-border:    #cce4f4;
-                --sk-surface:   #ffffff;
-                --sk-muted:     #6a8fa0;
-                --sk-text:      #1a2a3a;
-            }
-
-            /* ════════════ HEADER ════════════ */
-            .sk-header {
-                background: linear-gradient(135deg, #062440 0%, #0D7FCC 52%, #1BA0E2 100%);
-                border-radius: 14px;
-                padding: 28px 36px;
-                margin-bottom: 24px;
-                position: relative;
-                overflow: hidden;
-                box-shadow: 0 8px 32px rgba(13,127,204,0.28);
-            }
-            .sk-header::before {
-                content: '';
-                position: absolute; top: -70px; right: -50px;
-                width: 240px; height: 240px; border-radius: 50%;
-                background: rgba(255,255,255,0.05); pointer-events: none;
-            }
-            .sk-header::after {
-                content: '';
-                position: absolute; bottom: -50px; left: 30%;
-                width: 200px; height: 200px; border-radius: 50%;
-                background: rgba(226,248,113,0.08); pointer-events: none;
-            }
-            .sk-header-inner {
-                display: flex; align-items: center; gap: 18px;
-                position: relative; z-index: 1;
-            }
-            .sk-header-icon {
-                width: 54px; height: 54px; border-radius: 13px;
-                background: rgba(255,255,255,0.14);
-                border: 1px solid rgba(255,255,255,0.24);
-                display: flex; align-items: center; justify-content: center;
-                font-size: 1.7em; flex-shrink: 0;
-            }
-            .sk-header-body  { flex: 1; }
-            .sk-header-title {
-                color: #fff; font-size: 1.45em; font-weight: 700;
-                margin: 0; letter-spacing: -0.01em;
-            }
-            .sk-header-sub {
-                color: rgba(255,255,255,0.58); font-size: 0.82em; margin-top: 4px;
-            }
-            .sk-header-badge {
-                display: inline-flex; align-items: center; gap: 7px;
-                background: rgba(255,255,255,0.12);
-                border: 1px solid rgba(255,255,255,0.22);
-                border-radius: 100px; padding: 6px 16px;
-                font-size: 0.72em; font-weight: 600;
-                color: rgba(255,255,255,0.88); letter-spacing: 0.06em;
-                white-space: nowrap;
-            }
-            .sk-badge-dot {
-                width: 6px; height: 6px; border-radius: 50%;
-                background: var(--sk-lime);
-                box-shadow: 0 0 6px var(--sk-lime);
-                animation: sk-blink 2s ease infinite;
-            }
-            @keyframes sk-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-            /* ════════════ FLOW PATH INDICATOR ════════════ */
-            .sk-flow-path {
-                display: flex; align-items: center; justify-content: center;
-                gap: 0; margin-bottom: 20px;
-            }
-            .sk-flow-node {
-                background: var(--sk-surface);
-                border: 1.5px solid var(--sk-border);
-                border-radius: 8px; padding: 10px 20px;
-                font-size: 0.82em; font-weight: 700;
-                color: var(--sk-navy); letter-spacing: 0.02em;
-                display: flex; align-items: center; gap: 8px;
-                box-shadow: 0 2px 8px rgba(13,127,204,0.08);
-            }
-            .sk-flow-node-icon { font-size: 1.1em; }
-            .sk-flow-arrow {
-                display: flex; align-items: center;
-                padding: 0 4px;
-            }
-            .sk-flow-arrow-line {
-                width: 36px; height: 2px;
-                background: linear-gradient(90deg, var(--sk-border), var(--sk-blue));
-            }
-            .sk-flow-arrow-head {
-                width: 0; height: 0;
-                border-top: 5px solid transparent;
-                border-bottom: 5px solid transparent;
-                border-left: 8px solid var(--sk-blue);
-            }
-            .sk-flow-node.active {
-                background: linear-gradient(135deg, #f0f8ff, #e6f4fb);
-                border-color: var(--sk-blue);
-                color: var(--sk-blue-dark);
-            }
-
-            /* ════════════ FILTER PANEL ════════════ */
-            .sk-filter-panel {
-                background: var(--sk-surface);
-                border: 1px solid var(--sk-border);
-                border-left: 4px solid var(--sk-blue);
-                border-radius: 10px;
-                padding: 16px 20px 12px;
-                margin-bottom: 20px;
-                box-shadow: 0 2px 10px rgba(13,127,204,0.07);
-            }
-            .sk-filter-label {
-                font-size: 0.69em; font-weight: 700;
-                color: var(--sk-blue); text-transform: uppercase;
-                letter-spacing: 0.12em; margin-bottom: 10px;
-                display: flex; align-items: center; gap: 8px;
-            }
-            .sk-filter-tag {
-                background: var(--sk-bg); border: 1px solid var(--sk-border);
-                color: var(--sk-blue); border-radius: 20px;
-                padding: 2px 10px; font-size: 0.85em; font-weight: 600;
-            }
-
-            /* ════════════ SECTION DIVIDER ════════════ */
-            .sk-divider {
-                display: flex; align-items: center; gap: 14px;
-                margin: 22px 0 16px;
-                font-size: 0.69em; font-weight: 700;
-                color: var(--sk-muted); letter-spacing: 0.14em;
-                text-transform: uppercase;
-            }
-            .sk-divider::before,
-            .sk-divider::after {
-                content: ''; flex: 1; height: 1px; background: var(--sk-border);
-            }
-
-            /* ════════════ STAT CARDS ════════════ */
-            .sk-stat-grid {
-                display: grid; grid-template-columns: repeat(4,1fr);
-                gap: 12px; margin-bottom: 18px;
-            }
-            .sk-stat {
-                background: var(--sk-surface);
-                border-radius: 10px; padding: 16px 14px 12px;
-                border-top: 3px solid var(--sk-color, #1BA0E2);
-                box-shadow: 0 2px 8px rgba(13,127,204,0.07);
-                text-align: center;
-                transition: transform .18s ease, box-shadow .18s ease;
-            }
-            .sk-stat:hover { transform: translateY(-2px); box-shadow: 0 5px 16px rgba(13,127,204,0.13); }
-            .sk-stat-icon  { font-size: 1.35em; margin-bottom: 6px; display: block; }
-            .sk-stat-label {
-                font-size: 0.66em; font-weight: 600; color: var(--sk-muted);
-                text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 5px;
-            }
-            .sk-stat-value {
-                font-size: 1.15em; font-weight: 700;
-                color: var(--sk-color, #1BA0E2); line-height: 1.2;
-            }
-
-            /* ════════════ ACTIVE FILTER BADGE ════════════ */
-            .sk-active-filter {
-                background: #e6f4fb; border: 1px solid var(--sk-border);
-                border-left: 4px solid var(--sk-blue);
-                border-radius: 8px; padding: 10px 18px;
-                margin-bottom: 16px;
-                font-size: 0.82em; color: var(--sk-blue-dark);
-                display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
-            }
-
-            /* ════════════ DOWNLOAD / LOCKED ════════════ */
-            .sk-locked {
-                background: var(--sk-bg); border: 1px solid var(--sk-border);
-                border-left: 3px solid var(--sk-blue); border-radius: 6px;
-                padding: 10px 16px; font-size: 0.82em; color: var(--sk-blue);
-                display: flex; align-items: center; gap: 8px; margin-top: 8px;
-            }
-
-            /* ════════════ EMPTY / WARN ════════════ */
-            .sk-warn {
-                background: var(--sk-bg); border: 1px solid var(--sk-border);
-                border-left: 4px solid var(--sk-blue); border-radius: 8px;
-                padding: 16px 20px; font-size: 0.88em; color: var(--sk-navy);
-            }
-
-            /* ════════════ RADIO PILL — WILAYAH ════════════ */
-            div[data-testid="stRadio"].st-key-sankey_country_radio > div[role="radiogroup"] {
-                display:inline-flex!important; background:#1BA0E2;
-                border-radius:50px; padding:3px; gap:0;
-            }
-            div[data-testid="stRadio"].st-key-sankey_country_radio > div[role="radiogroup"] > label {
-                cursor:pointer; padding:5px 20px!important; border-radius:50px!important;
-                font-size:0.78em!important; font-weight:500!important;
-                color:rgba(255,255,255,0.80)!important; margin:0!important;
-            }
-            div[data-testid="stRadio"].st-key-sankey_country_radio > div[role="radiogroup"] > label > div:first-child { display:none!important; }
-            div[data-testid="stRadio"].st-key-sankey_country_radio > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background:white!important; }
-            div[data-testid="stRadio"].st-key-sankey_country_radio > div[role="radiogroup"] > label:has(input:checked) > div:last-child p { color:#1BA0E2!important; font-weight:700!important; }
-            div[data-testid="stRadio"].st-key-sankey_country_radio > label { display:none!important; }
-            </style>
-
-            <!-- ── Header ── -->
-            <div class="sk-header">
-                <div class="sk-header-inner">
-                    <div class="sk-header-icon">🌊</div>
-                    <div class="sk-header-body">
-                        <div class="sk-header-title">Sankey Flow Analysis</div>
-                        <div class="sk-header-sub">
-                            Visualisasi alur pengeluaran travel ·
-                            Negara → Kota → Hotel · berbasis Invoice Amount
-                        </div>
-                    </div>
-                    <div class="sk-header-badge">
-                        <span class="sk-badge-dot"></span>FLOW MAP
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # ── Flow Path Indicator ─────────────────────────────────────────
-            st.markdown("""
-            <div class="sk-flow-path">
-                <div class="sk-flow-node active">
-                    <span class="sk-flow-node-icon">🌏</span> Negara
-                </div>
-                <div class="sk-flow-arrow">
-                    <div class="sk-flow-arrow-line"></div>
-                    <div class="sk-flow-arrow-head"></div>
-                </div>
-                <div class="sk-flow-node active">
-                    <span class="sk-flow-node-icon">🏙️</span> Kota
-                </div>
-                <div class="sk-flow-arrow">
-                    <div class="sk-flow-arrow-line"></div>
-                    <div class="sk-flow-arrow-head"></div>
-                </div>
-                <div class="sk-flow-node active">
-                    <span class="sk-flow-node-icon">🏨</span> Hotel
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            required_sankey  = ["Country", "Hotel Name", "Invoice Amount"]
-            city_sankey_col  = next(
-                (c for c in ["City", "City Destination"] if c in df_overview.columns), None
-            )
-
-            if not all(c in df_overview.columns for c in required_sankey) or city_sankey_col is None:
-                st.markdown(
-                    '<div class="sk-warn">⚠️ Kolom yang dibutuhkan tidak lengkap untuk Sankey Flow.</div>',
-                    unsafe_allow_html=True
-                )
-            else:
-                # ── Filter Panel ─────────────────────────────────────────────
-                st.markdown("""
-                <div class="sk-filter-panel">
-                    <div class="sk-filter-label">
-                        ⚙ Filter &amp; Parameter
-                        <span class="sk-filter-tag">Semua perubahan langsung memperbarui diagram</span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                row_ctrl = st.columns([1.4, 1, 1, 1, 1])
-
-                with row_ctrl[0]:
-                    st.markdown(
-                        "<div style='font-size:0.70em;font-weight:700;color:#6a8fa0;"
-                        "text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;'>"
-                        "Wilayah</div>",
-                        unsafe_allow_html=True
-                    )
-                    sankey_country_filter = st.radio(
-                        label="sankey_wilayah",
-                        options=["Semua", "Domestik", "Internasional"],
-                        index=0, horizontal=True,
-                        label_visibility="collapsed",
-                        key="sankey_country_radio"
-                    )
-
-                with row_ctrl[1]:
-                    top_n_company = st.selectbox(
-                        "🌏 Negara", [3, 5, 8, 10, 15],
-                        index=1, key="sankey_top_company"
-                    )
-                with row_ctrl[2]:
-                    top_n_city = st.selectbox(
-                        "🏙️ Kota", [5, 8, 10, 15, 20, 30],
-                        index=2, key="sankey_top_city"
-                    )
-                with row_ctrl[3]:
-                    top_n_hotel = st.selectbox(
-                        "🏨 Hotel", [10, 15, 20, 30, 50],
-                        index=2, key="sankey_top_hotel"
-                    )
-                with row_ctrl[4]:
-                    chart_height = st.selectbox(
-                        "📐 Tinggi Chart", [600, 750, 900, 1100],
-                        index=1, key="sankey_height"
-                    )
-
-                # ── Apply wilayah filter ──────────────────────────────────────
-                if "Country" in df_overview.columns:
-                    _df_sk      = df_overview.copy()
-                    _df_sk["_cu"] = _df_sk["Country"].astype(str).str.strip().str.upper()
-                    domestic_alias = ["INDONESIA", "ID", "IDN"]
-
-                    if sankey_country_filter == "Semua":
-                        df_sankey    = _df_sk.drop(columns=["_cu"])
-                        sankey_label = "🌏 Semua"
-                    elif sankey_country_filter == "Domestik":
-                        df_sankey    = _df_sk[_df_sk["_cu"].isin(domestic_alias)].drop(columns=["_cu"])
-                        sankey_label = "🇮🇩 Domestik"
-                    else:
-                        df_sankey    = _df_sk[~_df_sk["_cu"].isin(domestic_alias)].drop(columns=["_cu"])
-                        sankey_label = "🌐 Internasional"
-                else:
-                    df_sankey    = df_overview.copy()
-                    sankey_label = "🌏 Semua"
-
-                if df_sankey.empty:
-                    st.markdown(
-                        f'<div class="sk-warn">⚠️ Tidak ada data untuk filter: <strong>{sankey_label}</strong></div>',
-                        unsafe_allow_html=True
-                    )
-                else:
-                    df_sk = df_sankey.dropna(
-                        subset=["Country", city_sankey_col, "Hotel Name", "Invoice Amount"]
-                    ).copy()
-
-                    # Compute tops
-                    top_companies = (df_sk.groupby("Country")["Invoice Amount"]
-                                     .sum().nlargest(top_n_company).index)
-                    top_cities    = (df_sk.groupby(city_sankey_col)["Invoice Amount"]
-                                     .sum().nlargest(top_n_city).index)
-                    top_hotels    = (df_sk.groupby("Hotel Name")["Invoice Amount"]
-                                     .sum().nlargest(top_n_hotel).index)
-
-                    df_sk = df_sk[
-                        df_sk["Country"].isin(top_companies) &
-                        df_sk[city_sankey_col].isin(top_cities) &
-                        df_sk["Hotel Name"].isin(top_hotels)
-                    ]
-
-                    if df_sk.empty:
-                        st.markdown(
-                            '<div class="sk-warn">⚠️ Tidak ada data setelah filter diterapkan.</div>',
-                            unsafe_allow_html=True
-                        )
-                    else:
-                        # ── Active filter badge ───────────────────────────────
-                        total_flow_spend = df_sk["Invoice Amount"].sum()
-                        total_raw_spend  = df_overview["Invoice Amount"].sum() if "Invoice Amount" in df_overview.columns else 0
-                        coverage_pct     = (total_flow_spend / total_raw_spend * 100) if total_raw_spend > 0 else 0
-
-                        st.markdown(f"""
-                        <div class="sk-active-filter">
-                            <span>🔎 <b>Filter aktif</b></span>
-                            <span>Wilayah: <b>{sankey_label}</b></span>
-                            <span>Top <b>{top_n_company}</b> Negara
-                                · <b>{top_n_city}</b> Kota
-                                · <b>{top_n_hotel}</b> Hotel</span>
-                            <span>Total Spend:
-                                <b>Rp{total_flow_spend:,.0f}</b>
-                                <span style='background:#1BA0E2;color:white;border-radius:20px;
-                                             padding:1px 10px;font-size:0.88em;margin-left:4px;'>
-                                    {coverage_pct:.1f}% dari total
-                                </span>
-                            </span>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        # ── Stat Cards ────────────────────────────────────────
-                        n_co = df_sk["Country"].nunique()
-                        n_ci = df_sk[city_sankey_col].nunique()
-                        n_ht = df_sk["Hotel Name"].nunique()
-                        n_rn = df_sk["Number of Rooms Night"].sum() if "Number of Rooms Night" in df_sk.columns else 0
-
-                        st.markdown(f"""
-                        <div class="sk-stat-grid">
-                            <div class="sk-stat" style="--sk-color:#1BA0E2;">
-                                <span class="sk-stat-icon">🏢</span>
-                                <div class="sk-stat-label">Negara</div>
-                                <div class="sk-stat-value">{n_co}</div>
-                            </div>
-                            <div class="sk-stat" style="--sk-color:#1494C6;">
-                                <span class="sk-stat-icon">🏙️</span>
-                                <div class="sk-stat-label">Kota Tujuan</div>
-                                <div class="sk-stat-value">{n_ci}</div>
-                            </div>
-                            <div class="sk-stat" style="--sk-color:#0D7FCC;">
-                                <span class="sk-stat-icon">🏨</span>
-                                <div class="sk-stat-label">Hotel</div>
-                                <div class="sk-stat-value">{n_ht}</div>
-                            </div>
-                            <div class="sk-stat" style="--sk-color:#062440;">
-                                <span class="sk-stat-icon">💰</span>
-                                <div class="sk-stat-label">Total Spend</div>
-                                <div class="sk-stat-value">Rp{total_flow_spend/1e9:.1f}B</div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        # ── Build Sankey data ─────────────────────────────────
-                        co_ci = (df_sk.groupby(["Country", city_sankey_col])
-                                 ["Invoice Amount"].sum().reset_index())
-                        ci_ho = (df_sk.groupby([city_sankey_col, "Hotel Name"])
-                                 ["Invoice Amount"].sum().reset_index())
-
-                        companies = list(co_ci["Country"].unique())
-                        cities    = list(co_ci[city_sankey_col].unique())
-                        hotels    = list(ci_ho["Hotel Name"].unique())
-                        node_labels = companies + cities + hotels
-
-                        co_idx = {c: i                              for i, c in enumerate(companies)}
-                        ci_idx = {c: len(companies) + i              for i, c in enumerate(cities)}
-                        ho_idx = {h: len(companies)+len(cities)+i    for i, h in enumerate(hotels)}
-
-                        sources, targets, values = [], [], []
-                        for _, row in co_ci.iterrows():
-                            if row["Country"] in co_idx and row[city_sankey_col] in ci_idx:
-                                sources.append(co_idx[row["Country"]])
-                                targets.append(ci_idx[row[city_sankey_col]])
-                                values.append(row["Invoice Amount"])
-                        for _, row in ci_ho.iterrows():
-                            if row[city_sankey_col] in ci_idx and row["Hotel Name"] in ho_idx:
-                                sources.append(ci_idx[row[city_sankey_col]])
-                                targets.append(ho_idx[row["Hotel Name"]])
-                                values.append(row["Invoice Amount"])
-
-                        # MTRAX blue-family node colors
-                        # Companies → blue shades, Cities → teal/mid-blue, Hotels → lime+navy
-                        CO_COLORS = [
-                            "#1BA0E2", "#1494C6", "#0D7FCC", "#47b5e8",
-                            "#75caf0", "#a3dcf6", "#cce4f4", "#e6f4fb",
-                            "#5a8fc0", "#2e6fa0", "#062440", "#0a3d62",
-                            "#1565C0", "#1976D2", "#1E88E5", "#42A5F5"
-                        ]
-                        CI_COLORS = [
-                            "#0D7FCC", "#1494C6", "#1BA0E2", "#47b5e8",
-                            "#75caf0", "#a3dcf6", "#5a8fc0", "#2e6fa0",
-                            "#0a4d7a", "#1565C0", "#1976D2", "#1E88E5",
-                            "#42A5F5", "#64B5F6", "#90CAF9", "#BBDEFB"
-                        ]
-                        HO_COLORS = [
-                            "#98ea16", "#e2f871", "#b8e040", "#cce84a",
-                            "#a8d030", "#062440", "#0D7FCC", "#1BA0E2",
-                            "#47b5e8", "#5a8fc0", "#2e6fa0", "#0a3d62",
-                            "#1494C6", "#75caf0", "#a3dcf6", "#cce4f4"
-                        ]
-
-                        co_colors = [CO_COLORS[i % len(CO_COLORS)] for i in range(len(companies))]
-                        ci_colors = [CI_COLORS[i % len(CI_COLORS)] for i in range(len(cities))]
-                        ho_colors = [HO_COLORS[i % len(HO_COLORS)] for i in range(len(hotels))]
-                        node_colors = co_colors + ci_colors + ho_colors
-
-                        link_colors = ["rgba(27,160,226,0.28)"] * len(sources)
-
-                        # ── Sankey figure ─────────────────────────────────────
-                        st.markdown('<div class="sk-divider">Diagram Sankey</div>', unsafe_allow_html=True)
-
-                        fig_sankey = go.Figure(go.Sankey(
-                            arrangement="snap",
-                            textfont=dict(
-                                family="'Segoe UI', Arial, sans-serif",
-                                size=11, color="#1a2a3a"
-                            ),
-                            node=dict(
-                                pad=24, thickness=18,
-                                line=dict(color="rgba(255,255,255,0.6)", width=0.6),
-                                label=node_labels,
-                                color=node_colors
-                            ),
-                            link=dict(
-                                source=sources,
-                                target=targets,
-                                value=values,
-                                color=link_colors
-                            )
-                        ))
-
-                        fig_sankey.update_layout(
-                            paper_bgcolor="#f0f8ff",
-                            plot_bgcolor="#f0f8ff",
-                            height=chart_height,
-                            margin=dict(l=16, r=16, t=58, b=16),
-                            title=dict(
-                                text=(
-                                    f"<b>Sankey Flow: Negara → Kota → Hotel</b>"
-                                    f"<span style='color:#6a8fa0;font-size:11px;'>"
-                                    f"  ·  Top {top_n_company} Negara"
-                                    f"  ·  Top {top_n_city} Kota"
-                                    f"  ·  Top {top_n_hotel} Hotel"
-                                    f"  ·  {sankey_label}"
-                                    f"</span>"
-                                ),
-                                x=0.01, xanchor="left",
-                                font=dict(size=13, color="#1a2a3a")
-                            )
-                        )
-
-                        st.plotly_chart(fig_sankey, use_container_width=True)
-
-                        # ── Top Tables ────────────────────────────────────────
-                        st.markdown('<div class="sk-divider">Tabel Ringkasan</div>', unsafe_allow_html=True)
-
-                        tbl_col1, tbl_col2, tbl_col3 = st.columns(3)
-
-                        top_co_tbl = (df_sk.groupby("Country")["Invoice Amount"]
-                                      .sum().sort_values(ascending=False)
-                                      .reset_index().head(top_n_company))
-                        top_ci_tbl = (df_sk.groupby(city_sankey_col)["Invoice Amount"]
-                                      .sum().sort_values(ascending=False)
-                                      .reset_index().head(top_n_city))
-                        top_ht_tbl = (df_sk.groupby("Hotel Name")["Invoice Amount"]
-                                      .sum().sort_values(ascending=False)
-                                      .reset_index().head(top_n_hotel))
-
-                        with tbl_col1:
-                            st.markdown("""
-                            <div style='background:#f0f8ff;border:1px solid #cce4f4;
-                                        border-left:3px solid #1BA0E2;border-radius:8px;
-                                        padding:10px 16px 4px;margin-bottom:8px;'>
-                                <div style='font-size:0.72em;font-weight:700;color:#1BA0E2;
-                                            text-transform:uppercase;letter-spacing:0.08em;'>
-                                    🌏 Top Negara
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            st.dataframe(
-                                top_co_tbl.style
-                                .format({"Invoice Amount": "Rp{:,.0f}"})
-                                .background_gradient(subset=["Invoice Amount"], cmap="Blues"),
-                                use_container_width=True, hide_index=True
-                            )
-
-                        with tbl_col2:
-                            st.markdown("""
-                            <div style='background:#f0f8ff;border:1px solid #cce4f4;
-                                        border-left:3px solid #1494C6;border-radius:8px;
-                                        padding:10px 16px 4px;margin-bottom:8px;'>
-                                <div style='font-size:0.72em;font-weight:700;color:#1494C6;
-                                            text-transform:uppercase;letter-spacing:0.08em;'>
-                                    🏙️ Top Kota
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            st.dataframe(
-                                top_ci_tbl.style
-                                .format({"Invoice Amount": "Rp{:,.0f}"})
-                                .background_gradient(subset=["Invoice Amount"], cmap="Blues"),
-                                use_container_width=True, hide_index=True
-                            )
-
-                        with tbl_col3:
-                            st.markdown("""
-                            <div style='background:#f0f8ff;border:1px solid #cce4f4;
-                                        border-left:3px solid #0D7FCC;border-radius:8px;
-                                        padding:10px 16px 4px;margin-bottom:8px;'>
-                                <div style='font-size:0.72em;font-weight:700;color:#0D7FCC;
-                                            text-transform:uppercase;letter-spacing:0.08em;'>
-                                    🏨 Top Hotel
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            st.dataframe(
-                                top_ht_tbl.style
-                                .format({"Invoice Amount": "Rp{:,.0f}"})
-                                .background_gradient(subset=["Invoice Amount"], cmap="PuBu"),
-                                use_container_width=True, hide_index=True
-                            )
-
-                        # ── Download ──────────────────────────────────────────
-                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-                        output_sankey = BytesIO()
-                        export_df = (
-                            df_sk.groupby(["Country", city_sankey_col, "Hotel Name"])
-                            ["Invoice Amount"].sum()
-                            .reset_index()
-                            .sort_values("Invoice Amount", ascending=False)
-                        )
-                        export_df.to_excel(output_sankey, index=False, sheet_name="Sankey Flow")
-                        output_sankey.seek(0)
-
-                        if can_download():
-                            st.download_button(
-                                label="⬇️ Download Data Sankey Flow (Excel)",
-                                data=output_sankey,
-                                file_name=(
-                                    f"sankey_flow_{sankey_label.replace('🇮🇩','').replace('🌐','').strip()}_"
-                                    f"{datetime.now().strftime('%Y%m%d')}.xlsx"
-                                ),
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key="dl_sankey_flow")
-                        else:
-                            st.markdown(
-                                '<div class="sk-locked">🔒 Download tidak tersedia untuk akun ini</div>',
-                                unsafe_allow_html=True
-                            )
-
-        # ======================================
-        # TAB 8: DATA HOTEL
-        # ======================================
-        with tab8:
-            def _render_tab8():
-                st.markdown("<div class='section-title'>Data Hotel</div>", unsafe_allow_html=True)
-
-                # =========================
-                # FILTER DOMESTIK / INTERNATIONAL
-                # =========================
-                if "Country" in df_overview.columns:
-
-                    st.markdown("""
-                    <style>
-                    div[data-testid="stRadio"].st-key-tab8_country_radio > div[role="radiogroup"]{
-                        display:inline-flex!important;
-                        background:#1BA0E2;
-                        border-radius:50px;
-                        padding:3px;
-                    }
-                    div[data-testid="stRadio"].st-key-tab8_country_radio > div[role="radiogroup"] > label{
-                        cursor:pointer;
-                        padding:4px 16px!important;
-                        border-radius:50px!important;
-                        font-size:0.78em!important;
-                        font-weight:500!important;
-                        color:rgba(255,255,255,0.80)!important;
-                        margin:0!important;
-                    }
-                    div[data-testid="stRadio"].st-key-tab8_country_radio > div[role="radiogroup"] > label > div:first-child{
-                        display:none!important;
-                    }
-                    div[data-testid="stRadio"].st-key-tab8_country_radio 
-                    > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked){
-                        background:white!important;
-                        color:#1BA0E2!important;
-                    }
-                    div[data-testid="stRadio"].st-key-tab8_country_radio 
-                    > div[role="radiogroup"] > label:has(input:checked) > div:last-child p{
-                        color:#1BA0E2!important;
-                    }
-                    div[data-testid="stRadio"].st-key-tab8_country_radio > label{
-                        display:none!important;
-                    }
-                    </style>
-                    """, unsafe_allow_html=True)
-
-                    tab8_country_filter = st.radio(
-                        label="filter_tab8",
-                        options=["Domestik", "Internasional"],
-                        index=0,
-                        horizontal=True,
-                        label_visibility="collapsed",
-                        key="tab8_country_radio"
-                    )
-
-                    # Copy dataframe
-                    _df_tab8 = df_overview.copy()
-
-                    # Normalisasi country
-                    _df_tab8["_country_up"] = (
-                        _df_tab8["Country"]
-                        .astype(str)
-                        .str.strip()
-                        .str.upper()
-                    )
-
-                    # Alias domestik (jika data tidak konsisten)
-                    domestic_alias = ["INDONESIA", "ID", "IDN"]
-
-                    if tab8_country_filter == "Domestik":
-                        df_tab8 = _df_tab8[_df_tab8["_country_up"].isin(domestic_alias)].copy()
-                        tab8_label = "🇮🇩 Domestik"
-                    else:
-                        df_tab8 = _df_tab8[~_df_tab8["_country_up"].isin(domestic_alias)].copy()
-                        tab8_label = "🌍 Internasional"
-
-                    df_tab8.drop(columns=["_country_up"], inplace=True)
-
-                    if df_tab8.empty:
-                        st.warning(f"⚠️ Tidak ada data untuk filter: {tab8_label}")
-                        return  # keluar dari tab ini saja, tidak menghentikan tab lain
-
-                else:
-                    df_tab8 = df_overview.copy()
-                    tab8_label = "Semua Data"
-
-                # =========================
-                # VISUALISASI
-                # =========================
-                cols1, cols2 = st.columns(2)
-
-                # ==================================================
-                # COL 1 — TOP 100 HOTEL
-                # ==================================================
-                with cols1:
-                    if "Hotel Name" in df_tab8.columns and "Number of Rooms Night" in df_tab8.columns:
-
-                        top_hotels_tab = (
-                            df_tab8.groupby("Hotel Name")["Number of Rooms Night"]
-                            .sum()
-                            .sort_values(ascending=False)
-                            .head(100)
-                            .reset_index()
-                        )
-
-                        top_hotels_tab["Rank"] = top_hotels_tab.index + 1
-                        top_hotels_tab["Highlight"] = top_hotels_tab["Rank"].apply(
-                            lambda x: "Top 20" if x <= 20 else "Others"
-                        )
-
-                        fig_hotels = px.bar(
-                            top_hotels_tab,
-                            x="Number of Rooms Night",
-                            y="Hotel Name",
-                            orientation="h",
-                            color="Highlight",
-                            color_discrete_map={
-                                "Top 20": "#1BA0E2",
-                                "Others": "#e0e0e0"
-                            },
-                            title=f"Top 100 Hotels by Total Room Nights · {tab8_label}"
-                        )
-
-                        fig_hotels.update_traces(
-                            texttemplate="%{x:,.0f}",
-                            textposition="outside",
-                            textfont_size=10
-                        )
-
-                        fig_hotels.update_layout(
-                            height=1700,
-                            yaxis=dict(
-                                autorange="reversed",
-                                tickfont=dict(size=10)
-                            ),
-                            plot_bgcolor="white",
-                            paper_bgcolor="white",
-                            margin=dict(l=10, r=80, t=50, b=10)
-                        )
-
-                        st.plotly_chart(fig_hotels, use_container_width=True)
-
-                        # Download — tambah Average Room Rate per hotel
-                        # (total Invoice Amount ÷ total Room Nights, sama dengan "Avg Rate/Night"
-                        # di Price/Room Intelligence; hanya baris dengan RN > 0 & nominal valid)
-                        dl_hotels = top_hotels_tab.drop(columns=["Rank", "Highlight"])
-                        # Kolom City setelah Hotel Name (kota yang paling sering muncul per hotel)
-                        _city_dl = next((c for c in ["City", "City Destination"] if c in df_tab8.columns), None)
-                        if _city_dl:
-                            _hc = df_tab8[["Hotel Name", _city_dl]].dropna()
-                            _hc = _hc[_hc[_city_dl].astype(str).str.strip().str.lower() != "nan"]
-                            _hotel_city = (_hc.groupby("Hotel Name")[_city_dl]
-                                           .agg(lambda s: s.value_counts().index[0]))
-                            dl_hotels.insert(1, "City", dl_hotels["Hotel Name"].map(_hotel_city))
-                        if "Invoice Amount" in df_tab8.columns:
-                            _rate_src = df_tab8[["Hotel Name", "Number of Rooms Night", "Invoice Amount"]].copy()
-                            _rate_src["Number of Rooms Night"] = pd.to_numeric(_rate_src["Number of Rooms Night"], errors="coerce")
-                            _rate_src["Invoice Amount"] = pd.to_numeric(_rate_src["Invoice Amount"], errors="coerce")
-                            _rate_src = _rate_src[(_rate_src["Number of Rooms Night"] > 0) & _rate_src["Invoice Amount"].notna()]
-                            _rate = (_rate_src.groupby("Hotel Name")[["Invoice Amount", "Number of Rooms Night"]].sum())
-                            _rate["Average Room Rate"] = (_rate["Invoice Amount"] /
-                                                         _rate["Number of Rooms Night"].replace(0, np.nan)).round(0)
-                            dl_hotels = dl_hotels.merge(_rate[["Average Room Rate"]], how="left",
-                                                        left_on="Hotel Name", right_index=True)
-                        output_hotels = excel_bytes_with_formats(
-                            dl_hotels, "Top 100 Hotels",
-                            money_cols=("Average Room Rate",),
-                            int_cols=("Number of Rooms Night",),
-                        )
-
-                        if can_download():
-                            st.download_button(
-                                label="⬇️ Download Data",
-                                data=output_hotels,
-                                file_name="top_100_hotels_by_room_nights.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key="dl_top100_hotels")
-                        else:
-                            st.markdown("""
-                            <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;
-                            border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>
-                            🔒 Download tidak tersedia untuk akun ini
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                # ==================================================
-                # COL 2 — TOP 100 CITY
-                # ==================================================
-                with cols2:
-
-                    city_col = next(
-                        (c for c in ["City", "City Destination"] if c in df_tab8.columns),
-                        None
-                    )
-
-                    if city_col and "Number of Rooms Night" in df_tab8.columns:
-
-                        top_cities_tab = (
-                            df_tab8.groupby(city_col)["Number of Rooms Night"]
-                            .sum()
-                            .sort_values(ascending=False)
-                            .head(100)
-                            .reset_index()
-                        )
-
-                        top_cities_tab["Rank"] = top_cities_tab.index + 1
-                        top_cities_tab["Highlight"] = top_cities_tab["Rank"].apply(
-                            lambda x: "Top 20" if x <= 20 else "Others"
-                        )
-
-                        fig_cities_tab = px.bar(
-                            top_cities_tab,
-                            x="Number of Rooms Night",
-                            y=city_col,
-                            orientation="h",
-                            color="Highlight",
-                            color_discrete_map={
-                                "Top 20": "#1BA0E2",
-                                "Others": "#e0e0e0"
-                            },
-                            title=f"Top 100 Cities by Total Room Nights · {tab8_label}"
-                        )
-
-                        fig_cities_tab.update_traces(
-                            texttemplate="%{x:,.0f}",
-                            textposition="outside",
-                            textfont_size=10
-                        )
-
-                        fig_cities_tab.update_layout(
-                            height=1700,
-                            yaxis=dict(
-                                autorange="reversed",
-                                tickfont=dict(size=10)
-                            ),
-                            plot_bgcolor="white",
-                            paper_bgcolor="white",
-                            margin=dict(l=10, r=80, t=50, b=10)
-                        )
-
-                        st.plotly_chart(fig_cities_tab, use_container_width=True)
-
-                        # Download
-                        output_cities = BytesIO()
-                        top_cities_tab.drop(columns=["Rank", "Highlight"]).to_excel(
-                            output_cities,
-                            index=False,
-                            sheet_name="Top 100 Cities"
-                        )
-                        output_cities.seek(0)
-
-                        if can_download():
-                            st.download_button(
-                                label="⬇️ Download Data",
-                                data=output_cities,
-                                file_name="top_100_cities_by_room_nights.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key="dl_top100_cities")
-                        else:
-                            st.markdown("""
-                            <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;
-                            border-radius:6px;padding:10px 16px;font-size:0.82em;color:#1BA0E2;'>
-                            🔒 Download tidak tersedia untuk akun ini
-                            </div>
-                            """, unsafe_allow_html=True)
-
-            # ======================================
-            # TAB 9: DENDROGRAM CLUSTERING — MTRAX Blue Theme
-            # ======================================
-            _render_tab8()
-        with tab9:
-            from plotly.subplots import make_subplots as _make_subplots
-            from scipy.cluster.hierarchy import linkage as sk_linkage, dendrogram as scipy_dendrogram, fcluster
-            from sklearn.preprocessing import normalize as sk_normalize
-
-            # ── CSS ─────────────────────────────────────────────────────────
-            st.markdown("""
-            <style>
-            :root {
-                --dnd-blue:      #1BA0E2;
-                --dnd-blue-mid:  #1494C6;
-                --dnd-blue-dark: #0D7FCC;
-                --dnd-navy:      #062440;
-                --dnd-lime:      #e2f871;
-                --dnd-lime-v:    #98ea16;
-                --dnd-bg:        #f0f8ff;
-                --dnd-border:    #cce4f4;
-                --dnd-surface:   #ffffff;
-                --dnd-muted:     #6a8fa0;
-                --dnd-text:      #1a2a3a;
-            }
-
-            /* ════════════ HEADER ════════════ */
-            .dnd-header {
-                background: linear-gradient(135deg, #062440 0%, #0D7FCC 52%, #1BA0E2 100%);
-                border-radius: 14px;
-                padding: 28px 36px;
-                margin-bottom: 24px;
-                position: relative;
-                overflow: hidden;
-                box-shadow: 0 8px 32px rgba(13,127,204,0.28);
-            }
-            .dnd-header::before {
-                content: '';
-                position: absolute; top: -70px; right: -50px;
-                width: 240px; height: 240px; border-radius: 50%;
-                background: rgba(255,255,255,0.05); pointer-events: none;
-            }
-            .dnd-header::after {
-                content: '';
-                position: absolute; bottom: -50px; left: 28%;
-                width: 200px; height: 200px; border-radius: 50%;
-                background: rgba(226,248,113,0.08); pointer-events: none;
-            }
-            .dnd-header-inner {
-                display: flex; align-items: center; gap: 18px;
-                position: relative; z-index: 1;
-            }
-            .dnd-header-icon {
-                width: 54px; height: 54px; border-radius: 13px;
-                background: rgba(255,255,255,0.14);
-                border: 1px solid rgba(255,255,255,0.24);
-                display: flex; align-items: center; justify-content: center;
-                font-size: 1.7em; flex-shrink: 0;
-            }
-            .dnd-header-body  { flex: 1; }
-            .dnd-header-title { color: #fff; font-size: 1.45em; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
-            .dnd-header-sub   { color: rgba(255,255,255,0.58); font-size: 0.82em; margin-top: 4px; }
-            .dnd-header-badge {
-                display: inline-flex; align-items: center; gap: 7px;
-                background: rgba(255,255,255,0.12);
-                border: 1px solid rgba(255,255,255,0.22);
-                border-radius: 100px; padding: 6px 16px;
-                font-size: 0.72em; font-weight: 600;
-                color: rgba(255,255,255,0.88); letter-spacing: 0.06em;
-                white-space: nowrap;
-            }
-            .dnd-badge-dot {
-                width: 6px; height: 6px; border-radius: 50%;
-                background: var(--dnd-lime);
-                box-shadow: 0 0 6px var(--dnd-lime);
-                animation: dnd-blink 2s ease infinite;
-            }
-            @keyframes dnd-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-            /* ════════════ SECTION DIVIDER ════════════ */
-            .dnd-divider {
-                display: flex; align-items: center; gap: 14px;
-                margin: 26px 0 18px;
-                font-size: 0.69em; font-weight: 700;
-                color: var(--dnd-muted); letter-spacing: 0.14em;
-                text-transform: uppercase;
-            }
-            .dnd-divider::before,
-            .dnd-divider::after { content: ''; flex: 1; height: 1px; background: var(--dnd-border); }
-
-            /* ════════════ FILTER PANEL ════════════ */
-            .dnd-filter-panel {
-                background: var(--dnd-surface);
-                border: 1px solid var(--dnd-border);
-                border-left: 4px solid var(--dnd-blue);
-                border-radius: 10px;
-                padding: 16px 20px 12px;
-                margin-bottom: 20px;
-                box-shadow: 0 2px 10px rgba(13,127,204,0.07);
-            }
-            .dnd-filter-label {
-                font-size: 0.69em; font-weight: 700;
-                color: var(--dnd-blue); text-transform: uppercase;
-                letter-spacing: 0.12em; margin-bottom: 10px;
-                display: flex; align-items: center; gap: 8px;
-            }
-            .dnd-filter-tag {
-                background: var(--dnd-bg); border: 1px solid var(--dnd-border);
-                color: var(--dnd-blue); border-radius: 20px;
-                padding: 2px 10px; font-size: 0.85em; font-weight: 600;
-            }
-
-            /* ════════════ KPI CARDS ════════════ */
-            .dnd-kpi-grid {
-                display: grid; grid-template-columns: repeat(4,1fr);
-                gap: 14px; margin-bottom: 20px;
-            }
-            .dnd-kpi {
-                background: var(--dnd-surface);
-                border-radius: 10px; padding: 18px 16px 14px;
-                border-top: 3px solid var(--dnd-color, #1BA0E2);
-                box-shadow: 0 2px 10px rgba(13,127,204,0.08);
-                transition: transform .18s ease, box-shadow .18s ease;
-            }
-            .dnd-kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(13,127,204,0.15); }
-            .dnd-kpi-label {
-                font-size: 0.67em; font-weight: 600; color: var(--dnd-muted);
-                text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 8px;
-            }
-            .dnd-kpi-value { font-size: 1.35em; font-weight: 700; color: var(--dnd-color, #1BA0E2); line-height: 1.2; }
-            .dnd-kpi-sub   { font-size: 0.72em; color: var(--dnd-muted); margin-top: 4px; }
-
-            /* ════════════ CLUSTER CARDS ════════════ */
-            .dnd-cluster-grid {
-                display: grid; grid-template-columns: repeat(4,1fr);
-                gap: 14px; margin-top: 8px;
-            }
-            .dnd-cluster-card {
-                background: var(--dnd-surface);
-                border-radius: 12px; padding: 18px 18px 16px;
-                border-top: 4px solid var(--cl-color, #1BA0E2);
-                box-shadow: 0 2px 12px rgba(13,127,204,0.08);
-                transition: transform .18s ease, box-shadow .18s ease;
-                position: relative; overflow: hidden;
-            }
-            .dnd-cluster-card::before {
-                content: '';
-                position: absolute; top: -20px; right: -20px;
-                width: 80px; height: 80px; border-radius: 50%;
-                background: var(--cl-color, #1BA0E2);
-                opacity: 0.06;
-            }
-            .dnd-cluster-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(13,127,204,0.14); }
-
-            .dnd-cluster-head {
-                display: flex; justify-content: space-between;
-                align-items: center; margin-bottom: 12px;
-            }
-            .dnd-cluster-name {
-                font-weight: 700; font-size: 0.92em;
-                color: var(--cl-color, #1BA0E2);
-            }
-            .dnd-cluster-count {
-                background: color-mix(in srgb, var(--cl-color, #1BA0E2) 12%, white);
-                color: var(--cl-color, #1BA0E2);
-                border: 1px solid color-mix(in srgb, var(--cl-color, #1BA0E2) 25%, white);
-                border-radius: 100px; padding: 2px 10px;
-                font-size: 0.70em; font-weight: 700;
-            }
-            .dnd-cluster-members {
-                font-size: 0.74em; color: #4a5a6a;
-                line-height: 1.6; margin-bottom: 14px;
-                min-height: 48px;
-            }
-            .dnd-cluster-stat {
-                background: var(--dnd-bg);
-                border-radius: 8px; padding: 10px 12px;
-                border-left: 3px solid var(--cl-color, #1BA0E2);
-            }
-            .dnd-cluster-stat-value {
-                font-size: 1.0em; font-weight: 700;
-                color: var(--cl-color, #1BA0E2); line-height: 1.2;
-            }
-            .dnd-cluster-stat-label {
-                font-size: 0.68em; font-weight: 600;
-                color: var(--dnd-muted); margin-top: 2px;
-            }
-
-            /* ════════════ INSIGHT BOX ════════════ */
-            .dnd-insight {
-                background: var(--dnd-bg);
-                border: 1px solid var(--dnd-border);
-                border-left: 4px solid var(--dnd-blue);
-                border-radius: 8px; padding: 14px 18px;
-                font-size: 0.84em; color: #2a3a4a; line-height: 1.65;
-                margin-top: 4px;
-            }
-            .dnd-insight strong { color: var(--dnd-navy); }
-            .dnd-insight em     { color: var(--dnd-blue); font-style: normal; font-weight: 600; }
-            </style>
-
-            <!-- ── Header ── -->
-            <div class="dnd-header">
-                <div class="dnd-header-inner">
-                    <div class="dnd-header-icon">🌿</div>
-                    <div class="dnd-header-body">
-                        <div class="dnd-header-title">Hierarchical Clustering — Dendrogram</div>
-                        <div class="dnd-header-sub">Segmentasi pola perjalanan berbasis kemiripan · Ward / Complete / Average / Single linkage</div>
-                    </div>
-                    <div class="dnd-header-badge">
-                        <span class="dnd-badge-dot"></span>CLUSTERING
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # ── Filter Panel ────────────────────────────────────────────────
-            st.markdown("""
-            <div class="dnd-filter-panel">
-                <div class="dnd-filter-label">
-                    ⚙ Parameter Clustering
-                    <span class="dnd-filter-tag">Semua perubahan langsung memperbarui chart</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            dend_r1 = st.columns([2, 2, 2, 2])
-            with dend_r1[0]:
-                dend_entity = st.selectbox(
-                    "🎯 Entitas", ["Kota", "Hotel"], key="dend_entity",
-                    help="Pilih entitas yang akan dikelompokkan"
-                )
-            with dend_r1[1]:
-                dend_metric_col = st.selectbox(
-                    "📐 Metric",
-                    ["Invoice Amount", "Number of Rooms Night"],
-                    key="dend_metric",
-                    help="Metric yang digunakan sebagai dasar clustering"
-                )
-            with dend_r1[2]:
-                dend_method = st.selectbox(
-                    "🔗 Linkage",
-                    ["ward", "complete", "average", "single"],
-                    key="dend_method",
-                    help="Algoritma penggabungan klaster"
-                )
-            with dend_r1[3]:
-                dend_top_n = st.selectbox(
-                    "🔢 Top N", [10, 15, 20, 25, 30, 40, 50],
-                    index=2, key="dend_top_n",
-                    help="Jumlah entitas teratas yang dianalisis"
-                )
-
-            dend_r2 = st.columns([3, 2])
-            with dend_r2[0]:
-                n_clusters_dend = st.slider(
-                    "🎨 Jumlah Klaster", 2, 8, 4, key="dend_clusters",
-                    help="Jumlah kelompok yang terbentuk dari pemotongan dendrogram"
-                )
-            with dend_r2[1]:
-                dend_show_bar = st.checkbox(
-                    "Tampilkan bar spend chart", value=True, key="dend_bar"
-                )
-
-            # ── Data preparation ─────────────────────────────────────────────
-            # Profil tiap entitas = pola bulanan (kolom perusahaan tidak ada di sumber data)
-            _df_dend_src = df_all.copy()
-            if "Issue Time" in _df_dend_src.columns:
-                _df_dend_src["Bulan"] = pd.to_datetime(_df_dend_src["Issue Time"], errors="coerce",
-                                                       dayfirst=True).dt.to_period("M").astype(str)
-            _city_col = next((c for c in _df_dend_src.columns if c in ["City", "City Destination"]), None)
-            entity_map_dend  = {"Hotel": "Hotel Name", "Kota": _city_col}
-            pivot_rows_dend  = {"Hotel": "Bulan", "Kota": "Bulan"}
-
-            entity_col_dend = entity_map_dend.get(dend_entity)
-            row_col_dend    = pivot_rows_dend.get(dend_entity)
-            metric_col_dend = next((c for c in _df_dend_src.columns if c == dend_metric_col), None)
-
-            if (entity_col_dend and entity_col_dend in _df_dend_src.columns
-                    and metric_col_dend
-                    and row_col_dend and row_col_dend in _df_dend_src.columns):
-
-                df_dend = _df_dend_src[[entity_col_dend, row_col_dend, metric_col_dend]].dropna()
-                top_ent = df_dend.groupby(entity_col_dend)[metric_col_dend].sum().nlargest(dend_top_n).index
-                df_dend = df_dend[df_dend[entity_col_dend].isin(top_ent)]
-                pivot_dend = (df_dend.groupby([entity_col_dend, row_col_dend])[metric_col_dend]
-                              .sum().unstack(fill_value=0))
-                if pivot_dend.shape[0] >= 2 and pivot_dend.shape[1] >= 1:
-                    X_dend = sk_normalize(pivot_dend.values, norm="l2")
-                else:
-                    X_dend = np.empty((0, 0))
-                    st.info("ℹ️ Data belum cukup untuk membentuk dendrogram dengan pilihan ini "
-                            "(minimal 2 entitas). Coba ganti Entitas/Metric atau longgarkan filter.")
-
-                if X_dend.shape[0] >= 2:
-                    Z_dend       = sk_linkage(X_dend, method=dend_method, metric="euclidean")
-                    cluster_ids  = fcluster(Z_dend, t=n_clusters_dend, criterion="maxclust")
-
-                    # MTRAX-aligned cluster palette — blue family + lime accents
-                    DEND_PALETTE = [
-                        "#1BA0E2",  # MTRAX blue
-                        "#0D7FCC",  # blue dark
-                        "#98ea16",  # lime vivid
-                        "#062440",  # navy
-                        "#1494C6",  # blue mid
-                        "#e2f871",  # lime light
-                        "#47b5e8",  # blue light
-                        "#5a8fc0",  # steel blue
-                    ]
-
-                    def fmt_val(v, col):
-                        return f"Rp{v:,.0f}" if col == "Invoice Amount" else f"{v:,.0f}"
-
-                    labels_list     = pivot_dend.index.tolist()
-                    total_spend_dend = df_dend[metric_col_dend].sum()
-                    avg_spend_dend   = total_spend_dend / len(pivot_dend) if len(pivot_dend) else 0
-                    leaf_colors_map  = {
-                        lbl: DEND_PALETTE[(cid - 1) % len(DEND_PALETTE)]
-                        for lbl, cid in zip(labels_list, cluster_ids)
-                    }
-
-                    # ── KPI Cards ──────────────────────────────────────────
-                    st.markdown('<div class="dnd-divider">Ringkasan Analisis</div>', unsafe_allow_html=True)
-
-                    st.markdown(f"""
-                    <div class="dnd-kpi-grid">
-                        <div class="dnd-kpi" style="--dnd-color:#1BA0E2;">
-                            <div class="dnd-kpi-label">Total Entitas</div>
-                            <div class="dnd-kpi-value">{len(pivot_dend)}</div>
-                            <div class="dnd-kpi-sub">dari Top {dend_top_n} {dend_entity}</div>
-                        </div>
-                        <div class="dnd-kpi" style="--dnd-color:#0D7FCC;">
-                            <div class="dnd-kpi-label">Jumlah Klaster</div>
-                            <div class="dnd-kpi-value">{n_clusters_dend}</div>
-                            <div class="dnd-kpi-sub">linkage: {dend_method}</div>
-                        </div>
-                        <div class="dnd-kpi" style="--dnd-color:#1494C6;">
-                            <div class="dnd-kpi-label">Total {dend_metric_col[:16]}</div>
-                            <div class="dnd-kpi-value">{fmt_val(total_spend_dend, metric_col_dend)}</div>
-                            <div class="dnd-kpi-sub">keseluruhan entitas</div>
-                        </div>
-                        <div class="dnd-kpi" style="--dnd-color:#062440;">
-                            <div class="dnd-kpi-label">Rata-rata per Entitas</div>
-                            <div class="dnd-kpi-value">{fmt_val(avg_spend_dend, metric_col_dend)}</div>
-                            <div class="dnd-kpi-sub">baseline clustering</div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    # ── Build dendrogram ────────────────────────────────────
-                    color_thresh_dend = Z_dend[-(n_clusters_dend - 1), 2] if n_clusters_dend > 1 else 0
-                    dend_no_plot = scipy_dendrogram(
-                        Z_dend, labels=labels_list, no_plot=True,
-                        color_threshold=color_thresh_dend
-                    )
-                    leaves_order    = dend_no_plot["leaves"]
-                    labels_ordered  = [labels_list[i] for i in leaves_order]
-                    leaf_xs         = {lbl: 5 + 10 * i for i, lbl in enumerate(labels_ordered)}
-                    spend_series    = (df_dend.groupby(entity_col_dend)[metric_col_dend]
-                                       .sum().reindex(labels_ordered).fillna(0))
-
-                    # ── Build Plotly figure ─────────────────────────────────
-                    st.markdown('<div class="dnd-divider">Dendrogram Visualisasi</div>', unsafe_allow_html=True)
-
-                    if dend_show_bar:
-                        fig_ply = _make_subplots(
-                            rows=1, cols=2,
-                            column_widths=[0.68, 0.32],
-                            horizontal_spacing=0.04,
-                            shared_yaxes=True
-                        )
-                        dr, dc, br, bc = 1, 1, 1, 2
-                    else:
-                        fig_ply = go.Figure()
-                        dr = dc = br = bc = None
-
-                    def _add(trace):
-                        if dend_show_bar:
-                            fig_ply.add_trace(trace, row=dr, col=dc)
-                        else:
-                            fig_ply.add_trace(trace)
-
-                    # Edge lines — subtle blue
-                    for xi, yi in zip(dend_no_plot["icoord"], dend_no_plot["dcoord"]):
-                        _add(go.Scatter(
-                            x=yi, y=xi, mode="lines",
-                            line=dict(color="rgba(27,160,226,0.32)", width=1.6),
-                            hoverinfo="skip", showlegend=False
-                        ))
-
-                    # Leaf nodes
-                    for lbl in labels_ordered:
-                        xp  = leaf_xs[lbl]
-                        nc  = leaf_colors_map.get(lbl, "#1BA0E2")
-                        cid = cluster_ids[labels_list.index(lbl)]
-                        sv  = spend_series.get(lbl, 0)
-                        _add(go.Scatter(
-                            x=[0], y=[xp],
-                            mode="markers+text",
-                            marker=dict(size=10, color=nc,
-                                        line=dict(color="white", width=2),
-                                        symbol="circle"),
-                            text=[lbl],
-                            textposition="middle left",
-                            textfont=dict(size=9, color=nc),
-                            hovertemplate=(
-                                f"<b>{lbl}</b><br>"
-                                f"Klaster: <b>{cid}</b><br>"
-                                f"{dend_metric_col}: <b>{fmt_val(sv, metric_col_dend)}</b>"
-                                "<extra></extra>"
-                            ),
-                            showlegend=False
-                        ))
-
-                    # Cut threshold line
-                    if n_clusters_dend > 1:
-                        y_range = [min(leaf_xs.values()) - 5, max(leaf_xs.values()) + 5]
-                        _add(go.Scatter(
-                            x=[color_thresh_dend, color_thresh_dend], y=y_range,
-                            mode="lines",
-                            line=dict(color="#d9534f", width=1.6, dash="dash"),
-                            name=f"Cut @ {color_thresh_dend:.3f}",
-                            showlegend=True
-                        ))
-
-                    # Bar chart (spend per entity)
-                    if dend_show_bar:
-                        bar_colors = [leaf_colors_map.get(l, "#1BA0E2") for l in labels_ordered]
-                        fig_ply.add_trace(
-                            go.Bar(
-                                y=[leaf_xs[l] for l in labels_ordered],
-                                x=spend_series.values,
-                                orientation="h",
-                                marker=dict(color=bar_colors, opacity=0.85,
-                                            line=dict(color="white", width=0.5)),
-                                showlegend=False,
-                                name="Spend"
-                            ),
-                            row=br, col=bc
-                        )
-
-                    # Legend entries per cluster
-                    for i in range(n_clusters_dend):
-                        fig_ply.add_trace(go.Scatter(
-                            x=[None], y=[None], mode="markers",
-                            marker=dict(size=10, color=DEND_PALETTE[i % len(DEND_PALETTE)]),
-                            name=f"Klaster {i + 1}",
-                            showlegend=True
-                        ))
-
-                    # Layout
-                    chart_h  = max(520, len(pivot_dend) * 26 + 80)
-                    max_diss = max((max(d) for d in dend_no_plot["dcoord"]), default=1.0)
-                    x_left   = -max(0.55 * max_diss, 0.35)
-
-                    _ax = dict(
-                        showgrid=True,
-                        gridcolor="rgba(204,228,244,0.50)",
-                        gridwidth=0.6,
-                        zeroline=False,
-                        tickfont=dict(size=8, color="#6a8fa0"),
-                        linecolor="#cce4f4",
-                        linewidth=1,
-                        showline=True
-                    )
-
-                    fig_ply.update_layout(
-                        height=chart_h,
-                        paper_bgcolor="#f0f8ff",
-                        plot_bgcolor="#f0f8ff",
-                        font=dict(size=11, color="#1a2a3a"),
-                        title=dict(
-                            text=(
-                                f"<b>Dendrogram — {dend_entity}</b>"
-                                f"<span style='color:#6a8fa0;font-size:11px;'>"
-                                f"  ·  Linkage: {dend_method}"
-                                f"  ·  {n_clusters_dend} Klaster"
-                                f"  ·  Metric: {dend_metric_col}"
-                                f"</span>"
-                            ),
-                            x=0.01, xanchor="left",
-                            font=dict(size=13, color="#1a2a3a")
-                        ),
-                        legend=dict(
-                            orientation="h",
-                            yanchor="bottom", y=1.01,
-                            xanchor="right", x=1,
-                            bgcolor="rgba(240,248,255,0.95)",
-                            bordercolor="#cce4f4",
-                            borderwidth=1,
-                            font=dict(size=10, color="#1a2a3a")
-                        ),
-                        margin=dict(l=10, r=20, t=60, b=40),
-                        hovermode="closest",
-                        bargap=0.10
-                    )
-
-                    fig_ply.update_xaxes(**_ax)
-                    fig_ply.update_yaxes(**_ax)
-                    fig_ply.update_xaxes(
-                        title_text="Dissimilarity",
-                        range=[x_left, max_diss * 1.08],
-                        row=dr, col=dc
-                    )
-                    fig_ply.update_yaxes(
-                        showticklabels=False, showgrid=False,
-                        row=dr, col=dc
-                    )
-                    if dend_show_bar:
-                        fig_ply.update_xaxes(
-                            title_text=dend_metric_col[:18],
-                            row=br, col=bc
-                        )
-                        fig_ply.update_yaxes(
-                            showticklabels=False, showgrid=False,
-                            row=br, col=bc
-                        )
-
-                    st.plotly_chart(fig_ply, use_container_width=True)
-
-                    # ── Cluster Summary Cards ──────────────────────────────
-                    st.markdown('<div class="dnd-divider">Ringkasan Klaster</div>', unsafe_allow_html=True)
-
-                    cluster_df_dend = pd.DataFrame({
-                        dend_entity: labels_list,
-                        "Klaster":   cluster_ids,
-                        "Total": (
-                            df_dend.groupby(entity_col_dend)[metric_col_dend]
-                            .sum().reindex(labels_list).values
-                        )
-                    }).sort_values(["Klaster", "Total"], ascending=[True, False])
-
-                    unique_clusters = sorted(cluster_df_dend["Klaster"].unique())
-
-                    # Render cards in rows of 4
-                    for row_start in range(0, len(unique_clusters), 4):
-                        row_clusters = unique_clusters[row_start:row_start + 4]
-                        cols_c = st.columns(len(row_clusters))
-
-                        for col_c, cid in zip(cols_c, row_clusters):
-                            c_color  = DEND_PALETTE[(cid - 1) % len(DEND_PALETTE)]
-                            sub      = cluster_df_dend[cluster_df_dend["Klaster"] == cid]
-                            total_c  = sub["Total"].sum()
-                            pct_c    = total_c / total_spend_dend * 100 if total_spend_dend else 0
-                            members  = sub[dend_entity].tolist()
-                            shown    = members[:4]
-                            more_n   = max(0, len(members) - 4)
-                            members_html = "<br>".join(
-                                [f"<span style='color:#4a5a6a;'>• {m}</span>" for m in shown]
-                            )
-                            if more_n > 0:
-                                members_html += (
-                                    f"<br><span style='color:#a0b0c0;font-size:0.88em;'>"
-                                    f"+{more_n} lainnya…</span>"
-                                )
-
-                            with col_c:
-                                st.markdown(f"""
-                                <div class="dnd-cluster-card" style="--cl-color:{c_color};">
-                                    <div class="dnd-cluster-head">
-                                        <span class="dnd-cluster-name">Klaster {cid}</span>
-                                        <span class="dnd-cluster-count">{len(sub)} entitas</span>
-                                    </div>
-                                    <div class="dnd-cluster-members">{members_html}</div>
-                                    <div class="dnd-cluster-stat">
-                                        <div class="dnd-cluster-stat-value">{fmt_val(total_c, metric_col_dend)}</div>
-                                        <div class="dnd-cluster-stat-label">{pct_c:.1f}% dari total · {dend_metric_col[:18]}</div>
-                                    </div>
-                                </div>
-                                """, unsafe_allow_html=True)
-
-                    # ── Insight Box ────────────────────────────────────────
-                    st.markdown('<div class="dnd-divider">Interpretasi</div>', unsafe_allow_html=True)
-
-                    # Find dominant cluster
-                    dominant = cluster_df_dend.groupby("Klaster")["Total"].sum().idxmax()
-                    dominant_pct = (cluster_df_dend[cluster_df_dend["Klaster"] == dominant]["Total"].sum()
-                                    / total_spend_dend * 100)
-
-                    st.markdown(f"""
-                    <div class="dnd-insight">
-                        <strong>Hasil Clustering — {dend_entity} · {dend_method} linkage · {n_clusters_dend} klaster</strong><br><br>
-                        Dari <em>{len(pivot_dend)} {dend_entity}</em> yang dianalisis,
-                        terbentuk <em>{n_clusters_dend} klaster</em> berdasarkan kemiripan pola bulanan
-                        <em>{dend_metric_col}</em>.<br><br>
-                        <strong>Klaster {dominant}</strong> mendominasi dengan kontribusi
-                        <em>{dominant_pct:.1f}%</em> dari total.
-                        Entitas pada klaster yang sama memiliki profil perjalanan serupa dan berpotensi
-                        untuk dikelola dengan <strong>strategi pengadaan bersama</strong> guna meningkatkan
-                        leverage negosiasi.
-                    </div>
-                    """, unsafe_allow_html=True)
-
-            else:
-                st.markdown("""
-                <div style='background:#f0f8ff;border:1px solid #cce4f4;
-                            border-left:4px solid #1BA0E2;border-radius:8px;
-                            padding:16px 20px;font-size:0.88em;color:#0D7FCC;'>
-                    ⚠️ Data tidak cukup untuk membuat dendrogram dengan parameter yang dipilih.
-                    Pastikan kolom <strong>Hotel Name</strong>, <strong>City</strong>,
-                    <strong>Issue Time</strong> dan <strong>Invoice Amount</strong> tersedia.
-                </div>
-                """, unsafe_allow_html=True)
-
-
-        # ======================================
-        # TAB LAPORAN — hanya laporan agregat + audit log
-        # ======================================
-        with tab10:
-            st.markdown("<div class='section-title'>Laporan</div>", unsafe_allow_html=True)
-            st.caption("Semua unduhan berupa laporan agregat dan tercatat atas nama akun Anda. "
-                       "Laporan Cost Avoidance (detail, kebocoran, target renegosiasi) ada di tab Cost Avoidance.")
-
-            _rep = df_all.copy()
-            _rep["Number of Rooms Night"] = pd.to_numeric(_rep.get("Number of Rooms Night"), errors="coerce")
-            _has_tr = "Travel Request Number" in _rep.columns
-
-            def _agg(df, keys):
-                g = df.groupby(keys, dropna=False).agg(
-                    **{"Room nights": ("Number of Rooms Night", "sum"),
-                       "Spend (Rp)": ("Invoice Amount", "sum")})
-                if _has_tr:
-                    g["Travel requests"] = df.groupby(keys, dropna=False)["Travel Request Number"].nunique()
-                g["Avg rate / malam (Rp)"] = (g["Spend (Rp)"] / g["Room nights"].replace(0, np.nan)).round(0)
-                return g.reset_index().sort_values("Room nights", ascending=False)
-
-            _reports = []
-            if {"Hotel Name", "City"}.issubset(_rep.columns):
-                _reports.append(("Ringkasan per hotel", "Hotel, kota, room nights, spend, rata-rata rate per malam",
-                                 _agg(_rep, ["Hotel Name", "City"]), "ringkasan_per_hotel"))
-            if "City" in _rep.columns:
-                _reports.append(("Ringkasan per kota", "Kota, negara, room nights, spend, rata-rata rate per malam",
-                                 _agg(_rep, ["Country", "City"] if "Country" in _rep.columns else ["City"]),
-                                 "ringkasan_per_kota"))
-            if "Issue Time" in _rep.columns:
-                _m = _rep.copy()
-                _m["Bulan"] = pd.to_datetime(_m["Issue Time"], errors="coerce", dayfirst=True).dt.to_period("M").astype(str)
-                if "Country" in _m.columns:
-                    _m["Market"] = np.where(_m["Country"].astype(str).str.strip().str.upper() == "INDONESIA",
-                                            "Domestik", "Internasional")
-                    _keys = ["Bulan", "Market"]
-                else:
-                    _keys = ["Bulan"]
-                _reports.append(("Tren bulanan", "Travel request, room nights dan spend per bulan",
-                                 _agg(_m, _keys).sort_values(_keys), "tren_bulanan"))
-
-            _cols = st.columns(3)
-            for _i, (_title, _desc, _df, _fname) in enumerate(_reports):
-                with _cols[_i % 3]:
-                    with st.container(border=True):
-                        st.markdown(f"**{_title}**")
-                        st.caption(f"{_desc} · {len(_df):,} baris".replace(",", "."))
-                        if can_download():
-                            st.download_button(
-                                "⬇️ Unduh Excel",
-                                excel_bytes_with_formats(_df, _title[:31],
-                                                         money_cols=("Spend (Rp)", "Avg rate / malam (Rp)"),
-                                                         int_cols=("Room nights", "Travel requests")),
-                                file_name=f"{_fname}_{datetime.now():%Y%m%d}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key=f"dl_rep_{_fname}")
-                        else:
-                            st.caption("🔒 Unduhan tidak tersedia untuk akun ini.")
-
-            st.info("**Data per transaksi tidak bisa diunduh dari dashboard.** Kebutuhan data per booking "
-                    "diajukan lewat permintaan data dan disetujui atasan serta Pejabat Pelindungan Data Pribadi.")
-
-            if is_super_admin():
-                st.markdown("<div class='section-title'>Audit log</div>", unsafe_allow_html=True)
-                _log = read_audit_tail(200)
-                if _log.empty:
-                    st.caption("Belum ada catatan.")
-                else:
-                    st.dataframe(_log, hide_index=True, use_container_width=True, height=360)
-
-        # ======================================
-        # TAB 11: PATRA JASA GROUP vs NON-PATRA JASA
-        # ======================================
-        with tab11:
-            st.markdown("<div class='section-title'>Patra Jasa Group vs Non-Patra Jasa — Perbandingan Hotel Domestik</div>", unsafe_allow_html=True)
-
-            # ── Kamus Hotel Patra Jasa Group ──
-            PATRA_JASA_HOTELS = [
-                "The Patra Bali Resort & Villas",
-                "Patra Semarang Hotel & Convention",
-                "Patra Cirebon Hotel & Convention",
-                "Patra Malioboro Hotel",
-                "Patra Dumai Hotel",
-                "Patra Bandung Hotel",
-                "Patra Jakarta Hotel",
-                "Patra Anyer Hotel",
-                "Patra Parapat Hotel",
-            ]
-            # Nama di data sudah diseragamkan, jadi kamus Patra juga dicocokkan
-            # dalam bentuk aslinya maupun bentuk standarnya.
-            PATRA_JASA_NORMALIZED = sorted(
-                {h.lower().strip() for h in PATRA_JASA_HOTELS}
-                | {str(standardize_name(h)).lower().strip() for h in PATRA_JASA_HOTELS}
-            )
-
-            # ── Validasi kolom minimum ──
-            _req_cols = {"Hotel Name", "Country"}
-            _missing = _req_cols - set(df_all.columns)
-            if _missing:
-                st.warning(f"⚠️ Kolom berikut tidak ditemukan di data: {', '.join(_missing)}. Tab ini membutuhkan kolom tersebut.")
-            else:
-                # ── Filter INDONESIA saja ──
-                df_pj = df_all.copy()
-                df_pj["_country_up"] = df_pj["Country"].astype(str).str.strip().str.upper()
-                df_pj = df_pj[df_pj["_country_up"] == "INDONESIA"].copy()
-
-                if df_pj.empty:
-                    st.info("ℹ️ Tidak ada data domestik (Country = INDONESIA) setelah filter global diterapkan.")
-                else:
-                    # ── Klasifikasi Patra / Non-Patra ──
-                    df_pj["_hotel_norm"] = df_pj["Hotel Name"].astype(str).str.lower().str.strip()
-                    df_pj["Grup Hotel"] = df_pj["_hotel_norm"].apply(
-                        lambda x: "Patra Jasa Group" if x in PATRA_JASA_NORMALIZED else "Non-Patra Jasa"
-                    )
-
-                    # ── Tambahkan kolom bulan & tahun ──
-                    # PERBAIKAN: sebelumnya hanya .dt.month tanpa memperhitungkan tahun,
-                    # sehingga bulan yang sama dari tahun berbeda bisa tercampur/menyembunyikan data.
-                    # PERBAIKAN 2: tambah fallback antar-kolom tanggal per baris — kalau kolom utama
-                    # gagal di-parse (NaT) untuk sebagian baris, baris itu tidak lagi hilang diam-diam
-                    # dari agregasi bulanan, melainkan dicoba pakai kolom tanggal lain yang tersedia.
-                    _date_col_pj = None
-                    for _c in ["Issue Time", "Check in Date"]:
-                        if _c in df_pj.columns:
-                            _date_col_pj = _c
-                            break
-                    if _date_col_pj:
-                        df_pj["_dt"] = pd.to_datetime(df_pj[_date_col_pj], errors="coerce", dayfirst=True)
-                        for _fb_col in [c for c in ["Issue Time", "Check in Date", "Check out Date"]
-                                        if c in df_pj.columns and c != _date_col_pj]:
-                            _fb_dt = pd.to_datetime(df_pj[_fb_col], errors="coerce", dayfirst=True)
-                            df_pj["_dt"] = df_pj["_dt"].fillna(_fb_dt)
-                        df_pj["_month"] = df_pj["_dt"].dt.month
-                        df_pj["_year"] = df_pj["_dt"].dt.year
-
-                        _n_unparsed = df_pj["_dt"].isna().sum()
-                        if _n_unparsed > 0:
-                            st.caption(
-                                f"⚠️ {_n_unparsed:,} baris tidak punya tanggal yang bisa dibaca "
-                                f"(kolom {_date_col_pj} dan alternatifnya kosong/format tidak dikenali) "
-                                f"— baris ini tidak masuk ke tabel bulanan di bawah."
-                            )
-
-                    # ── Filter Nama Perusahaan (opsional) ──
-                    st.markdown("""
-                    <div style='background:var(--clr-surface,#fff);border:1px solid #e8eaf0;
-                                border-left:4px solid #1BA0E2;border-radius:6px;
-                                padding:10px 16px 8px 16px;margin-bottom:16px;'>
-                        <div style='font-size:0.72em;font-weight:700;color:#1BA0E2;
-                                    text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;'>
-                            🔍 Filter Tab Ini
-                        </div>
-                    </div>""", unsafe_allow_html=True)
-
-                    _pj_col1, _pj_col2, _pj_col3 = st.columns([1.6, 1, 1])
-
-                    with _pj_col1:
-                        if "Nama Perusahaan" in df_pj.columns:
-                            _pj_company_opts = sorted(df_pj["Nama Perusahaan"].dropna().unique().tolist())
-                            _pj_selected_companies = st.multiselect(
-                                "🏢 Filter Perusahaan",
-                                options=_pj_company_opts,
-                                default=[],
-                                placeholder="Semua perusahaan",
-                                key="pj_company_filter"
-                            )
-                            if _pj_selected_companies:
-                                df_pj = df_pj[df_pj["Nama Perusahaan"].isin(_pj_selected_companies)]
-                        else:
-                            _pj_selected_companies = []
-
-                    with _pj_col2:
-                        # PERBAIKAN: selector tahun eksplisit agar tabel bulanan tidak pernah
-                        # mencampur bulan yang sama dari tahun berbeda (mis. Jan 2025 + Jan 2026
-                        # tergabung jadi satu kolom "Jan"). Default ke tahun terbaru yang ada di data.
-                        if "_year" in df_pj.columns and df_pj["_year"].notna().any():
-                            _pj_year_opts = sorted(df_pj["_year"].dropna().astype(int).unique().tolist(), reverse=True)
-                            _pj_selected_year = st.selectbox(
-                                "📅 Tahun (Tabel Bulanan)",
-                                options=_pj_year_opts,
-                                index=0,
-                                key="pj_year_select"
-                            )
-                        else:
-                            _pj_selected_year = None
-
-                    with _pj_col3:
-                        _pj_metric_opt = st.selectbox(
-                            "📊 Metrik Tabel",
-                            options=["Invoice (unique)", "Room Nights"],
-                            key="pj_metric_select"
-                        )
-
-                    # ── Hitung aggregasi ──
-                    # Invoice unique = jumlah baris unik per Travel Request Number (atau row count jika tidak ada)
-                    if "Travel Request Number" in df_pj.columns:
-                        _inv_col = "Travel Request Number"
-                        pj_inv  = df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"][_inv_col].nunique()
-                        npj_inv = df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"][_inv_col].nunique()
-                    else:
-                        pj_inv  = len(df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"])
-                        npj_inv = len(df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"])
-
-                    total_inv = pj_inv + npj_inv
-                    pj_inv_pct  = (pj_inv  / total_inv * 100) if total_inv > 0 else 0
-                    npj_inv_pct = (npj_inv / total_inv * 100) if total_inv > 0 else 0
-
-                    # Room Nights
-                    if "Number of Rooms Night" in df_pj.columns:
-                        df_pj["Number of Rooms Night"] = pd.to_numeric(df_pj["Number of Rooms Night"], errors="coerce")
-                        pj_rn  = df_pj[df_pj["Grup Hotel"] == "Patra Jasa Group"]["Number of Rooms Night"].sum()
-                        npj_rn = df_pj[df_pj["Grup Hotel"] == "Non-Patra Jasa"]["Number of Rooms Night"].sum()
-                    else:
-                        pj_rn, npj_rn = 0, 0
-
-                    total_rn = pj_rn + npj_rn
-                    pj_rn_pct  = (pj_rn  / total_rn * 100) if total_rn > 0 else 0
-                    npj_rn_pct = (npj_rn / total_rn * 100) if total_rn > 0 else 0
-
-                    # ── Metric Cards ──
-                    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-                    _mc1, _mc2, _mc3, _mc4 = st.columns(4)
-                    with _mc1:
-                        st.markdown(f"""
-                        <div class='metric-box'>
-                            <div class='metric-label'>Total Invoice (Domestik)</div>
-                            <div class='metric-value'>{total_inv:,}</div>
-                        </div>""", unsafe_allow_html=True)
-                    with _mc2:
-                        st.markdown(f"""
-                        <div class='metric-box' style='border-left-color:#1BA0E2;'>
-                            <div class='metric-label'>Patra Jasa Group</div>
-                            <div class='metric-value' style='color:#1BA0E2;'>{pj_inv:,}</div>
-                            <div style='font-size:0.78em;color:#888;margin-top:4px;'>{pj_inv_pct:.1f}% dari total</div>
-                        </div>""", unsafe_allow_html=True)
-                    with _mc3:
-                        st.markdown(f"""
-                        <div class='metric-box' style='border-left-color:#ff8c00;'>
-                            <div class='metric-label'>Non-Patra Jasa</div>
-                            <div class='metric-value' style='color:#ff8c00;'>{npj_inv:,}</div>
-                            <div style='font-size:0.78em;color:#888;margin-top:4px;'>{npj_inv_pct:.1f}% dari total</div>
-                        </div>""", unsafe_allow_html=True)
-                    with _mc4:
-                        st.markdown(f"""
-                        <div class='metric-box'>
-                            <div class='metric-label'>Total Room Nights</div>
-                            <div class='metric-value'>{total_rn:,.0f}</div>
-                        </div>""", unsafe_allow_html=True)
-
-                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                    # ── Pie Charts ──
-                    st.markdown("<div class='section-title'>Proporsi Perbandingan</div>", unsafe_allow_html=True)
-                    _pie1, _pie2 = st.columns(2)
-
-                    with _pie1:
-                        if total_inv > 0:
-                            fig_pj_inv = go.Figure(data=[go.Pie(
-                                labels=["Patra Jasa Group", "Non-Patra Jasa"],
-                                values=[pj_inv, npj_inv],
-                                hole=0.55,
-                                marker=dict(colors=["#1BA0E2", "#ff8c00"],
-                                            line=dict(color="white", width=2)),
-                                textinfo="percent",
-                                textfont=dict(size=13),
-                                hovertemplate="<b>%{label}</b><br>Invoice: %{value:,}<br>Proporsi: %{percent}<extra></extra>"
-                            )])
-                            fig_pj_inv.update_layout(
-                                title=dict(text="Invoice Unique — Patra vs Non-Patra", font=dict(size=14)),
-                                height=340,
-                                plot_bgcolor="white",
-                                paper_bgcolor="white",
-                                showlegend=True,
-                                legend=dict(orientation="h", yanchor="bottom", y=-0.18,
-                                            xanchor="center", x=0.5, font=dict(size=11)),
-                                margin=dict(l=10, r=10, t=60, b=20),
-                                annotations=[dict(
-                                    text=f"<b>{total_inv:,}</b><br><span style='font-size:10px'>total</span>",
-                                    x=0.5, y=0.5, font=dict(size=15), showarrow=False
-                                )]
-                            )
-                            st.plotly_chart(fig_pj_inv, use_container_width=True)
-
-                            # Tabel ringkasan invoice
-                            st.markdown(f"""
-                            <table style='width:100%;border-collapse:collapse;font-size:0.83em;'>
-                              <thead>
-                                <tr style='background:#f0f8ff;'>
-                                  <th style='padding:6px 10px;text-align:left;border:1px solid #e0e0e0;color:#555;'>Grup</th>
-                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>Invoice</th>
-                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>%</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                <tr>
-                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
-                                    <span style='display:inline-block;width:10px;height:10px;background:#1BA0E2;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Patra Jasa Group
-                                  </td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#1BA0E2;'>{pj_inv:,}</td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{pj_inv_pct:.1f}%</td>
-                                </tr>
-                                <tr>
-                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
-                                    <span style='display:inline-block;width:10px;height:10px;background:#ff8c00;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Non-Patra Jasa
-                                  </td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#ff8c00;'>{npj_inv:,}</td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{npj_inv_pct:.1f}%</td>
-                                </tr>
-                                <tr style='background:#f9f9f9;'>
-                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;font-weight:600;'>Total</td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>{total_inv:,}</td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>100%</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.info("Tidak ada data invoice untuk ditampilkan.")
-
-                    with _pie2:
-                        if total_rn > 0:
-                            fig_pj_rn = go.Figure(data=[go.Pie(
-                                labels=["Patra Jasa Group", "Non-Patra Jasa"],
-                                values=[pj_rn, npj_rn],
-                                hole=0.55,
-                                marker=dict(colors=["#1BA0E2", "#ff8c00"],
-                                            line=dict(color="white", width=2)),
-                                textinfo="percent",
-                                textfont=dict(size=13),
-                                hovertemplate="<b>%{label}</b><br>Room Nights: %{value:,.0f}<br>Proporsi: %{percent}<extra></extra>"
-                            )])
-                            fig_pj_rn.update_layout(
-                                title=dict(text="Room Nights — Patra vs Non-Patra", font=dict(size=14)),
-                                height=340,
-                                plot_bgcolor="white",
-                                paper_bgcolor="white",
-                                showlegend=True,
-                                legend=dict(orientation="h", yanchor="bottom", y=-0.18,
-                                            xanchor="center", x=0.5, font=dict(size=11)),
-                                margin=dict(l=10, r=10, t=60, b=20),
-                                annotations=[dict(
-                                    text=f"<b>{total_rn:,.0f}</b><br><span style='font-size:10px'>total</span>",
-                                    x=0.5, y=0.5, font=dict(size=15), showarrow=False
-                                )]
-                            )
-                            st.plotly_chart(fig_pj_rn, use_container_width=True)
-
-                            # Tabel ringkasan room nights
-                            st.markdown(f"""
-                            <table style='width:100%;border-collapse:collapse;font-size:0.83em;'>
-                              <thead>
-                                <tr style='background:#f0f8ff;'>
-                                  <th style='padding:6px 10px;text-align:left;border:1px solid #e0e0e0;color:#555;'>Grup</th>
-                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>Room Nights</th>
-                                  <th style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;color:#555;'>%</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                <tr>
-                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
-                                    <span style='display:inline-block;width:10px;height:10px;background:#1BA0E2;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Patra Jasa Group
-                                  </td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#1BA0E2;'>{pj_rn:,.0f}</td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{pj_rn_pct:.1f}%</td>
-                                </tr>
-                                <tr>
-                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;'>
-                                    <span style='display:inline-block;width:10px;height:10px;background:#ff8c00;border-radius:2px;margin-right:6px;vertical-align:middle;'></span>Non-Patra Jasa
-                                  </td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;color:#ff8c00;'>{npj_rn:,.0f}</td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;'>{npj_rn_pct:.1f}%</td>
-                                </tr>
-                                <tr style='background:#f9f9f9;'>
-                                  <td style='padding:6px 10px;border:1px solid #e0e0e0;font-weight:600;'>Total</td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>{total_rn:,.0f}</td>
-                                  <td style='padding:6px 10px;text-align:right;border:1px solid #e0e0e0;font-weight:600;'>100%</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.info("Kolom 'Number of Rooms Night' tidak ditemukan atau tidak ada data.")
-
-                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                    # ── Tabel Bulanan ──
-                    _pj_year_label = f" · Tahun {_pj_selected_year}" if _pj_selected_year is not None else ""
-                    st.markdown(
-                        f"<div class='section-title'>Tabel Perbandingan Bulanan — "
-                        f"{'Invoice (unique)' if _pj_metric_opt == 'Invoice (unique)' else 'Room Nights'}"
-                        f"{_pj_year_label}</div>",
-                        unsafe_allow_html=True
-                    )
-
-                    # PERBAIKAN: scope tabel bulanan ke SATU tahun yang dipilih di atas —
-                    # ini mencegah bulan yang sama dari tahun berbeda tergabung jadi satu kolom
-                    # (mis. data Jan 2025 + Jan 2026 tidak lagi ikut menumpuk/menyembunyikan bulan lain).
-                    df_pj_month_table = df_pj.copy()
-                    if _pj_selected_year is not None and "_year" in df_pj_month_table.columns:
-                        df_pj_month_table = df_pj_month_table[df_pj_month_table["_year"] == _pj_selected_year]
-
-                    if _date_col_pj and "_month" in df_pj_month_table.columns and not df_pj_month_table.empty:
-                        MONTH_NAMES = {
-                            1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",
-                            7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"
-                        }
-
-                        if _pj_metric_opt == "Invoice (unique)":
-                            if "Travel Request Number" in df_pj_month_table.columns:
-                                _monthly_agg = (
-                                    df_pj_month_table.groupby(["Grup Hotel","_month"])["Travel Request Number"]
-                                    .nunique()
-                                    .reset_index(name="Nilai")
-                                )
-                            else:
-                                _monthly_agg = (
-                                    df_pj_month_table.groupby(["Grup Hotel","_month"])
-                                    .size()
-                                    .reset_index(name="Nilai")
-                                )
-                        else:
-                            if "Number of Rooms Night" in df_pj_month_table.columns:
-                                _monthly_agg = (
-                                    df_pj_month_table.groupby(["Grup Hotel","_month"])["Number of Rooms Night"]
-                                    .sum()
-                                    .reset_index(name="Nilai")
-                                )
-                            else:
-                                st.warning("Kolom 'Number of Rooms Night' tidak tersedia.")
-                                _monthly_agg = pd.DataFrame()
-
-                        if not _monthly_agg.empty:
-                            _pivot = _monthly_agg.pivot_table(
-                                index="Grup Hotel",
-                                columns="_month",
-                                values="Nilai",
-                                fill_value=0
-                            )
-                            # PERBAIKAN: normalisasi label kolom ke int murni — pivot_table bisa
-                            # menghasilkan kolom bertipe float (mis. 4.0) kalau ada NaN tercampur
-                            # di data sumber sebelum di-groupby, sehingga pengecekan
-                            # "if _m not in _pivot.columns" di bawah (memakai int biasa) gagal
-                            # mengenali kolom yang sebenarnya sudah ada, lalu menimpanya dengan 0.
-                            _pivot.columns = [int(c) for c in _pivot.columns]
-
-                            # Pastikan semua 12 bulan ada
-                            for _m in range(1, 13):
-                                if _m not in _pivot.columns:
-                                    _pivot[_m] = 0
-                            _pivot = _pivot[[m for m in range(1, 13)]]
-                            _pivot["Total"] = _pivot.sum(axis=1)
-                            _pivot = _pivot.reset_index()
-
-                            # Reorder rows: Patra Jasa dulu
-                            _row_order = ["Patra Jasa Group", "Non-Patra Jasa"]
-                            _pivot["_sort"] = _pivot["Grup Hotel"].map(
-                                {r: i for i, r in enumerate(_row_order)}
-                            ).fillna(99)
-                            _pivot = _pivot.sort_values("_sort").drop(columns=["_sort"])
-
-                            # Tambah row % share Patra
-                            _totals_by_month = {m: _pivot[m].sum() for m in range(1, 13)}
-                            _pj_row = _pivot[_pivot["Grup Hotel"] == "Patra Jasa Group"]
-                            _share_row = {"Grup Hotel": "% Patra share"}
-                            for _m in range(1, 13):
-                                _denom = _totals_by_month[_m]
-                                _num = _pj_row[_m].values[0] if not _pj_row.empty else 0
-                                _share_row[_m] = f"{(_num/_denom*100):.0f}%" if _denom > 0 else "-"
-                            _total_denom = _pivot["Total"].sum()
-                            _pj_total = _pj_row["Total"].values[0] if not _pj_row.empty else 0
-                            _share_row["Total"] = f"{(_pj_total/_total_denom*100):.0f}%" if _total_denom > 0 else "-"
-
-                            # Build HTML table
-                            _th_style = "padding:7px 10px;background:#f0f8ff;border:1px solid #d0dde8;font-size:0.8em;color:#444;text-align:center;white-space:nowrap;"
-                            _th_left  = "padding:7px 10px;background:#f0f8ff;border:1px solid #d0dde8;font-size:0.8em;color:#444;text-align:left;white-space:nowrap;min-width:150px;"
-
-                            _html_tbl = f"""
-                            <div style='overflow-x:auto;'>
-                            <table style='width:100%;border-collapse:collapse;font-size:0.82em;'>
-                              <thead>
-                                <tr>
-                                  <th style='{_th_left}'>Grup Hotel</th>
-                                  {"".join(f"<th style='{_th_style}'>{MONTH_NAMES[m]}</th>" for m in range(1,13))}
-                                  <th style='{_th_style}font-weight:700;background:#daeaf8;'>Total</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                            """
-
-                            for _, row in _pivot.iterrows():
-                                _grup = row["Grup Hotel"]
-                                if _grup == "Patra Jasa Group":
-                                    _row_bg  = "background:rgba(27,160,226,0.07);"
-                                    _val_col = "color:#1BA0E2;font-weight:600;"
-                                    _badge   = "<span style='background:#e6f4fb;color:#0D7FCC;border-radius:20px;padding:1px 7px;font-size:0.78em;font-weight:600;margin-left:4px;'>PJ</span>"
-                                else:
-                                    _row_bg  = "background:rgba(255,140,0,0.05);"
-                                    _val_col = "color:#cc6600;font-weight:600;"
-                                    _badge   = "<span style='background:#fff4e6;color:#b05a00;border-radius:20px;padding:1px 7px;font-size:0.78em;font-weight:600;margin-left:4px;'>NPJ</span>"
-
-                                _html_tbl += f"<tr style='{_row_bg}'>"
-                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;font-weight:500;'>{_grup}{_badge}</td>"
-                                for _m in range(1, 13):
-                                    _v = int(row[_m]) if _pj_metric_opt == "Invoice (unique)" else f"{row[_m]:,.0f}"
-                                    _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;{_val_col}'>{_v}</td>"
-                                _total_v = int(row["Total"]) if _pj_metric_opt == "Invoice (unique)" else f"{row['Total']:,.0f}"
-                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;background:#daeaf8;{_val_col}'>{_total_v}</td>"
-                                _html_tbl += "</tr>"
-
-                            # Row total gabungan
-                            _html_tbl += "<tr style='background:#f5f5f5;font-weight:600;'>"
-                            _html_tbl += "<td style='padding:7px 10px;border:1px solid #e0e0e0;'>Total Domestik</td>"
-                            for _m in range(1, 13):
-                                _col_total = _pivot[_m].sum()
-                                _v = int(_col_total) if _pj_metric_opt == "Invoice (unique)" else f"{_col_total:,.0f}"
-                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;'>{_v}</td>"
-                            _grand = _pivot["Total"].sum()
-                            _grand_v = int(_grand) if _pj_metric_opt == "Invoice (unique)" else f"{_grand:,.0f}"
-                            _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;background:#daeaf8;'>{_grand_v}</td>"
-                            _html_tbl += "</tr>"
-
-                            # Row % share Patra
-                            _html_tbl += "<tr style='background:#fafafa;font-style:italic;'>"
-                            _html_tbl += "<td style='padding:7px 10px;border:1px solid #e0e0e0;font-size:0.78em;color:#888;'>% Patra Jasa share</td>"
-                            for _m in range(1, 13):
-                                _html_tbl += f"<td style='padding:7px 10px;border:1px solid #e0e0e0;text-align:right;font-size:0.78em;color:#888;'>{_share_row[_m]}</td>"
-                            _html_tbl += f"<td style='padding:7px 10px;border:1px solid #daeaf8;text-align:right;font-size:0.78em;color:#888;background:#daeaf8;'>{_share_row['Total']}</td>"
-                            _html_tbl += "</tr>"
-
-                            _html_tbl += "</tbody></table></div>"
-                            st.markdown(_html_tbl, unsafe_allow_html=True)
-
-                            # Download tabel
-                            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-                            _dl_pivot = _pivot.rename(columns={m: MONTH_NAMES[m] for m in range(1,13)})
-                            _output_pj = BytesIO()
-                            _dl_pivot.to_excel(_output_pj, index=False, sheet_name="Patra vs Non-Patra")
-                            _output_pj.seek(0)
-                            if can_download():
-                                st.download_button(
-                                    label="⬇️ Download Tabel",
-                                    data=_output_pj,
-                                    file_name=f"patra_jasa_comparison_{_pj_metric_opt.replace(' ','_')}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    key="dl_patra_jasa_comparison")
-                            else:
-                                st.markdown("""
-                                <div style='background:#f9f9f9;border-left:3px solid #1BA0E2;border-radius:6px;
-                                padding:10px 16px;font-size:0.82em;color:#1BA0E2;display:flex;align-items:center;gap:8px;'>
-                                    <span>🔒</span><span>Download tidak tersedia untuk akun ini</span>
-                                </div>""", unsafe_allow_html=True)
-                        else:
-                            st.info(f"ℹ️ Tidak ada data bulanan untuk ditampilkan pada tahun {_pj_selected_year}.")
-                    else:
-                        if not _date_col_pj:
-                            st.info("ℹ️ Kolom tanggal (Issue Time / Check in Date) tidak ditemukan. Tabel bulanan tidak dapat ditampilkan.")
-                        elif df_pj_month_table.empty:
-                            st.info(f"ℹ️ Tidak ada data untuk tahun {_pj_selected_year} setelah filter yang aktif diterapkan. Coba pilih tahun lain di atas.")
-                        else:
-                            st.info("ℹ️ Tabel bulanan tidak dapat ditampilkan untuk kombinasi filter saat ini.")
-
-                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-                    # ── Kamus Referensi + Data Per Hotel ──
-                    with st.expander(f"📋 Detail Per Hotel Patra Jasa Group — Invoice & Room Nights Bulanan{_pj_year_label}"):
-
-                        MONTH_NAMES_KM = {
-                            1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",
-                            7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"
-                        }
-
-                        # Data hanya hotel Patra Jasa — pakai df_pj_month_table (sudah di-scope ke tahun terpilih)
-                        # agar konsisten dengan tabel perbandingan bulanan di atas dan tidak mencampur tahun.
-                        df_kamus = df_pj_month_table[df_pj_month_table["Grup Hotel"] == "Patra Jasa Group"].copy()
-
-                        # Normalisasi nama hotel ke nama kanonik dari kamus
-                        _norm_to_canonical = {h.lower().strip(): h for h in PATRA_JASA_HOTELS}
-                        _norm_to_canonical.update({str(standardize_name(h)).lower().strip(): h
-                                                   for h in PATRA_JASA_HOTELS})
-                        df_kamus["Nama Hotel Canonical"] = df_kamus["_hotel_norm"].map(_norm_to_canonical).fillna(df_kamus["Hotel Name"])
-
-                        _km_th_h  = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:center;white-space:nowrap;"
-                        _km_th_l  = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:left;white-space:nowrap;min-width:30px;"
-                        _km_th_nm = "padding:6px 9px;background:#e6f4fb;border:1px solid #b8d9f0;font-size:0.78em;font-weight:600;color:#0D7FCC;text-align:left;white-space:nowrap;min-width:200px;"
-                        _km_td    = "padding:5px 9px;border:1px solid #e0e0e0;text-align:right;font-size:0.8em;"
-                        _km_td_l  = "padding:5px 9px;border:1px solid #e0e0e0;text-align:left;font-size:0.8em;"
-                        _km_td_tot= "padding:5px 9px;border:1px solid #b8d9f0;text-align:right;font-size:0.8em;font-weight:600;background:#daeaf8;color:#0D7FCC;"
-
-                        # ── TABEL 1: INVOICE UNIQUE PER HOTEL ──
-                        st.markdown("<div style='font-size:0.85em;font-weight:600;color:#1BA0E2;margin:8px 0 6px 0;'>Invoice Unique per Hotel per Bulan</div>", unsafe_allow_html=True)
-
-                        if _date_col_pj and "_month" in df_kamus.columns and not df_kamus.empty:
-                            if "Travel Request Number" in df_kamus.columns:
-                                _km_inv_agg = (
-                                    df_kamus.groupby(["Nama Hotel Canonical", "_month"])["Travel Request Number"]
-                                    .nunique()
-                                    .reset_index(name="Nilai")
-                                )
-                            else:
-                                _km_inv_agg = (
-                                    df_kamus.groupby(["Nama Hotel Canonical", "_month"])
-                                    .size().reset_index(name="Nilai")
-                                )
-
-                            _km_inv_pivot = _km_inv_agg.pivot_table(
-                                index="Nama Hotel Canonical", columns="_month",
-                                values="Nilai", fill_value=0
-                            )
-                            _km_inv_pivot.columns = [int(c) for c in _km_inv_pivot.columns]  # normalisasi tipe kolom
-                            for _m in range(1, 13):
-                                if _m not in _km_inv_pivot.columns:
-                                    _km_inv_pivot[_m] = 0
-                            _km_inv_pivot = _km_inv_pivot[[m for m in range(1, 13)]]
-                            _km_inv_pivot["Total"] = _km_inv_pivot.sum(axis=1)
-                            _km_inv_pivot = _km_inv_pivot.sort_values("Total", ascending=False).reset_index()
-
-                            _html_km_inv = f"""
-                            <div style='overflow-x:auto;margin-bottom:18px;'>
-                            <table style='border-collapse:collapse;font-size:0.82em;min-width:100%;'>
-                              <thead><tr>
-                                <th style='{_km_th_l}'>No</th>
-                                <th style='{_km_th_nm}'>Nama Hotel</th>
-                                {"".join(f"<th style='{_km_th_h}'>{MONTH_NAMES_KM[m]}</th>" for m in range(1,13))}
-                                <th style='{_km_th_h}background:#daeaf8;'>Total</th>
-                              </tr></thead>
-                              <tbody>
-                            """
-                            for _i, _row in _km_inv_pivot.iterrows():
-                                _bg = "background:#fafeff;" if _i % 2 == 0 else "background:#f4faff;"
-                                _html_km_inv += f"<tr style='{_bg}'>"
-                                _html_km_inv += f"<td style='{_km_td_l}color:#999;'>{_i+1}</td>"
-                                _html_km_inv += f"<td style='{_km_td_l}font-weight:500;'>{_row['Nama Hotel Canonical']}</td>"
-                                for _m in range(1, 13):
-                                    _v = int(_row[_m])
-                                    _col_style = _km_td if _v > 0 else _km_td + "color:#ccc;"
-                                    _html_km_inv += f"<td style='{_col_style}'>{_v if _v > 0 else '—'}</td>"
-                                _html_km_inv += f"<td style='{_km_td_tot}'>{int(_row['Total']):,}</td>"
-                                _html_km_inv += "</tr>"
-
-                            # Baris total kolom
-                            _html_km_inv += f"<tr style='background:#e6f4fb;font-weight:700;'>"
-                            _html_km_inv += f"<td style='{_km_td_l}'></td>"
-                            _html_km_inv += f"<td style='{_km_td_l}font-weight:700;color:#0D7FCC;'>Total</td>"
-                            for _m in range(1, 13):
-                                _col_sum = int(_km_inv_pivot[_m].sum())
-                                _html_km_inv += f"<td style='{_km_th_h}'>{_col_sum:,}</td>"
-                            _html_km_inv += f"<td style='{_km_th_h}background:#c8e0f5;'>{int(_km_inv_pivot['Total'].sum()):,}</td>"
-                            _html_km_inv += "</tr>"
-
-                            _html_km_inv += "</tbody></table></div>"
-                            st.markdown(_html_km_inv, unsafe_allow_html=True)
-                        else:
-                            st.info("Data invoice per hotel tidak tersedia.")
-
-                        # ── TABEL 2: ROOM NIGHTS PER HOTEL ──
-                        st.markdown("<div style='font-size:0.85em;font-weight:600;color:#1BA0E2;margin:14px 0 6px 0;'>Room Nights per Hotel per Bulan</div>", unsafe_allow_html=True)
-
-                        if _date_col_pj and "_month" in df_kamus.columns and "Number of Rooms Night" in df_kamus.columns and not df_kamus.empty:
-                            _km_rn_agg = (
-                                df_kamus.groupby(["Nama Hotel Canonical", "_month"])["Number of Rooms Night"]
-                                .sum().reset_index(name="Nilai")
-                            )
-
-                            _km_rn_pivot = _km_rn_agg.pivot_table(
-                                index="Nama Hotel Canonical", columns="_month",
-                                values="Nilai", fill_value=0
-                            )
-                            _km_rn_pivot.columns = [int(c) for c in _km_rn_pivot.columns]  # normalisasi tipe kolom
-                            for _m in range(1, 13):
-                                if _m not in _km_rn_pivot.columns:
-                                    _km_rn_pivot[_m] = 0
-                            _km_rn_pivot = _km_rn_pivot[[m for m in range(1, 13)]]
-                            _km_rn_pivot["Total"] = _km_rn_pivot.sum(axis=1)
-                            _km_rn_pivot = _km_rn_pivot.sort_values("Total", ascending=False).reset_index()
-
-                            _html_km_rn = f"""
-                            <div style='overflow-x:auto;margin-bottom:12px;'>
-                            <table style='border-collapse:collapse;font-size:0.82em;min-width:100%;'>
-                              <thead><tr>
-                                <th style='{_km_th_l}'>No</th>
-                                <th style='{_km_th_nm}'>Nama Hotel</th>
-                                {"".join(f"<th style='{_km_th_h}'>{MONTH_NAMES_KM[m]}</th>" for m in range(1,13))}
-                                <th style='{_km_th_h}background:#daeaf8;'>Total</th>
-                              </tr></thead>
-                              <tbody>
-                            """
-                            for _i, _row in _km_rn_pivot.iterrows():
-                                _bg = "background:#fafeff;" if _i % 2 == 0 else "background:#f4faff;"
-                                _html_km_rn += f"<tr style='{_bg}'>"
-                                _html_km_rn += f"<td style='{_km_td_l}color:#999;'>{_i+1}</td>"
-                                _html_km_rn += f"<td style='{_km_td_l}font-weight:500;'>{_row['Nama Hotel Canonical']}</td>"
-                                for _m in range(1, 13):
-                                    _v = _row[_m]
-                                    _v_fmt = f"{_v:,.0f}" if _v > 0 else "—"
-                                    _col_style = _km_td if _v > 0 else _km_td + "color:#ccc;"
-                                    _html_km_rn += f"<td style='{_col_style}'>{_v_fmt}</td>"
-                                _html_km_rn += f"<td style='{_km_td_tot}'>{_row['Total']:,.0f}</td>"
-                                _html_km_rn += "</tr>"
-
-                            # Baris total kolom
-                            _html_km_rn += f"<tr style='background:#e6f4fb;font-weight:700;'>"
-                            _html_km_rn += f"<td style='{_km_td_l}'></td>"
-                            _html_km_rn += f"<td style='{_km_td_l}font-weight:700;color:#0D7FCC;'>Total</td>"
-                            for _m in range(1, 13):
-                                _col_sum = _km_rn_pivot[_m].sum()
-                                _html_km_rn += f"<td style='{_km_th_h}'>{_col_sum:,.0f}</td>"
-                            _html_km_rn += f"<td style='{_km_th_h}background:#c8e0f5;'>{_km_rn_pivot['Total'].sum():,.0f}</td>"
-                            _html_km_rn += "</tr>"
-
-                            _html_km_rn += "</tbody></table></div>"
-                            st.markdown(_html_km_rn, unsafe_allow_html=True)
-                        else:
-                            st.info("Data room nights per hotel tidak tersedia (kolom 'Number of Rooms Night' tidak ditemukan).")
-
-    # ======================================
-    # DISCLAIMER + FOOTER
-    # ======================================
-    st.markdown("""
-    <div style="background:white;padding:20px;border-radius:4px;border-left:4px solid #1BA0E2;font-size:0.9em;">
-        <b>Disclaimer &amp; Compliance Notice</b><br><br>
-        Aplikasi ini disediakan untuk tujuan analisis internal. Output yang dihasilkan tidak bersifat final,
-        tidak mengikat, dan harus melalui proses validasi serta persetujuan sesuai kebijakan perusahaan yang berlaku.
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div class='divider' style='margin-top:50px;'></div>
-    <div style='text-align:center;padding:25px;color:#888888;font-size:0.85em;'>
-        © 2026 Dikembangkan oleh 
-        <a href="https://www.linkedin.com/in/rifyalt/" target="_blank" style='color:#1BA0E2;text-decoration:none;font-weight:500;'>
-            Rifyal Tumber
-        </a> · MTRAX Travel Analytics
-    </div>
-    """, unsafe_allow_html=True)
 
 
 # ===============================
