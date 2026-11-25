@@ -37,8 +37,8 @@ STATUS_RULES = {                   # ambang status daya saing (bisa diubah)
     "below_tinjau": 10,            # >= 10%                                   -> Perlu ditinjau
     "pos_tinjau": 60,              # > P60                                    -> Perlu ditinjau
 }
-COMPETITIVE_GREEN = "#1E7B45"     # warna teks corp rate berstatus Kompetitif
-NOT_COMPETITIVE_RED = "#C2412F"   # warna teks corp rate berstatus Tidak kompetitif
+COMPETITIVE_GREEN = ui.POS_TEXT     # warna teks corp rate berstatus Kompetitif
+NOT_COMPETITIVE_RED = ui.NEG_TEXT   # warna teks corp rate berstatus Tidak kompetitif
 MIN_MARKET_SAMPLE = 5              # minimal booking pembanding untuk menghitung persentil kota
 
 CORP_COLUMNS = {                   # nama kolom standar -> alias yang diterima di file corp rate
@@ -784,7 +784,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
 
     # ---------- file corp rate ----------
     cp = corp_path()
-    with st.expander("📄 Daftar corporate rate", expanded=not cp.exists()):
+    with st.expander("Daftar corporate rate", expanded=not cp.exists(), icon=":material/description:"):
         c1, c2 = st.columns([3, 1])
         with c1:
             if cp.exists():
@@ -805,7 +805,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             else:
                 st.caption("Hanya Super Admin & Admin yang bisa mengganti daftar corp rate.")
         with c2:
-            st.download_button("⬇️ Template", corp_template(), file_name="template_corp_rate.xlsx",
+            st.download_button("Template", corp_template(), file_name="template_corp_rate.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                key="ca_tpl")
         st.caption("Format: Nama Hotel · Kota/Kabupaten · Provinsi · Type Room · Meal Plan · Corporate Rate 2024, "
@@ -833,7 +833,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
         st.error(msg)
     notes = [i for i in issues if i not in errors]
     if notes:
-        with st.expander("ℹ️ Catatan pembacaan daftar corp rate"):
+        with st.expander("Catatan pembacaan daftar corp rate", icon=":material/info:"):
             st.markdown("\n".join(f"- {n}" for n in notes))
     b = prepare_bookings(df_all, standardize_name, normalize_city)
     if b.empty or corp.empty:
@@ -843,7 +843,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
     corp = align_corp_cities(b, corp)
     n_all, rn_all = len(b), b["Number of Rooms Night"].sum()
     b, corp = breakfast_only(b, corp)
-    ui.note(f"🍳 Analisis ini hanya untuk booking <b>termasuk sarapan</b>: {len(b):,} dari {n_all:,} booking · "
+    ui.note(f"Analisis ini hanya untuk booking <b>termasuk sarapan</b>: {len(b):,} dari {n_all:,} booking · "
             f"{b['Number of Rooms Night'].sum():,.0f} dari {rn_all:,.0f} room nights. ".replace(",", ".") +
             "Booking Room Only dan booking yang meal plan-nya tidak tertulis tidak dihitung.")
     if b.empty or corp.empty:
@@ -855,14 +855,14 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
     if not name_changes.empty:
         n_hotel = corp["_hotel_key"].nunique()
         n_in = corp["_hotel_key"].isin(set(b["_hotel_key"])).groupby(corp["_hotel_key"]).first().sum()
-        with st.expander(f"🏷️ Penyeragaman nama hotel · {len(name_changes):,} nama master disesuaikan · "
+        with st.expander(icon=":material/sell:", label=f"Penyeragaman nama hotel · {len(name_changes):,} nama master disesuaikan · "
                          f"{int(n_in):,} dari {n_hotel:,} hotel kontrak ada di invoice".replace(",", ".")):
             st.caption("Nama hotel di master corp rate diseragamkan dengan hotel_name_standardizer dan nama hotel di "
                        f"invoice. 'mirip' = disamakan otomatis karena kemiripan nama ≥ {NAME_MATCH_MIN:.2f} di kota yang "
                        "sama; cek daftar ini dan perbaiki kamus standardizer bila ada yang keliru.")
             st.dataframe(name_changes, hide_index=True, width="stretch", height=min(400, 36 * len(name_changes) + 40))
             if can_download:
-                st.download_button("⬇️ Unduh daftar penyeragaman", _excel(name_changes, "Penyeragaman nama", excel_fn),
+                st.download_button("Unduh daftar penyeragaman", _excel(name_changes, "Penyeragaman nama", excel_fn),
                                    file_name=f"penyeragaman_nama_hotel_{datetime.now():%Y%m%d}.xlsx",
                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                    key="ca_dl_names")
@@ -890,7 +890,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                         f"{len(s)} kombinasi hotel × tipe kamar × meal plan")
             ch = s.sort_values("Selisih %", ascending=True)
             labels = ch["Hotel"] + " · " + ch["Room type"] + " · " + ch["Meal plan"].str.replace("Breakfast Included", "BF").str.replace("Room Only", "RO")
-            colors = np.where(ch["Selisih %"] > 0, "#C2412F", "#7D8C99")
+            colors = np.where(ch["Selisih %"] > 0, ui.RED_FILL, ui.GREY)
             notes = [(_jt(p) if d > 0 else f"{bl:.0f}% room night lebih murah")
                      for d, p, bl in zip(ch["Selisih %"], ch["Potensi"], ch["Room Night < Corp %"])]
             fig = go.Figure(go.Bar(x=ch["Selisih %"], y=labels, orientation="h", marker_color=colors,
@@ -901,9 +901,9 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             span = max(hi - lo, 1.0)
             xr = [lo - span * 0.75 if lo < 0 else -span * 0.05, hi + span * 0.05]  # ruang untuk label di sisi negatif
             fig.update_layout(height=max(380, 24 * len(ch) + 80), margin=dict(l=10, r=160, t=10, b=30),
-                              plot_bgcolor="white", paper_bgcolor="white", showlegend=False,
-                              xaxis=dict(title="Selisih vs corp rate (%)", zeroline=True, zerolinecolor="#8A99A6",
-                                         gridcolor="#EEF1F4", ticksuffix="%", range=xr),
+                              showlegend=False, **{k: v for k, v in ui.PLOTLY_LAYOUT.items() if k not in ("margin", "xaxis", "yaxis")},
+                              xaxis=dict(title="Selisih vs corp rate (%)", zeroline=True, zerolinecolor="#9A9A9A",
+                                         gridcolor="#EDEDED", ticksuffix="%", range=xr),
                               yaxis=dict(tickfont=dict(size=10)))
             with st.container(height=540):
                 st.plotly_chart(fig, width="stretch", key="ca_chart")
@@ -951,7 +951,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                 "<b>Posisi kota</b> = letak corp rate di antara rate yang dibayar untuk tipe kamar yang sama di kota itu "
                 "(P10 = lebih murah dari 90% rate pasar).")
             if can_download:
-                st.download_button("⬇️ Unduh Excel", _excel(out.rename(columns={"Corp": "Corp rate", "RN": "Room nights"}),
+                st.download_button("Unduh Excel", _excel(out.rename(columns={"Corp": "Corp rate", "RN": "Room nights"}),
                                    "Cost Avoidance", excel_fn,
                                    money_cols=("Corp rate", "Avg dibayar", "Potensi"),
                                    int_cols=("Room nights",), dec_cols=("Selisih %", "Room Night < Corp %", "Posisi kota")),
@@ -970,7 +970,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                 nc["RN"] = nc["RN"].map(lambda v: f"{v:,.0f}".replace(",", "."))
                 st.dataframe(nc[["Hotel", "Kota", "RN", "Avg rate"]].rename(columns={"RN": "Room nights"}),
                              hide_index=True, width="stretch")
-        with st.expander("📘 Cara perhitungan"):
+        with st.expander("Cara perhitungan", icon=":material/menu_book:"):
             st.markdown(
                 "- **Pencocokan**: hotel + kota + tipe kamar + meal plan, dan tanggal check-in di dalam masa berlaku.\n"
                 "- **Potensi avoidance** = Σ (rate dibayar per booking − corp rate) × room nights, hanya booking di atas corp rate.\n"
@@ -1017,7 +1017,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             st.warning("Angka ini **potensi**: data tidak mencatat apakah hotel kontrak sedang penuh atau lokasinya jauh "
                        "dari tempat tugas, dan kelas hotel belum ada di data.")
             if can_download:
-                st.download_button("⬇️ Unduh Excel", _excel(out.rename(columns={"RN": "Room nights", "Setara": "Corp rate setara"}),
+                st.download_button("Unduh Excel", _excel(out.rename(columns={"RN": "Room nights", "Setara": "Corp rate setara"}),
                                    "Kebocoran non-kontrak", excel_fn,
                                    money_cols=("Avg dibayar", "Corp rate setara", "Potensi"), int_cols=("Room nights",),
                                    dec_cols=("Selisih %",)),
@@ -1053,7 +1053,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                 })
             st.metric("Total hard savings", _jt(rg["Hard savings"].sum()),
                       f"{int(rg['Sumber target'].eq('manual').sum())} target manual", delta_color="off")
-            if can_edit and st.button("💾 Simpan target manual", key="ca_save_manual"):
+            if can_edit and st.button("Simpan target manual", key="ca_save_manual", icon=":material/save:"):
                 keep = edited[edited["Target turun manual (%)"].notna() & (edited["Target turun manual (%)"] > 0)]
                 others = manual_df[~manual_df["key"].isin(ed["_key"])] if not manual_df.empty else manual_df
                 new = pd.DataFrame({"key": keep["_key"], "persen": keep["Target turun manual (%)"],
@@ -1068,7 +1068,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                 xl = rg.drop(columns=["_key", "_hotel_key", "_city_key", "_hotel_rn"], errors="ignore")
                 xl = xl[["Hotel", "Kota", "Room type", "Meal plan", "Daya saing", "Corp", "Target persentil",
                          "Target turun manual (%)", "Target dipakai", "Sumber target", "Turun %", "RN", "Hard savings"]]
-                st.download_button("⬇️ Unduh Excel", _excel(xl.rename(columns={"Corp": "Corp rate", "RN": "Room nights"}),
+                st.download_button("Unduh Excel", _excel(xl.rename(columns={"Corp": "Corp rate", "RN": "Room nights"}),
                                    "Target renegosiasi", excel_fn,
                                    money_cols=("Corp rate", "Target persentil", "Target dipakai", "Hard savings"),
                                    int_cols=("Room nights",), dec_cols=("Turun %", "Target turun manual (%)")),
