@@ -87,7 +87,8 @@ def norm_room_type(value) -> str:
     return "Lainnya"
 
 
-_ROOM_NOISE = re.compile(r"\b(rooms?|kamar|include[sd]?|incl|with|breakfast|room only|only|ro|rbf|abf|\d?bf|"
+_ROOM_NOISE = re.compile(r"\b(rooms?|kamar|include[sd]?|incl|with|without|w o|exclude|excluding|excl|non|no|tanpa|"
+                         r"sarapan|bb|breakfast|room only|only|ro|rbf|abf|\d?bf|"
                          r"single|double|twin|king|queen|city view|ocean view|pool view|garden view|view)\b")
 
 
@@ -112,22 +113,27 @@ MEAL_ANY = "Semua"   # corp rate tanpa meal plan: berlaku untuk Room Only maupun
 
 def meal_from_room_text(value) -> str:
     """Meal plan yang tertulis di nama tipe kamar, mis. 'Superior Include Breakfast', 'Deluxe (1BF)', 'Room Only'."""
-    s = _fold(value)
-    if re.search(r"room only|\(ro\)|\bro\b|without breakfast|tanpa sarapan|no breakfast", s):
-        return "Room Only"
-    if re.search(r"breakfast|sarapan|\b\d ?bf\b|\(\d?bf\)|\brbf\b|\babf\b|\bbf\b", s):
-        return "Breakfast Included"
-    return MEAL_ANY
+    m = norm_meal(value)
+    return MEAL_ANY if m == "Tidak diketahui" else m
+
+
+_RO_PAT = re.compile(r"room only|\(ro\)|\bro\b|without breakfast|w/o breakfast|wo breakfast|no breakfast|"
+                     r"non[- ]?breakfast|excl(?:ude|uding)?\.? breakfast|tanpa sarapan|no meal|room only")
+_BF_PAT = re.compile(r"breakfast|sarapan|\b\d ?bf\b|\(\d?bf\)|\brbf\b|\babf\b|\bbf\b|\bbb\b|b&b|"
+                     r"half board|full board|all inclusive")
 
 
 def norm_meal(value) -> str:
+    """Meal plan booking: 'Room Only', 'Breakfast Included', atau 'Tidak diketahui'."""
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return "Tidak diketahui"
     s = _fold(value)
-    if any(k in s for k in ("breakfast", "sarapan", "abf", "bf", "with b", "half board", "full board")):
-        return "Breakfast Included"
-    if any(k in s for k in ("room only", "ro", "without breakfast", "tanpa sarapan", "no meal")):
+    if not s or s in ("nan", "none", "-"):
+        return "Tidak diketahui"
+    if _RO_PAT.search(s):
         return "Room Only"
+    if _BF_PAT.search(s):
+        return "Breakfast Included"
     return "Tidak diketahui"
 
 
@@ -220,7 +226,12 @@ def prepare_bookings(df: pd.DataFrame, standardize_name=None, normalize_city=Non
     b["Hotel Name"] = b.groupby("_hotel_key")["Hotel Name"].transform(lambda x: x.value_counts().index[0])
     b["_city_key"] = b["City"].map(ncity)
     b["_rt"] = b["Room Category"].map(room_key) if "Room Category" in b.columns else "Lainnya"
-    b["_meal"] = b["Meal Plan"].map(norm_meal) if "Meal Plan" in b.columns else "Tidak diketahui"
+    # meal plan: kolom Meal Plan; bila kosong/tidak terbaca, dari keterangan di Room Category
+    meal = b["Meal Plan"].map(norm_meal) if "Meal Plan" in b.columns else pd.Series("Tidak diketahui", index=b.index)
+    if "Room Category" in b.columns:
+        from_room = b["Room Category"].map(norm_meal)
+        meal = meal.where(meal != "Tidak diketahui", from_room)
+    b["_meal"] = meal
     b["_rate"] = b["Invoice Amount"] / b["Number of Rooms Night"]
     b["_checkin"] = _to_dt(b["Check in Date"]) if "Check in Date" in b.columns else pd.NaT
     b["_bid"] = np.arange(len(b))
