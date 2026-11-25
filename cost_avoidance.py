@@ -60,6 +60,18 @@ _GENERIC = {"hotel", "hotels", "the", "and", "by", "at", "of", "resort", "resort
 # ---------------------------------------------------------------------------
 # NORMALISASI
 # ---------------------------------------------------------------------------
+def umap(series: pd.Series, func) -> pd.Series:
+    """series.map(func) tetapi func hanya dihitung sekali per nilai unik (puluhan ribu baris -> ratusan nilai)."""
+    if series is None or len(series) == 0:
+        return series
+    codes, uniques = pd.factorize(series, use_na_sentinel=True)
+    lut = np.empty(len(uniques) + 1, dtype=object)
+    for i, u in enumerate(uniques):
+        lut[i] = func(u)
+    lut[-1] = func(np.nan)                      # kode -1 = NaN
+    return pd.Series(lut[codes], index=series.index, name=series.name).infer_objects()
+
+
 def _fold(s) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
@@ -221,15 +233,15 @@ def prepare_bookings(df: pd.DataFrame, standardize_name=None, normalize_city=Non
     if b.empty:
         return pd.DataFrame()
     ncity = normalize_city or (lambda c: _fold(c).upper())
-    b["Hotel Name"] = b["Hotel Name"].map(lambda v: safe_standardize(v, standardize_name))
-    b["_hotel_key"] = b["Hotel Name"].map(hotel_key)
+    b["Hotel Name"] = umap(b["Hotel Name"], lambda v: safe_standardize(v, standardize_name))
+    b["_hotel_key"] = umap(b["Hotel Name"], hotel_key)
     b["Hotel Name"] = b.groupby("_hotel_key")["Hotel Name"].transform(lambda x: x.value_counts().index[0])
-    b["_city_key"] = b["City"].map(ncity)
-    b["_rt"] = b["Room Category"].map(room_key) if "Room Category" in b.columns else "Lainnya"
+    b["_city_key"] = umap(b["City"], ncity)
+    b["_rt"] = umap(b["Room Category"], room_key) if "Room Category" in b.columns else "Lainnya"
     # meal plan: kolom Meal Plan; bila kosong/tidak terbaca, dari keterangan di Room Category
-    meal = b["Meal Plan"].map(norm_meal) if "Meal Plan" in b.columns else pd.Series("Tidak diketahui", index=b.index)
+    meal = umap(b["Meal Plan"], norm_meal) if "Meal Plan" in b.columns else pd.Series("Tidak diketahui", index=b.index)
     if "Room Category" in b.columns:
-        from_room = b["Room Category"].map(norm_meal)
+        from_room = umap(b["Room Category"], norm_meal)
         meal = meal.where(meal != "Tidak diketahui", from_room)
     b["_meal"] = meal
     b["_rate"] = b["Invoice Amount"] / b["Number of Rooms Night"]
@@ -267,7 +279,7 @@ def _cell_rate(v):
 def corp_to_long(corp: pd.DataFrame, carry_forward: bool = True) -> tuple[pd.DataFrame, list]:
     """Format MasterData (satu kolom 'Corporate Rate <tahun>' per tahun) -> satu baris per tahun
     dengan Valid From/Valid To = 1 Jan - 31 Des. Bila carry_forward, tahun yang kosong memakai rate
-    tahun sebelumnya (sampai tahun terakhir di file)."""
+    tahun sebelumnya (sampai tahun terakhir di file). Versi vektor (tanpa loop per baris)."""
     years = _year_columns(corp)
     issues = []
     if not years:
@@ -278,32 +290,36 @@ def corp_to_long(corp: pd.DataFrame, carry_forward: bool = True) -> tuple[pd.Dat
                       + " (dipakai nilai pertama yang terisi).")
     base_cols = [c for c in corp.columns if not any(c in cols for cols in years.values())]
     base = corp[base_cols].reset_index(drop=True)
-    vals, plus = {}, {}
+    V, P = {}, {}
     for y, cols in years.items():
-        parsed = [corp[c].reset_index(drop=True).map(_cell_rate) for c in cols]
-        num = pd.concat([p.map(lambda t: t[0]) for p in parsed], axis=1).bfill(axis=1).iloc[:, 0]
-        pp = pd.concat([p.map(lambda t: t[1]) for p in parsed], axis=1).any(axis=1)
-        vals[y], plus[y] = num, pp
-    rows, carried = [], 0
-    for i in range(len(base)):
-        last = None
-        for y in years:
-            v = vals[y].iat[i]
-            src = y
-            if pd.isna(v) and carry_forward and last is not None:
-                v, src, pl = last[0], last[1], last[2]
-                carried += 1
-            elif not pd.isna(v):
-                pl = bool(plus[y].iat[i])
-                last = (v, y, pl)
-            if pd.isna(v):
-                continue
-            r = base.iloc[i].to_dict()
-            r.update({"Corp Rate": v, "Valid From": pd.Timestamp(y, 1, 1), "Valid To": pd.Timestamp(y, 12, 31),
-                      "Tahun rate": src, "_plus": pl})
-            rows.append(r)
-    out = pd.DataFrame(rows)
-    yrs = list(years)
+        parsed = [umap(corp[c].reset_index(drop=True).astype(object), _cell_rate) for c in cols]
+        V[y] = pd.concat([p.str[0] for p in parsed], axis=1).bfill(axis=1).iloc[:, 0].astype(float)
+        P[y] = pd.concat([p.str[1] for p in parsed], axis=1).fillna(False).any(axis=1)
+    V, P = pd.DataFrame(V), pd.DataFrame(P)
+    src = pd.DataFrame({y: np.where(V[y].notna(), y, np.nan) for y in V.columns})
+    if carry_forward:
+        Vf = V.ffill(axis=1)
+        src = src.ffill(axis=1)
+        Pf = P.where(V.notna()).ffill(axis=1).fillna(False).astype(bool)
+        carried = int((Vf.notna() & V.isna()).sum().sum())
+    else:
+        Vf, Pf, carried = V, P, 0
+    parts = []
+    for y in V.columns:
+        ok = Vf[y].notna()
+        if not ok.any():
+            continue
+        part = base[ok].copy()
+        part["_row"] = np.flatnonzero(ok.to_numpy())
+        part["Corp Rate"] = Vf.loc[ok, y].values
+        part["Valid From"] = pd.Timestamp(int(y), 1, 1)
+        part["Valid To"] = pd.Timestamp(int(y), 12, 31)
+        part["Tahun rate"] = src.loc[ok, y].astype(int).values
+        part["_plus"] = Pf.loc[ok, y].values
+        parts.append(part)
+    out = (pd.concat(parts, ignore_index=True).sort_values(["_row", "Valid From"], kind="stable")
+           .drop(columns="_row").reset_index(drop=True)) if parts else base.iloc[0:0]   # urutan sama: baris, lalu tahun
+    yrs = list(V.columns)
     issues.append(f"Format per tahun terbaca: {yrs[0]}–{yrs[-1]} · {len(base):,} baris tipe kamar → "
                   f"{len(out):,} corp rate per tahun.".replace(",", "."))
     if carried:
@@ -339,9 +355,9 @@ def prepare_corp(corp: pd.DataFrame, default_basis: str = "Nett",
     c = c[c["Corp Rate"] > 0].copy()
     # meal plan: kolom Meal Plan bila terisi, lalu teks di Type Room, selain itu berlaku untuk semua
     meal_col = c["Meal Plan"] if "Meal Plan" in c.columns else pd.Series(np.nan, index=c.index)
-    from_col = meal_col.map(lambda v: norm_meal(v) if pd.notna(v) and str(v).strip() not in ("", "-") else MEAL_ANY)
+    from_col = umap(meal_col, lambda v: norm_meal(v) if pd.notna(v) and str(v).strip() not in ("", "-") else MEAL_ANY)
     from_col = from_col.replace("Tidak diketahui", MEAL_ANY)
-    from_room = c["Room Type"].map(meal_from_room_text)
+    from_room = umap(c["Room Type"], meal_from_room_text)
     c["_meal"] = np.where(from_col != MEAL_ANY, from_col, from_room)
     # pajak: '++' di sel, atau kolom Tax Basis, atau pilihan basis di aplikasi
     basis = c["Tax Basis"].astype(str) if "Tax Basis" in c.columns else pd.Series(default_basis, index=c.index)
@@ -349,10 +365,10 @@ def prepare_corp(corp: pd.DataFrame, default_basis: str = "Nett",
     c["_corp"] = np.where(excl, c["Corp Rate"] * (1 + DEFAULT_TAX), c["Corp Rate"])
     ncity = normalize_city or (lambda v: _fold(v).upper())
     c["Nama hotel di master"] = c["Hotel Name"].astype(str).str.strip()
-    c["Hotel Name"] = c["Nama hotel di master"].map(lambda v: safe_standardize(v, standardize_name))
-    c["_hotel_key"] = c["Hotel Name"].map(hotel_key)
-    c["_city_key"] = c["City"].map(lambda v: ncity(v) if pd.notna(v) else "")
-    c["_rt"] = c["Room Type"].map(room_key)
+    c["Hotel Name"] = umap(c["Nama hotel di master"], lambda v: safe_standardize(v, standardize_name))
+    c["_hotel_key"] = umap(c["Hotel Name"], hotel_key)
+    c["_city_key"] = umap(c["City"], lambda v: ncity(v) if pd.notna(v) else "")
+    c["_rt"] = umap(c["Room Type"], room_key)
     c["_from"] = _to_dt(c["Valid From"]) if "Valid From" in c.columns else pd.NaT
     c["_to"] = _to_dt(c["Valid To"]) if "Valid To" in c.columns else pd.NaT
     n_pl = int(c["_plus"].astype(bool).sum())
@@ -401,7 +417,11 @@ def harmonize_corp_names(b: pd.DataFrame, c: pd.DataFrame) -> tuple[pd.DataFrame
         for bk in cand:
             ws = cw | city_words.get(bk, set())          # nama kota di nama hotel tidak ikut dibandingkan
             a, z = strip(ck, ws), strip(bk, ws)
-            r = SequenceMatcher(None, a, z).ratio()
+            sm = SequenceMatcher(None, a, z)
+            floor = max(score, NAME_MATCH_MIN - 1e-9)
+            if sm.real_quick_ratio() <= floor or sm.quick_ratio() <= floor:
+                continue                                  # batas atas kemiripan tidak cukup -> lewati (hasil sama)
+            r = sm.ratio()
             short, long_ = sorted((_tokens(a), _tokens(z)), key=len)
             if r > score and short and short <= long_ | {t for t in short if len(t) <= 2}:
                 best, score = bk, r
@@ -701,6 +721,37 @@ def read_corp_file(path) -> pd.DataFrame:
     return xl.parse(sheet)
 
 
+# ---------------------------------------------------------------- sumber corp rate & pipeline ber-cache
+def frame_sig(df: pd.DataFrame) -> str:
+    """Sidik jari cepat sebuah DataFrame (untuk kunci cache)."""
+    if df is None or df.empty:
+        return "empty"
+    try:
+        h = pd.util.hash_pandas_object(df, index=False).to_numpy()
+        return f"{len(df)}:{int(h.sum()) & 0xFFFFFFFFFFFF:x}:{int(h[::97].sum()) & 0xFFFFFF:x}"
+    except Exception:
+        return f"{len(df)}:{id(df)}"
+
+
+def _read_corp_cached(path: str, mtime: float) -> pd.DataFrame:
+    import streamlit as st
+
+    @st.cache_data(max_entries=4, show_spinner=False)
+    def _r(p, m):
+        return read_corp_file(p)
+    return _r(path, mtime)
+
+
+def local_corp_source():
+    """Sumber cadangan: file corp_rate.xlsx yang diunggah ke server lewat aplikasi."""
+    cp = corp_path()
+    if not cp.exists():
+        return None
+    mt = cp.stat().st_mtime
+    return {"df": _read_corp_cached(str(cp), mt), "name": "corp_rate.xlsx", "origin": "server",
+            "updated": datetime.fromtimestamp(mt), "sig": f"file:{mt}", "error": None}
+
+
 def corp_template() -> BytesIO:
     """Template mengikuti format MasterData: satu baris per hotel × tipe kamar, satu kolom per tahun."""
     t = pd.DataFrame([
@@ -760,7 +811,7 @@ def _pct(v, signed=False) -> str:
     return s
 
 
-def _excel(df: pd.DataFrame, sheet: str, excel_fn=None, **fmt) -> BytesIO:
+def _excel_now(df: pd.DataFrame, sheet: str, excel_fn=None, **fmt) -> BytesIO:
     if excel_fn is not None:
         try:
             return excel_fn(df, sheet, **fmt)
@@ -770,6 +821,13 @@ def _excel(df: pd.DataFrame, sheet: str, excel_fn=None, **fmt) -> BytesIO:
     df.to_excel(buf, index=False, sheet_name=sheet[:31])
     buf.seek(0)
     return buf
+
+
+def _excel(df: pd.DataFrame, sheet: str, excel_fn=None, **fmt):
+    """Data untuk st.download_button: fungsi yang membuat Excel SAAT tombol diklik (bukan setiap rerun).
+    Bila versi Streamlit belum mendukung data berupa fungsi, app.py memanggilnya langsung (lihat download guard)."""
+    snapshot = df.copy()
+    return lambda: _excel_now(snapshot, sheet, excel_fn, **fmt).getvalue()
 
 
 def _corp_uploader(cp, where: str):
@@ -786,14 +844,58 @@ def _corp_uploader(cp, where: str):
         st.rerun()
 
 
+def run_analysis(df_all, data_sig, src, basis_flag, carry, standardize_name=None, normalize_city=None) -> dict:
+    """Seluruh perhitungan Cost Avoidance, di-cache per (data, file corp rate, basis, carry).
+    Dipakai tab Cost Avoidance dan tab Laporan, dan dibagi antar pengguna."""
+    import streamlit as st
+
+    @st.cache_data(max_entries=8, show_spinner=False)
+    def _run(_df, dsig, _corp_raw, csig, basis, carry_, _std, _nc):
+        corp, issues = prepare_corp(_corp_raw, basis, _std, _nc, carry_forward=carry_)
+        res = {"issues": issues, "ready": False}
+        b = prepare_bookings(_df, _std, _nc)
+        if b.empty or corp.empty:
+            return res
+        corp, name_changes = harmonize_corp_names(b, corp)
+        corp = align_corp_cities(b, corp)
+        n_all, rn_all = len(b), float(b["Number of Rooms Night"].sum())
+        n_hotel = int(corp["_hotel_key"].nunique())
+        n_in = int(corp.drop_duplicates("_hotel_key")["_hotel_key"].isin(set(b["_hotel_key"])).sum())
+        b, corp = breakfast_only(b, corp)
+        res.update(name_changes=name_changes, n_all=n_all, rn_all=rn_all, n_hotel=n_hotel, n_in=n_in,
+                   n_bf=len(b), rn_bf=float(b["Number of Rooms Night"].sum()) if not b.empty else 0.0)
+        if b.empty or corp.empty:
+            return res
+        m = match_bookings(b, corp)
+        pools = market_pools(b)
+        res.update(ready=True, corp=corp, m=m, pools=pools, summary=summarize_matched(m, pools),
+                   leak100=leakage(m, corp, 100), quality=match_quality(m, corp),
+                   city10=city_compliance(m, corp, 10))
+        return res
+
+    return _run(df_all, data_sig, src["df"], src["sig"], basis_flag, carry, standardize_name, normalize_city)
+
+
 def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit: bool,
                           username: str = "", excel_fn=None, standardize_name=None,
-                          normalize_city=None):
+                          normalize_city=None, corp_source=None, data_sig=None):
+    """corp_source: fungsi tanpa argumen -> dict sumber corp rate (mis. Google Drive) atau None.
+    data_sig: sidik jari data (kunci cache); dihitung sendiri bila kosong."""
     import plotly.graph_objects as go
     import streamlit as st
 
-    # ---------- judul + toolbar (pengaturan & catatan disimpan di popover agar halaman ringkas) ----------
+    # ---------- sumber corp rate ----------
     cp = corp_path()
+    src = corp_source() if corp_source else None
+    drive_mode = bool(src and src.get("origin") == "drive")
+    if src is None or src.get("df") is None:
+        fallback = local_corp_source()
+        if fallback is not None:
+            fallback["error"] = (src or {}).get("error")
+            src = fallback
+    has_corp = bool(src and src.get("df") is not None)
+
+    # ---------- judul + toolbar (pengaturan & catatan di popover agar halaman ringkas) ----------
     h1, h2 = st.columns([5, 4], vertical_alignment="bottom")
     with h1:
         ui.page_title("Gross Potential Cost Avoidance",
@@ -805,12 +907,18 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
         pop_corp = st.popover("Corp rate", icon=":material/tune:", width="stretch")
     with pop_corp:
         st.markdown("**Daftar corporate rate**")
-        if cp.exists():
-            ts = datetime.fromtimestamp(cp.stat().st_mtime).strftime("%d %b %Y %H:%M")
-            st.caption(f"File aktif: corp_rate.xlsx · diperbarui {ts}")
+        if has_corp:
+            where = "Google Drive" if src.get("origin") == "drive" else "server aplikasi (unggahan)"
+            st.caption(f"Sumber: {where} · {src.get('name', '')} · diperbarui "
+                       f"{src['updated']:%d %b %Y %H:%M}" if src.get("updated") else f"Sumber: {where}")
         else:
             st.caption("Belum ada daftar corp rate.")
-        if can_edit and cp.exists():
+        if src and src.get("refresh"):
+            if st.button("Muat ulang dari Google Drive", icon=":material/sync:", key="ca_corp_refresh"):
+                src["refresh"]()
+                st.rerun()
+            st.caption("Ganti file di folder Google Drive, lalu klik Muat ulang. Otomatis dicek ulang tiap 10 menit.")
+        elif can_edit and cp.exists():
             _corp_uploader(cp, "pop")
         elif not can_edit:
             st.caption("Hanya Super Admin & Admin yang bisa mengganti daftar corp rate.")
@@ -819,30 +927,29 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
         carry = st.checkbox("Tahun kosong pakai rate tahun sebelumnya", value=True, key="ca_carry")
         st.caption("Format: Nama Hotel · Kota/Kabupaten · Provinsi · Type Room · Meal Plan · Corporate Rate "
                    "<tahun> (satu kolom per tahun).")
-        st.download_button("Template", corp_template(), file_name="template_corp_rate.xlsx",
+        st.download_button("Template", lambda: corp_template().getvalue(), file_name="template_corp_rate.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ca_tpl")
 
-    if not cp.exists():
-        if can_edit:
+    if src and src.get("error"):
+        ui.note("<b>Corp rate dari Google Drive belum bisa dibaca.</b> " + ui.esc(src["error"]) +
+                (" Sementara memakai file unggahan di server." if has_corp else ""), warn=True)
+    if not has_corp:
+        if can_edit and not drive_mode:
             with st.container(border=True):
                 ui.section("Unggah daftar corporate rate",
-                           "Belum ada daftar corp rate di server. File di server Streamlit Cloud bisa hilang saat "
-                           "aplikasi di-reboot atau di-deploy ulang; bila itu terjadi, unggah ulang di sini.")
+                           "Belum ada daftar corp rate. Atur folder Google Drive di Secrets ([corp_rate] folder_id) "
+                           "agar tidak perlu unggah manual, atau unggah file di sini (hilang saat aplikasi di-reboot).")
                 _corp_uploader(cp, "main")
-                st.download_button("Template", corp_template(), file_name="template_corp_rate.xlsx",
+                st.download_button("Template", lambda: corp_template().getvalue(), file_name="template_corp_rate.xlsx",
                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                    key="ca_tpl_main")
-        else:
-            ui.note("<b>Belum ada daftar corporate rate.</b> Minta Super Admin atau Admin mengunggahnya.")
-        return
-    try:
-        corp_raw = read_corp_file(cp)
-    except Exception as e:
-        st.error(f"File corp rate tidak bisa dibaca: {e}")
+        elif not src or not src.get("error"):
+            ui.note("<b>Belum ada daftar corporate rate.</b> Minta Super Admin atau Admin menyiapkannya.")
         return
 
-    corp, issues = prepare_corp(corp_raw, "Belum" if basis.startswith("Belum") else "Nett",
-                                standardize_name, normalize_city, carry_forward=carry)
+    res = run_analysis(df_all, data_sig or frame_sig(df_all), src, "Belum" if basis.startswith("Belum") else "Nett",
+                       carry, standardize_name, normalize_city)
+    issues = res["issues"]
     errors = [i for i in issues if i.startswith("Kolom wajib") or i.startswith("Kolom harga") or "kosong." in i]
     for msg in errors:
         st.error(msg)
@@ -851,16 +958,10 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
         with st.popover("Catatan data", icon=":material/info:", width="stretch", disabled=not notes):
             st.markdown("**Catatan pembacaan daftar corp rate**")
             st.markdown("\n".join(f"- {n}" for n in notes))
-    b = prepare_bookings(df_all, standardize_name, normalize_city)
-    if b.empty or corp.empty:
+    if "name_changes" not in res:
         st.info("Data booking atau corp rate belum cukup untuk dianalisis.")
         return
-    corp, name_changes = harmonize_corp_names(b, corp)
-    corp = align_corp_cities(b, corp)
-    n_all, rn_all = len(b), b["Number of Rooms Night"].sum()
-    n_hotel = corp["_hotel_key"].nunique()
-    n_in = int(corp.drop_duplicates("_hotel_key")["_hotel_key"].isin(set(b["_hotel_key"])).sum())
-    b, corp = breakfast_only(b, corp)
+    name_changes = res["name_changes"]
     with t3:
         with st.popover("Nama hotel", icon=":material/sell:", width="stretch", disabled=name_changes.empty):
             st.markdown(f"**Penyeragaman nama hotel** · {len(name_changes):,} nama master disesuaikan".replace(",", "."))
@@ -875,22 +976,21 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                                    key="ca_dl_names")
 
     # ---------- satu kartu cakupan data ----------
-    rn_bf = b["Number of Rooms Night"].sum()
     pct = lambda x, t: f"{x / t * 100:.0f}%" if t else "-"  # noqa: E731
     f = lambda v: f"{v:,.0f}".replace(",", ".")  # noqa: E731
+    origin = "Google Drive" if src.get("origin") == "drive" else "unggahan server"
     ui.scope_bar([
-        ("Corp rate aktif", datetime.fromtimestamp(cp.stat().st_mtime).strftime("%d %b %Y"),
-         f"{f(n_hotel)} hotel kontrak"),
-        ("Hotel kontrak ada di invoice", f"{f(n_in)} / {f(n_hotel)}", pct(n_in, n_hotel)),
-        ("Booking dihitung", f"{f(len(b))} / {f(n_all)}", pct(len(b), n_all)),
-        ("Room nights dihitung", f"{f(rn_bf)} / {f(rn_all)}", pct(rn_bf, rn_all)),
+        ("Corp rate aktif", src["updated"].strftime("%d %b %Y") if src.get("updated") else "-",
+         f"{origin} · {f(res['n_hotel'])} hotel kontrak"),
+        ("Hotel kontrak ada di invoice", f"{f(res['n_in'])} / {f(res['n_hotel'])}", pct(res["n_in"], res["n_hotel"])),
+        ("Booking dihitung", f"{f(res['n_bf'])} / {f(res['n_all'])}", pct(res["n_bf"], res["n_all"])),
+        ("Room nights dihitung", f"{f(res['rn_bf'])} / {f(res['rn_all'])}", pct(res["rn_bf"], res["rn_all"])),
     ], "Hanya booking <b>termasuk sarapan</b>. Booking Room Only dan yang meal plan-nya tidak tertulis tidak dihitung.")
-    if b.empty or corp.empty:
+    if not res["ready"]:
         st.info("Belum ada booking termasuk sarapan yang bisa dibandingkan dengan corp rate.")
         return
-    m = match_bookings(b, corp)
-    pools = market_pools(b)
-    summary = summarize_matched(m, pools)
+    corp, m, pools, summary = res["corp"], res["m"], res["pools"], res["summary"]
+    leak100, quality, city10 = res["leak100"], res["quality"], res["city10"]
 
     sub1, sub2 = st.tabs(["Ringkasan", "Analisis lanjutan"])
 
@@ -1007,12 +1107,12 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
 
     # ================= ANALISIS LANJUTAN =================
     with sub2:
-        lk = leakage(m, corp, 100)
+        lk = leak100
         manual_df = load_manual()
         manual = dict(zip(manual_df["key"].astype(str), pd.to_numeric(manual_df["persen"], errors="coerce")))
         pct = st.session_state.get("ca_pct", 40)
         rg = renegotiation(summary, pools, pct, manual, 100)
-        q, suspects = match_quality(m, corp)
+        q, suspects = quality
         matched_pct = float(q.loc[q["Status"] == "Cocok", "Porsi room nights %"].sum()) if not q.empty else 0.0
 
         ui.kpi_row([
@@ -1103,7 +1203,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
 
         # 3. Kepatuhan per kota
         ui.section("3 · Kepatuhan per kota")
-        cc = city_compliance(m, corp, 10)
+        cc = city10
         if cc.empty:
             st.info("Belum ada data.")
         else:
