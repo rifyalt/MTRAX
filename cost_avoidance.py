@@ -844,14 +844,27 @@ def _corp_uploader(cp, where: str):
         st.rerun()
 
 
-def run_analysis(df_all, data_sig, src, basis_flag, carry, standardize_name=None, normalize_city=None) -> dict:
+def corp_years(src) -> list:
+    """Tahun yang tersedia di daftar corp rate (kolom 'Corporate Rate <tahun>')."""
+    try:
+        return sorted(_year_columns(src["df"]).keys())
+    except Exception:
+        return []
+
+
+def run_analysis(df_all, data_sig, src, basis_flag, carry, standardize_name=None, normalize_city=None,
+                 corp_year=None) -> dict:
     """Seluruh perhitungan Cost Avoidance, di-cache per (data, file corp rate, basis, carry).
     Dipakai tab Cost Avoidance dan tab Laporan, dan dibagi antar pengguna."""
     import streamlit as st
 
     @st.cache_data(max_entries=8, show_spinner=False)
-    def _run(_df, dsig, _corp_raw, csig, basis, carry_, _std, _nc):
+    def _run(_df, dsig, _corp_raw, csig, basis, carry_, _std, _nc, year):
         corp, issues = prepare_corp(_corp_raw, basis, _std, _nc, carry_forward=carry_)
+        if year and not corp.empty and "_from" in corp.columns:
+            # bandingkan SEMUA booking dengan corp rate satu tahun pilihan (masa berlaku diabaikan)
+            corp = corp[corp["_from"].dt.year == int(year)].copy()
+            corp["_from"], corp["_to"] = pd.NaT, pd.NaT
         res = {"issues": issues, "ready": False}
         b = prepare_bookings(_df, _std, _nc)
         if b.empty or corp.empty:
@@ -873,7 +886,8 @@ def run_analysis(df_all, data_sig, src, basis_flag, carry, standardize_name=None
                    city10=city_compliance(m, corp, 10))
         return res
 
-    return _run(df_all, data_sig, src["df"], src["sig"], basis_flag, carry, standardize_name, normalize_city)
+    return _run(df_all, data_sig, src["df"], src["sig"], basis_flag, carry, standardize_name, normalize_city,
+                corp_year)
 
 
 def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit: bool,
@@ -902,33 +916,19 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                       "Rate dibayar (Invoice Amount ÷ room nights) dibandingkan corporate rate per hotel, "
                       "tipe kamar dan meal plan")
     with h2:
-        t1, t2, t3 = st.columns(3)
+        t1, t2, t3 = st.columns([1.3, 1, 1])
+    # basis pajak & carry-forward memakai nilai baku (tanda '++' di file tetap dibaca sebagai belum pajak)
+    basis = st.session_state.get("ca_basis", "Nett (sudah pajak & service)")
+    carry = st.session_state.get("ca_carry", True)
+    years = corp_years(src) if has_corp else []
+    YEAR_AUTO = "Sesuai tahun check-in"
     with t1:
-        pop_corp = st.popover("Corp rate", icon=":material/tune:", width="stretch")
-    with pop_corp:
-        st.markdown("**Daftar corporate rate**")
-        if has_corp:
-            where = "Google Drive" if src.get("origin") == "drive" else "server aplikasi (unggahan)"
-            st.caption(f"Sumber: {where} · {src.get('name', '')} · diperbarui "
-                       f"{src['updated']:%d %b %Y %H:%M}" if src.get("updated") else f"Sumber: {where}")
-        else:
-            st.caption("Belum ada daftar corp rate.")
-        if src and src.get("refresh"):
-            if st.button("Muat ulang dari Google Drive", icon=":material/sync:", key="ca_corp_refresh"):
-                src["refresh"]()
-                st.rerun()
-            st.caption("Ganti file di folder Google Drive, lalu klik Muat ulang. Otomatis dicek ulang tiap 10 menit.")
-        elif can_edit and cp.exists():
-            _corp_uploader(cp, "pop")
-        elif not can_edit:
-            st.caption("Hanya Super Admin & Admin yang bisa mengganti daftar corp rate.")
-        basis = st.selectbox("Basis corp rate tanpa tanda '++'",
-                             ["Nett (sudah pajak & service)", "Belum pajak — tambah 21%"], key="ca_basis")
-        carry = st.checkbox("Tahun kosong pakai rate tahun sebelumnya", value=True, key="ca_carry")
-        st.caption("Format: Nama Hotel · Kota/Kabupaten · Provinsi · Type Room · Meal Plan · Corporate Rate "
-                   "<tahun> (satu kolom per tahun).")
-        st.download_button("Template", lambda: corp_template().getvalue(), file_name="template_corp_rate.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ca_tpl")
+        year_pick = st.selectbox("Tahun corp rate", [YEAR_AUTO] + [str(y) for y in years], key="ca_year",
+                                 label_visibility="collapsed",
+                                 format_func=lambda v: "Per tahun check-in" if v == YEAR_AUTO else f"Corp rate {v}",
+                                 help="Pilih tahun corp rate pembanding. 'Sesuai tahun check-in' = booking dibandingkan "
+                                      "dengan corp rate tahun check-in-nya.", disabled=not years)
+    corp_year = None if year_pick == YEAR_AUTO else int(year_pick)
 
     if src and src.get("error"):
         ui.note("<b>Corp rate dari Google Drive belum bisa dibaca.</b> " + ui.esc(src["error"]) +
@@ -948,16 +948,31 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
         return
 
     res = run_analysis(df_all, data_sig or frame_sig(df_all), src, "Belum" if basis.startswith("Belum") else "Nett",
-                       carry, standardize_name, normalize_city)
+                       carry, standardize_name, normalize_city, corp_year)
     issues = res["issues"]
     errors = [i for i in issues if i.startswith("Kolom wajib") or i.startswith("Kolom harga") or "kosong." in i]
     for msg in errors:
         st.error(msg)
     notes = [i for i in issues if i not in errors]
     with t2:
-        with st.popover("Catatan data", icon=":material/info:", width="stretch", disabled=not notes):
-            st.markdown("**Catatan pembacaan daftar corp rate**")
-            st.markdown("\n".join(f"- {n}" for n in notes))
+        with st.popover("Catatan data", icon=":material/info:", width="stretch"):
+            where = "Google Drive" if src.get("origin") == "drive" else "server aplikasi (unggahan)"
+            st.markdown("**Sumber daftar corp rate**")
+            st.caption(f"{where} · {src.get('name', '')}" +
+                       (f" · diperbarui {src['updated']:%d %b %Y %H:%M}" if src.get("updated") else ""))
+            if src.get("refresh"):
+                if st.button("Muat ulang dari Google Drive", icon=":material/sync:", key="ca_corp_refresh"):
+                    src["refresh"]()
+                    st.rerun()
+                st.caption("Ganti file di folder Google Drive, lalu klik Muat ulang. Otomatis dicek ulang tiap 10 menit.")
+            elif can_edit and cp.exists():
+                _corp_uploader(cp, "pop")
+            if notes:
+                st.markdown("**Catatan pembacaan**")
+                st.markdown("\n".join(f"- {n}" for n in notes))
+            st.download_button("Template corp rate", lambda: corp_template().getvalue(),
+                               file_name="template_corp_rate.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ca_tpl")
     if "name_changes" not in res:
         st.info("Data booking atau corp rate belum cukup untuk dianalisis.")
         return
@@ -980,7 +995,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
     f = lambda v: f"{v:,.0f}".replace(",", ".")  # noqa: E731
     origin = "Google Drive" if src.get("origin") == "drive" else "unggahan server"
     ui.scope_bar([
-        ("Corp rate aktif", src["updated"].strftime("%d %b %Y") if src.get("updated") else "-",
+        ("Corp rate pembanding", f"Tahun {corp_year}" if corp_year else "Per tahun check-in",
          f"{origin} · {f(res['n_hotel'])} hotel kontrak"),
         ("Hotel kontrak ada di invoice", f"{f(res['n_in'])} / {f(res['n_hotel'])}", pct(res["n_in"], res["n_hotel"])),
         ("Booking dihitung", f"{f(res['n_bf'])} / {f(res['n_all'])}", pct(res["n_bf"], res["n_all"])),
