@@ -129,6 +129,18 @@ def norm_meal(value) -> str:
     return "Tidak diketahui"
 
 
+def safe_standardize(name, standardize_name=None) -> str:
+    """Nama hotel sesudah hotel_name_standardizer.standardize_name (kalau gagal, nama asli dirapikan)."""
+    base = re.sub(r"\s+", " ", str(name)).strip()
+    if standardize_name is None:
+        return base
+    try:
+        out = standardize_name(base)
+        return re.sub(r"\s+", " ", str(out)).strip() if out is not None and str(out).strip() else base
+    except Exception:
+        return base
+
+
 def hotel_key(name, standardize_name=None) -> str:
     if standardize_name is not None:
         try:
@@ -201,7 +213,8 @@ def prepare_bookings(df: pd.DataFrame, standardize_name=None, normalize_city=Non
     if b.empty:
         return pd.DataFrame()
     ncity = normalize_city or (lambda c: _fold(c).upper())
-    b["_hotel_key"] = b["Hotel Name"].map(lambda v: hotel_key(v, standardize_name))
+    b["Hotel Name"] = b["Hotel Name"].map(lambda v: safe_standardize(v, standardize_name))
+    b["_hotel_key"] = b["Hotel Name"].map(hotel_key)
     b["_city_key"] = b["City"].map(ncity)
     b["_rt"] = b["Room Category"].map(room_key) if "Room Category" in b.columns else "Lainnya"
     b["_meal"] = b["Meal Plan"].map(norm_meal) if "Meal Plan" in b.columns else "Tidak diketahui"
@@ -321,7 +334,9 @@ def prepare_corp(corp: pd.DataFrame, default_basis: str = "Nett",
     excl = basis.map(_fold).str.contains("excl|belum|before|\\+\\+", regex=True) | c["_plus"].astype(bool)
     c["_corp"] = np.where(excl, c["Corp Rate"] * (1 + DEFAULT_TAX), c["Corp Rate"])
     ncity = normalize_city or (lambda v: _fold(v).upper())
-    c["_hotel_key"] = c["Hotel Name"].map(lambda v: hotel_key(v, standardize_name))
+    c["Nama hotel di master"] = c["Hotel Name"].astype(str).str.strip()
+    c["Hotel Name"] = c["Nama hotel di master"].map(lambda v: safe_standardize(v, standardize_name))
+    c["_hotel_key"] = c["Hotel Name"].map(hotel_key)
     c["_city_key"] = c["City"].map(lambda v: ncity(v) if pd.notna(v) else "")
     c["_rt"] = c["Room Type"].map(room_key)
     c["_from"] = _to_dt(c["Valid From"]) if "Valid From" in c.columns else pd.NaT
@@ -335,6 +350,59 @@ def prepare_corp(corp: pd.DataFrame, default_basis: str = "Nett",
                       "Executive/Suite (mis. Family, Studio). Tipe ini hanya dicocokkan dengan booking "
                       "yang nama tipe kamarnya sama.")
     return c.reset_index(drop=True), issues
+
+
+NAME_MATCH_MIN = 0.88   # kemiripan minimal untuk menyamakan nama hotel master corp rate dengan nama di invoice
+
+
+def _tokens(key: str) -> set:
+    return {t for t in str(key).split() if len(t) > 1}
+
+
+def harmonize_corp_names(b: pd.DataFrame, c: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Samakan nama hotel di master corp rate dengan nama hotel di invoice (Google Drive) yang sudah
+    diseragamkan hotel_name_standardizer. Pertama lewat kunci nama yang sama persis; sisanya lewat
+    kemiripan nama (>= NAME_MATCH_MIN) dengan syarat kotanya sama/berbagi kata dan semua kata pembeda
+    di nama yang lebih pendek ada di nama yang lebih panjang.
+    Return (corp yang sudah diseragamkan, tabel perubahan nama)."""
+    if b is None or b.empty or c.empty:
+        return c, pd.DataFrame()
+    from difflib import SequenceMatcher
+    c = c.copy()
+    names = (b.groupby("_hotel_key")["Hotel Name"].agg(lambda s: s.value_counts().index[0]))
+    bcity = b.groupby("_hotel_key")["_city_key"].agg(lambda s: set(s.dropna()))
+    known = set(names.index)
+    city_words = {k: set(" ".join(v).lower().split()) for k, v in bcity.items()}
+    by_word = {}
+    for k in known:
+        for w in city_words.get(k, set()):
+            by_word.setdefault(w, set()).add(k)
+    changes = []
+    for ck in sorted(set(c["_hotel_key"]) - known):
+        rows = c[c["_hotel_key"] == ck]
+        cw = set(" ".join(rows["_city_key"].astype(str)).lower().split())
+        cand = set().union(*[by_word.get(w, set()) for w in cw]) if cw else set()
+        best, score = None, 0.0
+        strip = lambda k, ws: " ".join(t for t in k.split() if t not in ws) or k  # noqa: E731
+        for bk in cand:
+            ws = cw | city_words.get(bk, set())          # nama kota di nama hotel tidak ikut dibandingkan
+            a, z = strip(ck, ws), strip(bk, ws)
+            r = SequenceMatcher(None, a, z).ratio()
+            short, long_ = sorted((_tokens(a), _tokens(z)), key=len)
+            if r > score and short and short <= long_ | {t for t in short if len(t) <= 2}:
+                best, score = bk, r
+        if best is not None and score >= NAME_MATCH_MIN:
+            c.loc[rows.index, "_hotel_key"] = best
+            changes.append((rows["Nama hotel di master"].iat[0], names[best], "mirip", round(score, 2)))
+    c["Hotel Name"] = c["_hotel_key"].map(names).fillna(c["Hotel Name"])
+    diff = c["Hotel Name"].map(lambda v: _fold(v)) != c["Nama hotel di master"].map(lambda v: _fold(v))
+    std = c[diff].drop_duplicates("Nama hotel di master")  # beda huruf besar/kecil saja tidak dicatat
+    done = {x[0] for x in changes}
+    for _, r in std.iterrows():
+        if r["Nama hotel di master"] not in done:
+            changes.append((r["Nama hotel di master"], r["Hotel Name"], "standardizer / sama dengan invoice", 1.0))
+    ch = pd.DataFrame(changes, columns=["Nama di master corp rate", "Nama seragam (dipakai)", "Cara", "Kemiripan"])
+    return c, ch.sort_values(["Cara", "Nama di master corp rate"]).reset_index(drop=True)
 
 
 def align_corp_cities(b: pd.DataFrame, c: pd.DataFrame) -> pd.DataFrame:
@@ -746,10 +814,25 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
     if b.empty or corp.empty:
         st.info("Data booking atau corp rate belum cukup untuk dianalisis.")
         return
+    corp, name_changes = harmonize_corp_names(b, corp)
     corp = align_corp_cities(b, corp)
     m = match_bookings(b, corp)
     pools = market_pools(b)
     summary = summarize_matched(m, pools)
+    if not name_changes.empty:
+        n_hotel = corp["_hotel_key"].nunique()
+        n_in = corp["_hotel_key"].isin(set(b["_hotel_key"])).groupby(corp["_hotel_key"]).first().sum()
+        with st.expander(f"🏷️ Penyeragaman nama hotel · {len(name_changes):,} nama master disesuaikan · "
+                         f"{int(n_in):,} dari {n_hotel:,} hotel kontrak ada di invoice".replace(",", ".")):
+            st.caption("Nama hotel di master corp rate diseragamkan dengan hotel_name_standardizer dan nama hotel di "
+                       f"invoice. 'mirip' = disamakan otomatis karena kemiripan nama ≥ {NAME_MATCH_MIN:.2f} di kota yang "
+                       "sama; cek daftar ini dan perbaiki kamus standardizer bila ada yang keliru.")
+            st.dataframe(name_changes, hide_index=True, width="stretch", height=min(400, 36 * len(name_changes) + 40))
+            if can_download:
+                st.download_button("⬇️ Unduh daftar penyeragaman", _excel(name_changes, "Penyeragaman nama", excel_fn),
+                                   file_name=f"penyeragaman_nama_hotel_{datetime.now():%Y%m%d}.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   key="ca_dl_names")
 
     sub1, sub2 = st.tabs(["Ringkasan", "Analisis lanjutan"])
 
