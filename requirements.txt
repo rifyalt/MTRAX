@@ -15,3 +15,4 @@ google-auth
 argon2-cffi
 pyotp
 qrcode[pil]
+circlify
