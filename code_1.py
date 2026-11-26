@@ -2511,7 +2511,7 @@ def login_page():
         <div class="lg-hero">
             <div class="lg-rule"></div>
             <h1 class="lg-title">Corporate Travel<br>Analytics</h1>
-            <p class="lg-sub">Corporate Travel Analytics Platform for Pertamina Group —
+            <p class="lg-sub">Corporate Travel Analytics Platform —
                hotel spend, corporate rate compliance and savings in one place.</p>
         </div>
         <div class="lg-foot">No employee identity data · every access is logged</div>
@@ -2854,7 +2854,7 @@ def render_header():
         f'<div class="mx-hero"><div class="mx-hero-l">'
         f'<div class="mx-eyebrow">Corporate Travel Analytics</div>'
         f'<div class="mx-hero-t">{greet if guest else f"{greet}, {ui.esc(uname.title())}"}</div>'
-        f'<div class="mx-hero-s">Analitik transaksi hotel perjalanan dinas Pertamina Group untuk negosiasi tarif '
+        f'<div class="mx-hero-s">Analitik transaksi hotel perjalanan dinas untuk negosiasi tarif '
         f'dan pengendalian biaya.</div></div>'
         f'<div class="mx-hero-r">{chip_html}</div></div>', unsafe_allow_html=True)
 
