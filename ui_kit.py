@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.25-b"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.26-a"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -62,6 +62,7 @@ GREEN = POS_TEXT
 CATEGORICAL = [P1, LIME, P3, ORANGE_A, YELLOW, CRIMSON, P2, "#7A7A7A"]
 SEQUENTIAL = [[0, "#F5FAFD"], [0.25, TINT], [0.55, P1], [0.8, P3], [1, HILITE_DARK]]
 GRADIENT = f"linear-gradient(90deg, {LIME_SOFT} 0%, {P1} 60%, {P3} 100%)"
+GRADIENT_V = f"linear-gradient(180deg, {LIME_SOFT} 0%, {P1} 55%, {P3} 100%)"
 
 PLOTLY_LAYOUT = dict(
     font=dict(family="Inter, system-ui, sans-serif", size=13, color=INK),
@@ -133,17 +134,36 @@ section[data-testid="stSidebar"] .block-container {{ padding-top:1.25rem; }}
 .stTabs [data-baseweb="tab-highlight"] {{ background-color:var(--p3) !important; height:2px !important; }}
 .stTabs [data-baseweb="tab-border"] {{ display:none; }}
 
-/* Navigasi halaman (radio bergaya tab: hanya halaman aktif yang dihitung). Mendukung DOM radio lama & baru. */
-.st-key-mx_nav [role="radiogroup"] {{ gap:2px !important; border-bottom:1px solid var(--line); flex-wrap:wrap; }}
+/* Header (hero) */
+.mx-hero {{ display:flex; justify-content:space-between; align-items:flex-end; gap:20px; flex-wrap:wrap;
+  background:#FFFFFF; border:1px solid var(--line); border-radius:16px; padding:22px 26px; margin:0 0 14px;
+  box-shadow:var(--shadow); position:relative; overflow:hidden; }}
+.mx-hero::before {{ content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:{GRADIENT_V}; }}
+.mx-eyebrow {{ font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--action); }}
+.mx-hero-t {{ font-size:26px; font-weight:700; color:var(--ink); letter-spacing:-.015em; margin-top:4px; }}
+.mx-hero-s {{ font-size:13.5px; color:var(--muted); margin-top:4px; max-width:620px; }}
+.mx-hero-r {{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }}
+.mx-chip {{ display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:999px; font-size:12.5px;
+  font-weight:500; color:var(--ink); background:#F5F8FA; border:1px solid #E6EBEF; white-space:nowrap; }}
+.mx-chip svg {{ width:14px; height:14px; fill:none; stroke:var(--action); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }}
+
+/* Navigasi halaman: bar pil putih. Hanya halaman aktif yang dihitung. */
+.st-key-mx_nav {{ padding:4px 0 8px; margin-bottom:4px; }}
+.st-key-mx_nav [role="radiogroup"] {{ gap:2px !important; flex-wrap:wrap; background:#FFFFFF; border:1px solid var(--line);
+  border-radius:14px; padding:6px; box-shadow:var(--shadow); }}
 .st-key-mx_nav label[data-testid="stRadioOption"], .st-key-mx_nav label[data-baseweb="radio"] {{
-  padding:10px 12px 9px !important; margin:0 !important; border-bottom:2px solid transparent; border-radius:0;
-  cursor:pointer; transition:color .15s, border-color .15s; }}
+  padding:7px 11px !important; margin:0 !important; border-radius:10px; cursor:pointer;
+  transition:background .15s, color .15s; }}
 .st-key-mx_nav label[data-testid="stRadioOption"] > div > div:first-child:not([data-testid]),
 .st-key-mx_nav label[data-baseweb="radio"] > div:first-child {{ display:none !important; }}
-.st-key-mx_nav label p {{ font-size:14px; color:var(--muted); margin:0; }}
+.st-key-mx_nav label p {{ font-size:13.5px; font-weight:500; color:var(--muted); margin:0; display:flex; align-items:center; gap:6px; }}
+.st-key-mx_nav label [data-testid="stIconMaterial"] {{ font-size:17px !important; color:#9AA4AD; }}
+.st-key-mx_nav label:hover {{ background:#F3F6F8; }}
 .st-key-mx_nav label:hover p {{ color:var(--ink); }}
-.st-key-mx_nav label[data-selected="true"], .st-key-mx_nav label:has(input:checked) {{ border-bottom-color:var(--action); }}
+.st-key-mx_nav label[data-selected="true"], .st-key-mx_nav label:has(input:checked) {{ background:#E8F4FC; }}
 .st-key-mx_nav label[data-selected="true"] p, .st-key-mx_nav label:has(input:checked) p {{ color:var(--action); font-weight:600; }}
+.st-key-mx_nav label[data-selected="true"] [data-testid="stIconMaterial"],
+.st-key-mx_nav label:has(input:checked) [data-testid="stIconMaterial"] {{ color:var(--action); }}
 
 /* Tombol */
 .stButton > button, .stDownloadButton > button, div[data-testid="stFormSubmitButton"] > button {{
