@@ -2692,10 +2692,10 @@ def _hbar(labels, values, key, color=ui.BLUE, top_highlight=None, height=None, t
     _fig(fig, key, height or max(260, 26 * len(values) + 40))
 
 
-def _pareto_fig(names, values, top_n, key, value_title):
+def _pareto_fig(names, values, top_n, key, value_title, max_show=100):
     total = float(np.nansum(values)) or 1.0
     cum = np.cumsum(values) / total * 100
-    show = min(len(names), 50)
+    show = min(len(names), max_show)       # kumulatif % tetap dihitung dari SEMUA hotel/kota
     colors = [ui.BLUE if i < top_n else ui.BLUE_XL for i in range(show)]
     fig = go.Figure()
     fig.add_trace(go.Bar(x=names[:show], y=values[:show], marker_color=colors, name=value_title,
@@ -2711,7 +2711,7 @@ def _pareto_fig(names, values, top_n, key, value_title):
                       bargap=0.15)
     _fig(fig, key, 380)
     if len(names) > show:
-        st.caption(f"Grafik menampilkan {show} teratas dari {len(names)}.")
+        st.caption(f"Grafik menampilkan {show} teratas dari {len(names)}; persentase kumulatif dihitung dari semua.")
 
 
 def _key_column(df, dim, merge, pmap):
@@ -3104,7 +3104,8 @@ def tab_room(df, pmap):
                 ui.kpi("Rata-rata lama menginap", f"{tot / max(g['Bookings'].sum(), 1):.1f} malam".replace(".", ","),
                        "per booking")])
     with st.container(border=True):
-        ui.section("Konsentrasi room nights — Pareto 80/20")
+        ui.section("Konsentrasi room nights — Pareto 80/20",
+                   f"Top 100 {ent} · batang biru tua = top 20% · garis = persentase kumulatif")
         _pareto_fig(list(g[key]), g["RN"].to_numpy(), n20, "ri_pareto", "Room nights")
         with st.expander("Detail data top 20%"):
             t = g.head(n20).copy()
