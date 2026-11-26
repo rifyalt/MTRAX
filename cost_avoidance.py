@@ -896,6 +896,56 @@ def run_analysis(df_all, data_sig, src, basis_flag, carry, standardize_name=None
                 corp_year)
 
 
+def _chart_guide(s: pd.DataFrame):
+    """Narasi cara membaca grafik selisih rate + ringkasan otomatis dari data yang tampil."""
+    import streamlit as st
+    up, down = s[s["Selisih %"] > 0], s[s["Selisih %"] <= 0]
+    ex_line = ""
+    if not up.empty:
+        ex = up.sort_values("Potensi", ascending=False).iloc[0]
+        ex_line = (f" Contoh: <b>{ui.esc(ex['Hotel'])} · {ui.esc(ex['Room type'])}</b> berlabel "
+                   f"<b>{_pct(ex['Selisih %'], True)} · {_jt(ex['Potensi'])}</b>, artinya rata-rata dibayar "
+                   f"{_pct(ex['Selisih %'])} di atas corp rate, dan {_jt(ex['Potensi'])} adalah biaya yang bisa dihindari "
+                   "bila semua malamnya dibayar sesuai corp rate.")
+    summary = (f"<b>Ringkasnya:</b> {len(up)} kombinasi dibayar di atas corp rate dengan total potensi "
+               f"<b>{_jt(up['Potensi'].sum())}</b>; {len(down)} kombinasi dibayar di bawah corp rate.")
+    if not up.empty:
+        top3 = up.sort_values("Potensi", ascending=False).head(3)
+        summary += (" Potensi terbesar ada di " + ", ".join(
+            f"{ui.esc(r['Hotel'])} · {ui.esc(r['Room type'])} ({_jt(r['Potensi'])})" for _, r in top3.iterrows())
+            + ". Mulai penegakan kontrak dari hotel-hotel ini.")
+    with st.expander("Cara membaca grafik", icon=":material/help:"):
+        st.markdown('<div class="mx-guide">'
+        "• Setiap baris = satu kombinasi <b>hotel · tipe kamar · meal plan</b> (BF = termasuk sarapan), "
+        "diurutkan dari selisih terbesar. Gulir di dalam grafik untuk melihat semua; arahkan kursor untuk detail.<br>"
+        "• Panjang batang = selisih <b>rata-rata rate yang dibayar</b> dibanding <b>corp rate</b>, dalam persen. "
+        "Garis tegak = 0% (dibayar sama persis dengan corp rate).<br>"
+        f"• <span style='color:{ui.RED_FILL};font-weight:600'>Batang merah ke kanan</span> = dibayar "
+        "<b>lebih mahal</b> dari corp rate: booking tidak memakai harga kontrak." + ex_line + "<br>"
+        "• <span style='color:#6B6B6B;font-weight:600'>Batang abu-abu ke kiri</span> = dibayar <b>lebih murah</b> "
+        "dari corp rate. Label \"88% room night lebih murah\" artinya 88% malam di kamar itu didapat di bawah corp "
+        "rate, tanda corp rate-nya terlalu tinggi dan perlu dinegosiasi ulang (lihat Analisis lanjutan)."
+        "</div>", unsafe_allow_html=True)
+    ui.note(summary)
+
+
+def _position_guide() -> str:
+    """Penjelasan Posisi kota (P0–P100) dalam bahasa sehari-hari, mengikuti ambang STATUS_RULES."""
+    r = STATUS_RULES
+    return (
+        "<b>Posisi kota (P0–P100)</b> = peringkat corp rate dibanding harga yang benar-benar dibayar untuk tipe "
+        "kamar & meal plan yang sama <b>di kota yang sama</b>. Bayangkan rate per malam semua booking di kota itu "
+        "diurutkan dari termurah ke termahal: <b>P30</b> artinya corp rate lebih mahal dari 30% booking dan lebih murah "
+        "dari 70% sisanya. <b>Makin kecil angkanya, makin murah (makin bagus) corp rate-nya.</b><br>"
+        f"&nbsp;&nbsp;– <b>P0–P25</b>: termasuk yang termurah di kota itu.<br>"
+        f"&nbsp;&nbsp;– <b>P26–P{r['pos_tinjau']}</b>: setara harga pasar.<br>"
+        f"&nbsp;&nbsp;– <b>P{r['pos_tinjau'] + 1}–P{r['pos_tidak']}</b>: mulai mahal (Perlu ditinjau).<br>"
+        f"&nbsp;&nbsp;– <b>P{r['pos_tidak'] + 1}–P100</b>: lebih mahal dari kebanyakan transaksi di kota itu "
+        "(Tidak kompetitif).<br>"
+        f"&nbsp;&nbsp;– <b>\"-\"</b>: transaksi pembanding di kota itu kurang dari {MIN_MARKET_SAMPLE}, jadi belum bisa "
+        "dinilai.")
+
+
 def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit: bool,
                           username: str = "", excel_fn=None, standardize_name=None,
                           normalize_city=None, corp_source=None, data_sig=None):
@@ -1050,8 +1100,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                               yaxis=dict(tickfont=dict(size=10)))
             with st.container(height=540):
                 st.plotly_chart(fig, width="stretch", key="ca_chart")
-            st.caption("Merah = dibayar di atas corp rate (potensi avoidance). Abu-abu = dibayar di bawah corp rate "
-                       "(cek daya saing corp rate).")
+            _chart_guide(s)
 
             st.markdown("**Detail per hotel & tipe kamar**")
             sort_by = st.selectbox("Urutkan", ["Room nights", "Potensi avoidance", "Selisih %"], key="ca_sort")
@@ -1078,10 +1127,18 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             def _hl(col):  # corp rate & status: hijau = kompetitif, merah = tidak kompetitif
                 return list(tone) if col.name in ("Corp rate", "Daya saing") else [""] * len(col)
 
-            st.dataframe(show.style.apply(_hl, axis=0), width="stretch", height=min(520, 36 * len(show) + 40))
+            st.dataframe(show.style.apply(_hl, axis=0), width="stretch", height=min(520, 36 * len(show) + 40),
+                         column_config={
+                             "Posisi kota": st.column_config.TextColumn(
+                                 "Posisi kota", help="Peringkat corp rate di antara rate yang dibayar di kota yang sama. "
+                                                     "P30 = corp rate lebih mahal dari 30% booking, lebih murah dari 70% "
+                                                     "sisanya. Makin kecil makin murah (bagus)."),
+                             "Room Night < Corp %": st.column_config.TextColumn(
+                                 "Room Night < Corp %", help="Porsi room night yang dibayar lebih murah dari corp rate. "
+                                                             "Makin kecil makin bagus.")})
             R = STATUS_RULES
-            ui.note(
-                "<b>Status daya saing corp rate</b><br>"
+            with st.expander("Arti status, Room Night < Corp % dan Posisi kota", icon=":material/help:"):
+                st.markdown('<div class="mx-guide">'
                 f"• <span style='color:{COMPETITIVE_GREEN};font-weight:600'>Kompetitif (hijau)</span>: Room Night &lt; Corp % "
                 f"di bawah {R['below_tinjau']}% dan posisi paling tinggi P{R['pos_tinjau']}.<br>"
                 f"• <span style='color:{NOT_COMPETITIVE_RED};font-weight:600'>Tidak kompetitif (merah)</span>: Room Night "
@@ -1091,8 +1148,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                 "Rate per malam tiap booking = Invoice Amount ÷ Number of Rooms Night; bila lebih rendah dari corp rate, "
                 "semua room night booking itu dihitung. Contoh: 3 dari 5 room night dibayar di bawah corp rate = 60%. "
                 "Makin kecil angkanya, makin bagus corp rate-nya.<br>"
-                "<b>Posisi kota</b> = letak corp rate di antara rate yang dibayar untuk tipe kamar yang sama di kota itu "
-                "(P10 = lebih murah dari 90% rate pasar).")
+                + _position_guide() + "</div>", unsafe_allow_html=True)
             if can_download:
                 st.download_button("Unduh Excel", _excel(out.rename(columns={"Corp": "Corp rate", "RN": "Room nights"}),
                                    "Cost Avoidance", excel_fn,
