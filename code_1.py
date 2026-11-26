@@ -3306,7 +3306,7 @@ def _pack(groups: tuple):
 
 
 def tab_dendro(df):
-    from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
+    from scipy.cluster.hierarchy import linkage, fcluster
     from sklearn.preprocessing import normalize
     ui.page_title("Klaster Pola Perjalanan",
                   "Mengelompokkan kota atau hotel yang pola volume bulanannya mirip")
@@ -3493,27 +3493,34 @@ def tab_dendro(df):
                     f"menjadwalkan negosiasi corp rate <b>sebelum</b> masa ramai, dan satukan {unit} dalam klaster "
                     f"ini dalam satu paket negosiasi.")
 
-    # ---------- dendrogram lama (untuk pengguna teknis)
-    with st.expander("Lihat pohon klaster (dendrogram)", icon=":material/account_tree:"):
-        labels = list(pv.index)
-        dn = dendrogram(Z, labels=labels, no_plot=True, orientation="left")
-        fig3 = go_.Figure()
-        for xs, ys in zip(dn["dcoord"], dn["icoord"]):
-            fig3.add_trace(go_.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#9A9A9A", width=1.6),
-                                       hoverinfo="skip", showlegend=False))
-        leaf_y = [5 + 10 * i for i in range(len(dn["ivl"]))]
-        leaf_col = [colr[cl[l]] for l in dn["ivl"]]
-        fig3.add_trace(go_.Scatter(x=[0] * len(leaf_y), y=leaf_y, mode="markers+text", text=dn["ivl"],
-                                   textposition="middle right", marker=dict(size=10, color=leaf_col),
-                                   textfont=dict(size=11), hoverinfo="text", showlegend=False, cliponaxis=False))
-        cut = Z[-(k - 1), 2] if k > 1 else 0
-        fig3.add_vline(x=cut, line_dash="dash", line_color=ui.RED, annotation_text=f"potong: {k} klaster")
-        mx = max(max(x) for x in dn["dcoord"])
-        fig3.update_layout(xaxis=dict(range=[mx * 1.05, -mx * 0.45], title="Dissimilarity", gridcolor="#EDEDED",
-                                      tickvals=[round(v, 2) for v in np.linspace(0, mx, 5)]),
-                           yaxis=dict(showticklabels=False, showgrid=False))
-        _fig(fig3, "dd_fig", max(420, 26 * len(labels) + 60))
-        st.caption(f"Linkage {method}. Makin ke kiri titik dua cabang bertemu, makin mirip pola bulanannya.")
+    # ---------- cara membaca visual
+    big_k = max(ks, key=lambda q: float(vals[cl == q].sum()))
+    big_v = float(vals[cl == big_k].sum())
+    top_ent = vals.idxmax()
+    peaks = [f"Klaster {q} ({plab[q].replace('Puncak', 'puncak')})" for q in ks if plab[q].startswith("Puncak")]
+    with st.expander("Cara membaca grafik", icon=":material/menu_book:"):
+        st.markdown(f"""
+**1. Lingkaran besar = klaster.** Berisi {unit} yang pola volume bulanannya mirip, yaitu ramai dan sepinya di
+bulan yang sama, walaupun besar transaksinya berbeda. Nomor di pojok lingkaran sama dengan nomor kartu di kanan.
+
+**2. Lingkaran kecil = {unit}.** Makin besar lingkarannya, makin besar {'spend' if is_rp else 'room night'}-nya.
+Nama dan nilai tertulis di dalam lingkaran yang cukup besar; yang kecil bisa dilihat dengan mengarahkan kursor.
+
+**3. Kartu di kanan = pola musiman klaster.** Garis menunjukkan porsi volume klaster per bulan, puncak garis
+adalah bulan tersibuk. Label *Puncak …* artinya ada bulan yang jelas lebih ramai; *Stabil sepanjang periode*
+artinya volumenya merata.
+
+**4. Klik lingkaran** (atau tombol klaster di atas grafik) untuk menyorot satu klaster. Di bawahnya muncul
+grafik pola tiap anggota dan tabel {unit} dalam klaster itu. Klik lagi atau pilih *Semua* untuk kembali.
+
+**5. Pengaturan.** *Jumlah klaster* menentukan berapa kelompok yang dibentuk; *Linkage* adalah cara
+pengelompokan (biarkan *ward* bila ragu); *Top N* adalah jumlah {unit} dengan nilai terbesar yang dianalisis.
+""")
+    ui.note(f"<b>Ringkasnya:</b> Klaster {big_k} adalah kelompok terbesar ({fmt_v(big_v)}, "
+            f"{ui.fmt_pct(big_v / tot * 100, digits=0)} dari total), dan {ui.esc(top_ent)} adalah {unit} "
+            f"dengan nilai terbesar."
+            + (f" Klaster dengan musim puncak: {', '.join(peaks)}; jadwalkan negosiasi corp rate sebelum "
+               f"bulan puncak tersebut." if peaks else " Semua klaster relatif stabil sepanjang periode."))
     ui.note(f"{unit.capitalize()} dalam satu klaster punya pola perjalanan serupa, sehingga bisa dinegosiasikan "
             f"dengan strategi yang sama, misalnya satu paket corp rate untuk {unit}-{unit} dalam satu klaster.")
 
