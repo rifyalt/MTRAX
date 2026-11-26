@@ -72,6 +72,12 @@ def umap(series: pd.Series, func) -> pd.Series:
     return pd.Series(lut[codes], index=series.index, name=series.name).infer_objects()
 
 
+def _top(s, default=""):
+    """Nilai paling sering di sebuah grup; aman bila grup kosong / semuanya NaN."""
+    vc = s.value_counts()
+    return vc.index[0] if len(vc) else default
+
+
 def _fold(s) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
@@ -235,7 +241,7 @@ def prepare_bookings(df: pd.DataFrame, standardize_name=None, normalize_city=Non
     ncity = normalize_city or (lambda c: _fold(c).upper())
     b["Hotel Name"] = umap(b["Hotel Name"], lambda v: safe_standardize(v, standardize_name))
     b["_hotel_key"] = umap(b["Hotel Name"], hotel_key)
-    b["Hotel Name"] = b.groupby("_hotel_key")["Hotel Name"].transform(lambda x: x.value_counts().index[0])
+    b["Hotel Name"] = b.groupby("_hotel_key")["Hotel Name"].transform(lambda x: _top(x, x.iloc[0]))
     b["_city_key"] = umap(b["City"], ncity)
     b["_rt"] = umap(b["Room Category"], room_key) if "Room Category" in b.columns else "Lainnya"
     # meal plan: kolom Meal Plan; bila kosong/tidak terbaca, dari keterangan di Room Category
@@ -399,7 +405,7 @@ def harmonize_corp_names(b: pd.DataFrame, c: pd.DataFrame) -> tuple[pd.DataFrame
         return c, pd.DataFrame()
     from difflib import SequenceMatcher
     c = c.copy()
-    names = (b.groupby("_hotel_key")["Hotel Name"].agg(lambda s: s.value_counts().index[0]))
+    names = (b.groupby("_hotel_key")["Hotel Name"].agg(lambda s: _top(s, s.iloc[0])))
     bcity = b.groupby("_hotel_key")["_city_key"].agg(lambda s: set(s.dropna()))
     known = set(names.index)
     city_words = {k: set(" ".join(v).lower().split()) for k, v in bcity.items()}
@@ -543,8 +549,8 @@ def summarize_matched(m: pd.DataFrame, pools: dict) -> pd.DataFrame:
     x["_rn_below"] = np.where(x["_rate"] < x["_corp"], x["_rn"], 0)
     x["_rn_above"] = np.where(x["_rate"] > x["_corp"], x["_rn"], 0)
     g = x.groupby(["_hotel_key", "_city_key", "_rt", "_meal"]).agg(
-        Hotel=("Hotel Name", lambda s: s.value_counts().index[0]),
-        Kota=("City", lambda s: s.value_counts().index[0]),
+        Hotel=("Hotel Name", _top),
+        Kota=("City", _top),
         Corp=("_corp", "median"), Inv=("Invoice Amount", "sum"), RN=("_rn", "sum"),
         Potensi=("_above_val", "sum"), RN_below=("_rn_below", "sum"), RN_above=("_rn_above", "sum"),
         Bookings=("_bid", "nunique")).reset_index()
@@ -584,8 +590,8 @@ def leakage(m: pd.DataFrame, c: pd.DataFrame, top_n: int = 100) -> pd.DataFrame:
                 for k, r, ml in zip(x["_city_key"], x["_rt"], x["_meal"])]
     x["_pot"] = np.clip(x["_rate"] - x["_eq"], 0, None) * x["Number of Rooms Night"]
     g = x.groupby(["_hotel_key", "_city_key", "_rt", "_meal"]).agg(
-        Hotel=("Hotel Name", lambda s: s.value_counts().index[0]),
-        Kota=("City", lambda s: s.value_counts().index[0]),
+        Hotel=("Hotel Name", _top),
+        Kota=("City", _top),
         RN=("Number of Rooms Night", "sum"), Inv=("Invoice Amount", "sum"),
         Setara=("_eq", "median"), Potensi=("_pot", "sum")).reset_index()
     g["Avg dibayar"] = g["Inv"] / g["RN"]
@@ -636,7 +642,7 @@ def city_compliance(m: pd.DataFrame, c: pd.DataFrame, top_n: int = 10) -> pd.Dat
     x["_ok"] = np.where(x["_corp"].notna() & (x["_rate"] <= x["_corp"]), rn, 0)
     x["_matched"] = np.where(x["_corp"].notna(), rn, 0)
     x["_noncon"] = np.where(~x["_contract_hotel"], rn, 0)
-    g = x.groupby("_city_key").agg(Kota=("City", lambda s: s.value_counts().index[0]),
+    g = x.groupby("_city_key").agg(Kota=("City", _top),
                                    RN=("Number of Rooms Night", "sum"), OK=("_ok", "sum"),
                                    Matched=("_matched", "sum"), Non=("_noncon", "sum")).reset_index()
     g["Kepatuhan %"] = np.where(g["Matched"] > 0, g["OK"] / g["Matched"] * 100, np.nan)
