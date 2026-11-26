@@ -2734,15 +2734,19 @@ def render_sidebar():
         uname = st.session_state.get("username", "")
         role = st.session_state.get("role", "")
         if uname == GUEST_USERNAME:
-            tfa = ui.status_line("Mode tanpa login", "warn")
+            # Belum ada akun pengguna: kotak nama/peran tidak ditampilkan
+            st.markdown(f'<div style="margin:2px 0 12px">{ui.status_line("Mode tanpa login", "warn")}</div>',
+                        unsafe_allow_html=True)
+            tfa = None
         elif _own_totp_secret(uname):
             tfa = ui.status_line("2FA pribadi aktif", "ok")
         elif role == "Demo":
             tfa = ui.status_line("Akun demo", "muted")
         else:
             tfa = ui.status_line("2FA belum diaktifkan", "warn")
-        st.markdown(f'<div class="mx-userbox"><div class="n">{ui.esc(uname)}</div>'
-                    f'<div class="r">{ui.esc(role)}</div>{tfa}</div>', unsafe_allow_html=True)
+        if tfa is not None:
+            st.markdown(f'<div class="mx-userbox"><div class="n">{ui.esc(uname)}</div>'
+                        f'<div class="r">{ui.esc(role)}</div>{tfa}</div>', unsafe_allow_html=True)
         if not login_required():
             st.caption(f"Login sementara dimatikan. Aktifkan lagi: [access] login_required = true.")
 
@@ -2839,7 +2843,8 @@ def render_header():
     uname = st.session_state.get("username", "")
     role = st.session_state.get("role", "")
     hari = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"][now.weekday()]
-    chips = [("cal", f"{hari}, {now:%d %b %Y}"), ("user", role or "-")]
+    guest = uname == GUEST_USERNAME
+    chips = [("cal", f"{hari}, {now:%d %b %Y}")] + ([] if guest else [("user", role or "-")])
     raw = st.session_state.get("df_all")
     if st.session_state.get("data_loaded") and raw is not None and not raw.empty:
         chips.insert(0, ("db", f"{len(raw):,} records".replace(",", ".")))
@@ -2848,7 +2853,7 @@ def render_header():
     st.markdown(
         f'<div class="mx-hero"><div class="mx-hero-l">'
         f'<div class="mx-eyebrow">Corporate Travel Analytics</div>'
-        f'<div class="mx-hero-t">{greet}, {ui.esc(uname.title())}</div>'
+        f'<div class="mx-hero-t">{greet if guest else f"{greet}, {ui.esc(uname.title())}"}</div>'
         f'<div class="mx-hero-s">Analitik transaksi hotel perjalanan dinas Pertamina Group untuk negosiasi tarif '
         f'dan pengendalian biaya.</div></div>'
         f'<div class="mx-hero-r">{chip_html}</div></div>', unsafe_allow_html=True)
