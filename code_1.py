@@ -3200,7 +3200,7 @@ def tab_top(df):
     with c1:
         with st.container(border=True):
             h = d.groupby("Hotel Name")["Number of Rooms Night"].sum().sort_values(ascending=False).head(100)
-            city = d.dropna(subset=["City"]).groupby("Hotel Name")["City"].agg(lambda s: s.mode().iat[0])
+            city = d.dropna(subset=["City"]).groupby("Hotel Name")["City"].agg(lambda s: s.mode().iat[0] if not s.mode().empty else "")
             rate = d.groupby("Hotel Name").apply(lambda x: x["Invoice Amount"].sum() /
                                                  max(x["Number of Rooms Night"].sum(), 1), include_groups=False)
             t = pd.DataFrame({"Hotel Name": h.index, "City": h.index.map(city), "Number of Rooms Night": h.values,
