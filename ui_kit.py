@@ -219,6 +219,7 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
   padding:12px 16px; font-size:13.5px; line-height:1.65; color:var(--ink); box-shadow:var(--shadow); margin-bottom:14px; }}
 .mx-warn {{ background:#FFFBE0; border:1px solid #F2DC5D; border-left:3px solid var(--yellow); border-radius:8px;
   padding:10px 14px; font-size:13px; line-height:1.55; color:#5C4A00; margin-bottom:14px; }}
+.mx-guide {{ font-size:13.5px; line-height:1.7; color:var(--ink); }}
 .mx-badge {{ border-radius:999px; padding:3px 10px; font-size:12.5px; font-weight:600; display:inline-block; }}
 
 /* Sidebar komponen */
