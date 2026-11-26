@@ -1613,7 +1613,6 @@ def fetch_rss_news(limit=10):
     berita tidak perlu ambil ulang secepat itu."""
     urls = [
         "https://news.google.com/rss/search?q=danantara&hl=id&gl=ID&ceid=ID:id",
-        "https://news.google.com/rss/search?q=pertamina&hl=id&gl=ID&ceid=ID:id",
         "https://news.google.com/rss/search?q=bmkg&hl=id&gl=ID&ceid=ID:id"
     ]
 
@@ -3261,11 +3260,56 @@ def tab_top(df):
 
 
 # ---------------------------------------------------------------- tab: Dendrogram
+CLUSTER_COLORS = [ui.P3, "#5FA80C", ui.ORANGE_A, ui.CRIMSON, "#7A4FD6", "#00A3A3"]
+_BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
+
+
+def _rgba(h, a):
+    h = h.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{a})"
+
+
+def _per_label(p):
+    """'2025-04' -> 'Apr 2025'."""
+    try:
+        y, m = str(p).split("-")[:2]
+        return f"{_BULAN[int(m) - 1]} {y}"
+    except Exception:
+        return str(p)
+
+
+def _pattern_label(prof, cols):
+    """Label otomatis pola musiman klaster dari profil porsi bulanan rata-rata."""
+    prof = np.asarray(prof, float)
+    if len(prof) < 3 or prof.mean() == 0 or prof.std() / prof.mean() < 0.12:
+        return "Stabil sepanjang periode"
+    i = int(np.argmax(prof))
+    return f"Puncak {_per_label(cols[i])}"
+
+
+def _circle_xy(x, y, r, n=48):
+    t = np.linspace(0, 2 * np.pi, n)
+    return x + r * np.cos(t), y + r * np.sin(t)
+
+
+@st.cache_data(max_entries=16, show_spinner=False)
+def _pack(groups: tuple):
+    """groups = ((klaster, ((nama, nilai), ...)), ...) -> {('K',k): (x,y,r), nama: (x,y,r)}"""
+    import circlify
+    data = [{"id": f"K{k}", "datum": float(sum(v for _, v in mem)) or 1.0,
+             "children": [{"id": n, "datum": float(v) or 1e-6} for n, v in mem]} for k, mem in groups]
+    out = {}
+    for c in circlify.circlify(data, show_enclosure=False, target_enclosure=circlify.Circle(x=0, y=0, r=1)):
+        key = ("K", int(c.ex["id"][1:])) if c.level == 1 else c.ex["id"]
+        out[key] = (c.x, c.y, c.r)
+    return out
+
+
 def tab_dendro(df):
     from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
     from sklearn.preprocessing import normalize
-    ui.page_title("Hierarchical Clustering — Dendrogram",
-                  "Mengelompokkan kota atau hotel berdasarkan kemiripan pola bulanan")
+    ui.page_title("Klaster Pola Perjalanan",
+                  "Mengelompokkan kota atau hotel yang pola volume bulanannya mirip")
     with st.container(border=True):
         c = st.columns(5)
         ent = c[0].selectbox("Entitas", ["Kota", "Hotel"], key="dd_ent")
@@ -3275,6 +3319,9 @@ def tab_dendro(df):
         top_n = c[3].selectbox("Top N", [12, 20, 30, 50], key="dd_n")
         k = c[4].selectbox("Jumlah klaster", [4, 3, 5, 6], key="dd_k")
     col = "City" if ent == "Kota" else "Hotel Name"
+    unit = "kota" if ent == "Kota" else "hotel"
+    is_rp = metric == "Invoice Amount"
+    fmt_v = (lambda v: ui.fmt_big(v)) if is_rp else (lambda v: f"{ui.fmt_int(v)} RN")
     d = df.dropna(subset=[col, metric, "Issue Time"]).copy()
     d["Bulan"] = d["Issue Time"].dt.to_period("M").astype(str)
     top = d.groupby(col)[metric].sum().nlargest(top_n).index
@@ -3285,43 +3332,190 @@ def tab_dendro(df):
     X = normalize(pv.values, norm="l2")
     Z = linkage(X, method=method)
     k = min(k, len(pv) - 1)
-    cl = fcluster(Z, t=k, criterion="maxclust")
-    palette = ui.CATEGORICAL
-    labels = list(pv.index)
-    dn = dendrogram(Z, labels=labels, no_plot=True, orientation="left")
-    fig = go.Figure()
-    for xs, ys in zip(dn["dcoord"], dn["icoord"]):
-        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#9A9A9A", width=1.6),
-                                 hoverinfo="skip", showlegend=False))
-    leaf_y = [5 + 10 * i for i in range(len(dn["ivl"]))]
-    leaf_col = [palette[(cl[labels.index(l)] - 1) % len(palette)] for l in dn["ivl"]]
-    fig.add_trace(go.Scatter(x=[0] * len(leaf_y), y=leaf_y, mode="markers+text", text=dn["ivl"],
-                             textposition="middle right", marker=dict(size=10, color=leaf_col),
-                             textfont=dict(size=11), hoverinfo="text", showlegend=False, cliponaxis=False))
-    cut = Z[-(k - 1), 2] if k > 1 else 0
-    fig.add_vline(x=cut, line_dash="dash", line_color=ui.RED, annotation_text=f"potong: {k} klaster")
-    mx = max(max(x) for x in dn["dcoord"])
-    fig.update_layout(xaxis=dict(range=[mx * 1.05, -mx * 0.45], title="Dissimilarity", gridcolor="#EDEDED",
-                                 tickvals=[round(v, 2) for v in np.linspace(0, mx, 5)]),
-                      yaxis=dict(showticklabels=False, showgrid=False))
+    cl = pd.Series(fcluster(Z, t=k, criterion="maxclust"), index=pv.index)
+    ks = sorted(cl.unique())
+    vals = pv.sum(axis=1).clip(lower=0)
+    tot = float(vals.sum()) or 1.0
+    share = pv.div(pv.sum(axis=1).replace(0, np.nan), axis=0).fillna(0) * 100
+    months = list(pv.columns)
+    colr = {kk: CLUSTER_COLORS[(i) % len(CLUSTER_COLORS)] for i, kk in enumerate(ks)}
+    prof = {kk: share[cl == kk].mean().values for kk in ks}
+    plab = {kk: _pattern_label(prof[kk], months) for kk in ks}
+    peak_ent = share.idxmax(axis=1).map(_per_label)
+
+    # ---------- pilihan sorotan (klik lingkaran juga mengubah ini)
+    opts = ["Semua"] + [f"Klaster {kk}" for kk in ks]
+    pend = st.session_state.pop("_dd_click", None)
+    if pend in opts:
+        st.session_state["dd_focus"] = pend
+    if st.session_state.get("dd_focus") not in opts:
+        st.session_state["dd_focus"] = "Semua"
+    focus_s = st.segmented_control("Sorot klaster", opts, key="dd_focus", label_visibility="collapsed")
+    focus = int(focus_s.split()[-1]) if focus_s and focus_s != "Semua" else None
+
+    groups = tuple((int(kk), tuple((str(n), float(vals[n])) for n in vals[cl == kk].sort_values(ascending=False).index))
+                   for kk in ks)
+    pos = _pack(groups)
+    go_ = go
+    fig = go_.Figure()
+    nk = len(ks)
+    # lingkaran klaster (latar) + nomor
+    for kk in ks:
+        x, y, r = pos[("K", int(kk))]
+        dim = focus is not None and focus != kk
+        cx, cy = _circle_xy(x, y, r, 72)
+        fig.add_trace(go_.Scatter(x=cx, y=cy, mode="lines", fill="toself",
+                                  fillcolor=_rgba(colr[kk], 0.03 if dim else 0.07),
+                                  line=dict(color=_rgba(colr[kk], 0.2 if dim else 0.5), width=1.4, dash="dot"),
+                                  hoverinfo="skip", showlegend=False))
+        fig.add_annotation(x=x - r * 0.72, y=y + r * 0.72, text=f"<b>{kk}</b>", showarrow=False,
+                           font=dict(size=13, color="white"), bgcolor=_rgba(colr[kk], 0.35 if dim else 1),
+                           borderpad=5, bordercolor="white", borderwidth=2)
+    # lingkaran entitas: poligon terisi -> hover di seluruh area lingkaran
+    for kk in ks:
+        dim = focus is not None and focus != kk
+        for n in cl[cl == kk].index:
+            x, y, r = pos[str(n)]
+            cx, cy = _circle_xy(x, y, r)
+            fig.add_trace(go_.Scatter(x=cx, y=cy, mode="lines", fill="toself", hoveron="fills",
+                                      fillcolor=_rgba(colr[kk], 0.18 if dim else 0.88),
+                                      line=dict(color="white", width=2), hoverinfo="skip",
+                                      showlegend=False))
+    # penanda tak terlihat seukuran lingkaran: sumber tooltip & klik
+    fig_h = max(520, 120 * nk + 60)
+    ppu = (fig_h - 20) / 2.1          # piksel per satuan (tinggi yang membatasi skala)
+    cxs, cys, cds, szs, tips = [], [], [], [], []
+    for n in cl.index:
+        x, y, r = pos[str(n)]
+        kk = int(cl[n]); v = float(vals[n])
+        cxs.append(x); cys.append(y); cds.append(kk); szs.append(max(8, 2 * r * ppu))
+        tips.append(f"<b>{ui.esc(n)}</b><br>Klaster {kk} · {plab[kk]}<br>{fmt_v(v)} · "
+                    f"{ui.fmt_pct(v / tot * 100)} dari total<br>Bulan tersibuk: {peak_ent[n]}")
+    fig.add_trace(go_.Scatter(x=cxs, y=cys, mode="markers", customdata=cds, text=tips,
+                              hovertemplate="%{text}<extra></extra>", showlegend=False, name="pilih",
+                              marker=dict(size=szs, color="rgba(0,0,0,0)", line_width=0),
+                              selected=dict(marker=dict(opacity=1)), unselected=dict(marker=dict(opacity=1)),
+                              hoverlabel=dict(bgcolor="white", bordercolor=[colr[c_] for c_ in cds],
+                                              font=dict(color=ui.INK, size=12))))
+    # label di dalam lingkaran (hanya yang muat)
+    for n in cl.index:
+        x, y, r = pos[str(n)]
+        if r < 0.09 or len(str(n)) * 0.021 > 1.8 * r:
+            continue
+        dim = focus is not None and focus != cl[n]
+        big = r > 0.15
+        txt = f"<b>{ui.esc(n)}</b><br>{fmt_v(vals[n])}" if big else f"<b>{ui.esc(n)}</b>"
+        fig.add_annotation(x=x, y=y, text=txt, showarrow=False,
+                           font=dict(size=12 if big else 10, color=_rgba("#FFFFFF", 0.5 if dim else 1)))
+    # kartu klaster kanan + sparkline
+    for j, kk in enumerate(ks):
+        y0 = nk - 1 - j
+        dim = focus is not None and focus != kk
+        a = 0.35 if dim else 1
+        fig.add_shape(type="rect", xref="x2", yref="y2", x0=0, x1=1, y0=y0 + 0.06, y1=y0 + 0.94,
+                      fillcolor=_rgba(colr[kk], 0.10 if focus == kk else 0.05),
+                      line=dict(color=_rgba(colr[kk], 0.9 if focus == kk else 0.35), width=2 if focus == kk else 1))
+        fig.add_shape(type="rect", xref="x2", yref="y2", x0=0, x1=0.018, y0=y0 + 0.06, y1=y0 + 0.94,
+                      fillcolor=_rgba(colr[kk], a), line_width=0)
+        v = float(vals[cl == kk].sum())
+        fig.add_annotation(xref="x2", yref="y2", x=0.06, y=y0 + 0.84, xanchor="left", yanchor="top", showarrow=False,
+                           align="left", font=dict(size=12, color=_rgba(ui.INK, a)),
+                           text=f"<span style='color:{_rgba(colr[kk], a)}'><b>KLASTER {kk}</b></span>  <b>{plab[kk]}</b><br>"
+                                f"<span style='color:{_rgba('#6B6B6B', a)}'>{(cl == kk).sum()} {unit} · {fmt_v(v)} · "
+                                f"{ui.fmt_pct(v / tot * 100, digits=0)}</span>")
+        p = prof[kk]
+        amp = 0.26 if plab[kk].startswith("Puncak") else 0.08
+        sx = np.linspace(0.06, 0.94, len(p))
+        sy = y0 + 0.13 + (p - p.min()) / (p.max() - p.min() + 1e-9) * amp
+        fig.add_trace(go_.Scatter(x=sx, y=sy, xaxis="x2", yaxis="y2", mode="lines",
+                                  line=dict(color=_rgba(colr[kk], a), width=2.2, shape="spline", smoothing=0.6),
+                                  customdata=np.c_[[_per_label(m) for m in months], p],
+                                  hovertemplate="%{customdata[0]}: %{customdata[1]:.1f}% volume klaster<extra></extra>",
+                                  showlegend=False))
+    fig.update_layout(**{kk_: vv for kk_, vv in ui.PLOTLY_LAYOUT.items() if kk_ not in ("xaxis", "yaxis", "margin")})
+    fig.update_layout(height=fig_h, margin=dict(l=10, r=10, t=10, b=10), dragmode=False,
+                      hovermode="closest", clickmode="event+select",
+                      xaxis=dict(visible=False, domain=[0, 0.62], range=[-1.05, 1.05], fixedrange=True),
+                      yaxis=dict(visible=False, range=[-1.05, 1.05], scaleanchor="x", fixedrange=True),
+                      xaxis2=dict(visible=False, domain=[0.66, 1], range=[0, 1], anchor="y2", fixedrange=True),
+                      yaxis2=dict(visible=False, range=[nk - max(nk, 4), nk], anchor="x2", fixedrange=True))
     with st.container(border=True):
-        ui.section(f"Dendrogram — {ent}", f"Kemiripan pola bulanan · linkage {method}")
-        _fig(fig, "dd_fig", max(420, 26 * len(labels) + 60))
-    tot = d[d[col].isin(top)][metric].sum()
-    vals = d[d[col].isin(top)].groupby(col)[metric].sum()
-    cols = st.columns(min(k, 4))
-    for i in range(1, k + 1):
-        mem = [l for l, c_ in zip(labels, cl) if c_ == i]
-        v = vals.reindex(mem).sum()
-        shown = ", ".join(mem[:4]) + (f" +{len(mem) - 4} lainnya" if len(mem) > 4 else "")
-        valtxt = ui.fmt_big(v) if metric == "Invoice Amount" else f"{ui.fmt_int(v)} RN"
-        with cols[(i - 1) % len(cols)]:
-            st.markdown(f'<div class="mx-cluster" style="border-top:4px solid {palette[(i - 1) % len(palette)]}">'
-                        f'<strong>Klaster {i} · {len(mem)} entitas</strong><span style="color:#434343">{ui.esc(shown)}</span>'
-                        f'<span style="font-weight:600">{valtxt} · {ui.fmt_pct(v / tot * 100, digits=0)}</span></div>',
-                        unsafe_allow_html=True)
-    ui.note("Entitas dalam satu klaster punya pola perjalanan serupa, sehingga bisa dinegosiasikan dengan strategi "
-            "yang sama, misalnya satu paket corp rate untuk kota-kota dalam satu klaster.")
+        ui.section(f"Klaster {unit} berdasarkan pola bulanan",
+                   f"Lingkaran besar = klaster · lingkaran kecil = {unit}, ukuran = "
+                   f"{'spend' if is_rp else 'room night'} · kartu kanan = pola musiman · "
+                   f"arahkan kursor untuk detail, klik lingkaran untuk menyorot klasternya")
+        ev = st.plotly_chart(fig, width="stretch", key=f"dd_pack_{focus}", on_select="rerun",
+                             selection_mode="points", config={"displaylogo": False, "displayModeBar": False})
+        try:
+            pts = ev.selection.points if ev and ev.selection else []
+        except Exception:
+            pts = []
+        if pts:
+            cd = pts[0].get("customdata")
+            kk = int(cd[0] if isinstance(cd, (list, tuple)) else cd) if cd is not None else None
+            if kk in ks:
+                want = "Semua" if focus == kk else f"Klaster {kk}"
+                st.session_state["_dd_click"] = want
+                st.rerun()
+
+    # ---------- detail klaster yang disorot
+    if focus is not None:
+        kk = focus
+        mem = cl[cl == kk].index
+        with st.container(border=True):
+            ui.section(f"Klaster {kk} · {plab[kk]}", f"{len(mem)} {unit} dengan pola bulanan serupa")
+            a, b = st.columns([1.35, 1])
+            with a:
+                f2 = go_.Figure()
+                xl = [_per_label(m) for m in months]
+                for n in mem:
+                    f2.add_trace(go_.Scatter(x=xl, y=share.loc[n].values, mode="lines", name=str(n),
+                                             line=dict(color="#CFCFCF", width=1),
+                                             hovertemplate=f"{ui.esc(n)}<br>%{{x}}: %{{y:.1f}}%<extra></extra>"))
+                f2.add_trace(go_.Scatter(x=xl, y=prof[kk], mode="lines+markers", name="Rata-rata klaster",
+                                         line=dict(color=colr[kk], width=3.5, shape="spline", smoothing=0.6),
+                                         marker=dict(size=5),
+                                         hovertemplate="Rata-rata klaster<br>%{x}: %{y:.1f}%<extra></extra>"))
+                f2.add_hline(y=100 / len(months), line_dash="dot", line_color="#9A9A9A",
+                             annotation_text="rata-rata merata", annotation_font_size=10)
+                f2.update_layout(showlegend=False, yaxis=dict(title="Porsi volume per bulan", ticksuffix="%"),
+                                 xaxis=dict(title=None))
+                _fig(f2, "dd_prof", 330)
+            with b:
+                t = pd.DataFrame({ent: mem, "Nilai": vals[mem].values,
+                                  "Porsi": vals[mem].values / tot * 100,
+                                  "Bulan tersibuk": peak_ent[mem].values}).sort_values("Nilai", ascending=False)
+                t["Nilai"] = t["Nilai"].map(fmt_v)
+                t["Porsi"] = t["Porsi"].map(lambda v: ui.fmt_pct(v))
+                st.dataframe(t.rename(columns={"Nilai": "Spend" if is_rp else "Room night"}), hide_index=True,
+                             width="stretch", height=min(330, 36 * len(t) + 40))
+            ui.note(f"Garis tebal = pola rata-rata Klaster {kk}; garis abu = tiap {unit}. Gunakan bulan puncak untuk "
+                    f"menjadwalkan negosiasi corp rate <b>sebelum</b> masa ramai, dan satukan {unit} dalam klaster "
+                    f"ini dalam satu paket negosiasi.")
+
+    # ---------- dendrogram lama (untuk pengguna teknis)
+    with st.expander("Lihat pohon klaster (dendrogram)", icon=":material/account_tree:"):
+        labels = list(pv.index)
+        dn = dendrogram(Z, labels=labels, no_plot=True, orientation="left")
+        fig3 = go_.Figure()
+        for xs, ys in zip(dn["dcoord"], dn["icoord"]):
+            fig3.add_trace(go_.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#9A9A9A", width=1.6),
+                                       hoverinfo="skip", showlegend=False))
+        leaf_y = [5 + 10 * i for i in range(len(dn["ivl"]))]
+        leaf_col = [colr[cl[l]] for l in dn["ivl"]]
+        fig3.add_trace(go_.Scatter(x=[0] * len(leaf_y), y=leaf_y, mode="markers+text", text=dn["ivl"],
+                                   textposition="middle right", marker=dict(size=10, color=leaf_col),
+                                   textfont=dict(size=11), hoverinfo="text", showlegend=False, cliponaxis=False))
+        cut = Z[-(k - 1), 2] if k > 1 else 0
+        fig3.add_vline(x=cut, line_dash="dash", line_color=ui.RED, annotation_text=f"potong: {k} klaster")
+        mx = max(max(x) for x in dn["dcoord"])
+        fig3.update_layout(xaxis=dict(range=[mx * 1.05, -mx * 0.45], title="Dissimilarity", gridcolor="#EDEDED",
+                                      tickvals=[round(v, 2) for v in np.linspace(0, mx, 5)]),
+                           yaxis=dict(showticklabels=False, showgrid=False))
+        _fig(fig3, "dd_fig", max(420, 26 * len(labels) + 60))
+        st.caption(f"Linkage {method}. Makin ke kiri titik dua cabang bertemu, makin mirip pola bulanannya.")
+    ui.note(f"{unit.capitalize()} dalam satu klaster punya pola perjalanan serupa, sehingga bisa dinegosiasikan "
+            f"dengan strategi yang sama, misalnya satu paket corp rate untuk {unit}-{unit} dalam satu klaster.")
 
 
 # ---------------------------------------------------------------- tab: Patra Jasa
