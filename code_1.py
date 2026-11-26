@@ -2826,13 +2826,40 @@ def render_sidebar():
             st.rerun()
 
 
+_ICO = {  # ikon garis sederhana (inline SVG, tanpa emoji)
+    "cal": '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg>',
+    "db": '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>',
+    "user": '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>',
+    "clock": '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+}
+
+
 def render_header():
     greet, now = get_greeting()
     uname = st.session_state.get("username", "")
     role = st.session_state.get("role", "")
-    st.markdown(f'<div class="mx-h1">Corporate Travel Analytics</div>'
-                f'<div class="mx-sub">{greet}, {ui.esc(uname.title())} · {ui.esc(role)} · {now:%d %b %Y}</div>',
-                unsafe_allow_html=True)
+    hari = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"][now.weekday()]
+    chips = [("cal", f"{hari}, {now:%d %b %Y}"), ("user", role or "-")]
+    raw = st.session_state.get("df_all")
+    if st.session_state.get("data_loaded") and raw is not None and not raw.empty:
+        chips.insert(0, ("db", f"{len(raw):,} records".replace(",", ".")))
+        chips.insert(0, ("clock", f"Periode {st.session_state.get('data_period', '-')}"))
+    chip_html = "".join(f'<span class="mx-chip">{_ICO[i]}{ui.esc(t)}</span>' for i, t in chips)
+    st.markdown(
+        f'<div class="mx-hero"><div class="mx-hero-l">'
+        f'<div class="mx-eyebrow">Corporate Travel Analytics</div>'
+        f'<div class="mx-hero-t">{greet}, {ui.esc(uname.title())}</div>'
+        f'<div class="mx-hero-s">Analitik transaksi hotel perjalanan dinas Pertamina Group untuk negosiasi tarif '
+        f'dan pengendalian biaya.</div></div>'
+        f'<div class="mx-hero-r">{chip_html}</div></div>', unsafe_allow_html=True)
+
+
+PAGE_ICONS = {
+    "Dashboard": ":material/space_dashboard:", "Price Intelligence": ":material/sell:",
+    "Cost Avoidance": ":material/savings:", "Room Intelligence": ":material/hotel:",
+    "Sankey Flow": ":material/account_tree:", "Top Hotel/City": ":material/leaderboard:",
+    "Dendrogram": ":material/hub:", "Patra Jasa": ":material/apartment:", "Laporan": ":material/description:",
+}
 
 
 # ---------------------------------------------------------------- tab: Dashboard
@@ -3585,7 +3612,8 @@ def main_app():
     # Hanya halaman yang dipilih yang dihitung & digambar (st.tabs menghitung SEMUA tab di setiap interaksi).
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     with st.container(key="mx_nav"):
-        page = st.radio("Halaman", PAGES, horizontal=True, key="nav_page", label_visibility="collapsed")
+        page = st.radio("Halaman", PAGES, horizontal=True, key="nav_page", label_visibility="collapsed",
+                        format_func=lambda p: f"{PAGE_ICONS.get(p, '')} {p}")
     _render_page(page, df, pmap, data_sig)
 
     st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
