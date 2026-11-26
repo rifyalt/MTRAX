@@ -916,13 +916,10 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
     has_corp = bool(src and src.get("df") is not None)
 
     # ---------- judul + toolbar (pengaturan & catatan di popover agar halaman ringkas) ----------
-    h1, h2 = st.columns([5, 4], vertical_alignment="bottom")
-    with h1:
-        ui.page_title("Gross Potential Cost Avoidance",
-                      "Rate dibayar (Invoice Amount ÷ room nights) dibandingkan corporate rate per hotel, "
-                      "tipe kamar dan meal plan")
-    with h2:
-        t1, t2, t3 = st.columns([1.3, 1, 1])
+    ui.page_title("Gross Potential Cost Avoidance",
+                  "Rate dibayar (Invoice Amount ÷ room nights) dibandingkan corporate rate per hotel, "
+                  "tipe kamar dan meal plan")
+    t1, t2, t3, _sp = st.columns([1.5, 1.1, 1.1, 3])   # toolbar di baris sendiri: tidak terjepit di layar sempit
     # basis pajak & carry-forward memakai nilai baku (tanda '++' di file tetap dibaca sebagai belum pajak)
     basis = st.session_state.get("ca_basis", "Nett (sudah pajak & service)")
     carry = st.session_state.get("ca_carry", True)
