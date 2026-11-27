@@ -2786,7 +2786,8 @@ def render_sidebar():
         else:
             st.info("Belum ada folder data ([drive_folders] di Secrets).")
 
-        if st.session_state.get("data_loaded") and not st.session_state.df_all.empty:
+        _df_now = st.session_state.get("df_all")
+        if st.session_state.get("data_loaded") and _df_now is not None and not _df_now.empty:
             secs = st.session_state.get("_load_secs")
             st.success(f"{len(st.session_state.df_all):,} records · {st.session_state.get('data_period', '')}"
                        .replace(",", ".") + (f" · dimuat {secs:.1f} dtk".replace(".", ",") if secs and secs >= 0.1 else ""))
@@ -2859,7 +2860,7 @@ def render_header():
 
 
 PAGE_ICONS = {
-    "Dashboard": ":material/space_dashboard:", "Price Intelligence": ":material/sell:",
+    "Overview": ":material/space_dashboard:", "Price Intelligence": ":material/sell:",
     "Cost Avoidance": ":material/savings:", "Room Intelligence": ":material/hotel:",
     "Sankey Flow": ":material/account_tree:", "Top Hotel/City": ":material/leaderboard:",
     "Dendrogram": ":material/hub:", "Patra Jasa": ":material/apartment:", "Laporan": ":material/description:",
@@ -3735,7 +3736,7 @@ def page_akses():
 
 
 # ---------------------------------------------------------------- navigasi halaman
-PAGES = ["Dashboard", "Price Intelligence", "Cost Avoidance", "Room Intelligence", "Sankey Flow",
+PAGES = ["Overview", "Price Intelligence", "Cost Avoidance", "Room Intelligence", "Sankey Flow",
          "Top Hotel/City", "Dendrogram", "Patra Jasa", "Laporan"]
 
 
@@ -3746,7 +3747,7 @@ def ca_frame_sig(df):
 
 @st.fragment
 def _render_page(page, df, pmap, data_sig):
-    if page == "Dashboard":
+    if page == "Overview":
         tab_dashboard(df)
     elif page == "Price Intelligence":
         tab_price(df, pmap)
@@ -3770,7 +3771,15 @@ def _render_page(page, df, pmap, data_sig):
 
 
 # ---------------------------------------------------------------- main
+def _ensure_state():
+    """Pastikan kunci sesi dasar selalu ada (mis. setelah app di-reboot/di-update saat halaman masih terbuka)."""
+    for k, v in (("df_all", pd.DataFrame()), ("data_loaded", False), ("data_period", ""), ("username", "")):
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
 def main_app():
+    _ensure_state()
     st.set_page_config(page_title="MTRAX | Travel Analytics", layout="wide", initial_sidebar_state="expanded")
     if st.session_state.get("_session_token"):
         _set_session_cookie(st.session_state._session_token)
@@ -3785,7 +3794,7 @@ def main_app():
     if is_demo_user() and not st.session_state.get("_demo_masked"):
         st.session_state.df_all = pd.DataFrame()
         st.session_state.data_loaded = False
-    raw = st.session_state.df_all
+    raw = st.session_state.get("df_all")
     if raw is None or raw.empty:
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
         ui.note("Pilih <b>periode data</b> di sidebar lalu klik <b>Get Data</b>.")
