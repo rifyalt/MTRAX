@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.27-l"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.27-m"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -208,6 +208,13 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 .mx-kpi.dark .v {{ color:#FFFFFF; }}
 .mx-kpi .s {{ font-size:12px; color:var(--muted); margin-top:6px; min-height:16px; line-height:1.35; }}
 .mx-kpi .s b {{ color:var(--ink); font-weight:600; }}
+.mx-kpi .dl {{ display:flex; align-items:center; gap:6px; margin-top:7px; font-size:11.5px; color:var(--muted); white-space:nowrap; }}
+.mx-kpi .dl .pill {{ display:inline-flex; align-items:center; gap:3px; padding:2px 7px 2px 6px; border-radius:999px;
+  font-weight:700; font-size:11.5px; font-variant-numeric:tabular-nums; line-height:1.35; }}
+.mx-kpi .dl .pill svg {{ width:10px; height:10px; fill:currentColor; }}
+.mx-kpi .dl .good {{ background:#E7F6EC; color:#1B7F3B; }}
+.mx-kpi .dl .bad {{ background:#FDECEC; color:#C0362C; }}
+.mx-kpi .dl .flat {{ background:#F0F2F4; color:var(--muted); }}
 /* Baris statistik ringkas: satu kartu, dibagi garis tipis */
 .mx-mini {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); margin:0 0 18px;
   background:#FFFFFF; border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; }}
@@ -426,13 +433,35 @@ _KPI_ICO = {
 }
 
 
-def kpi(label, value, sub="", dark=False, icon=None, unit="", sub_html=False) -> str:
+def delta_html(cur, prev, vs="", higher_is_good=True, tip="", eps=0.05) -> str:
+    """Pil naik/turun vs periode pembanding. Kosong jika pembanding tidak ada."""
+    def _na(v):
+        try:
+            return v is None or v != v
+        except Exception:
+            return True
+    if _na(cur) or _na(prev) or prev == 0:
+        return '<div class="dl"><span class="pill flat">–</span><span>tidak ada pembanding</span></div>'
+    ch = (cur - prev) / abs(prev) * 100
+    if abs(ch) < eps:
+        cls, arrow = "flat", '<svg viewBox="0 0 10 10"><rect x="1" y="4" width="8" height="2" rx="1"/></svg>'
+    else:
+        up = ch > 0
+        cls = "good" if up == higher_is_good else "bad"
+        arrow = ('<svg viewBox="0 0 10 10"><path d="M5 1l4 6H1z"/></svg>' if up
+                 else '<svg viewBox="0 0 10 10"><path d="M5 9L1 3h8z"/></svg>')
+    txt = f"{abs(ch):.1f}".replace(".", ",") + "%"
+    t = f' title="{esc(tip)}"' if tip else ""
+    return f'<div class="dl"{t}><span class="pill {cls}">{arrow}{txt}</span><span>{esc(vs)}</span></div>'
+
+
+def kpi(label, value, sub="", dark=False, icon=None, unit="", sub_html=False, delta="") -> str:
     ico = (f'<span class="ic"><svg viewBox="0 0 24 24">{_KPI_ICO[icon]}</svg></span>'
            if icon in _KPI_ICO else "")
     u = f"<small>{esc(unit)}</small>" if unit else ""
     sub_s = sub if sub_html else esc(sub)
     return (f'<div class="mx-kpi{" dark" if dark else ""}"><div class="hd">{ico}<div class="l">{esc(label)}</div></div>'
-            f'<div class="v">{esc(value)}{u}</div><div class="s">{sub_s}</div></div>')
+            f'<div class="v">{esc(value)}{u}</div>{delta}<div class="s">{sub_s}</div></div>')
 
 
 def kpi_row(items, min_width=180):
