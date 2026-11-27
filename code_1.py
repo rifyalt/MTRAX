@@ -2912,6 +2912,32 @@ PAGE_ICONS = {
 _HARI_ID = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 _BULAN_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
 
+def _prev_window(a, b):
+    """Periode pembanding untuk rentang [a, b].
+    Mulai tgl 1 → geser n bulan kalender (1–16 Nov → 1–16 Okt; Okt–Nov → Agu–Sep).
+    Selain itu → rentang dengan panjang sama tepat sebelum a."""
+    a, b = pd.Timestamp(a).normalize(), pd.Timestamp(b).normalize()
+    if a.day == 1:
+        n = (b.year - a.year) * 12 + b.month - a.month + 1
+        pa = a - pd.DateOffset(months=n)
+        pb_m = (b.to_period("M") - n)
+        pb = min(pb_m.to_timestamp() + pd.Timedelta(days=b.day - 1), pb_m.to_timestamp(how="end").normalize())
+        full_months = b == b.to_period("M").to_timestamp(how="end").normalize()
+        return pa, pb, (n if full_months or n == 1 else None)
+    span = b - a
+    return a - span - pd.Timedelta(days=1), a - pd.Timedelta(days=1), None
+
+
+def _fmt_range(a, b):
+    a, b = pd.Timestamp(a), pd.Timestamp(b)
+    ma, mb = _BULAN_ID[a.month - 1], _BULAN_ID[b.month - 1]
+    if a == a.to_period("M").to_timestamp() and b.normalize() == b.to_period("M").to_timestamp(how="end").normalize():
+        return f"{ma} {a.year}" if (a.year, a.month) == (b.year, b.month) else f"{ma} {a.year} – {mb} {b.year}"
+    if (a.year, a.month) == (b.year, b.month):
+        return f"{a.day}–{b.day} {ma} {a.year}"
+    return f"{a.day} {ma} {a.year} – {b.day} {mb} {b.year}"
+
+
 def _last_complete_month(d):
     """Bulan lengkap terakhir: sebelum bulan data terakhir (data bulan berjalan biasanya belum lengkap)."""
     ref = d["Issue Time"].max() if "Issue Time" in d and d["Issue Time"].notna().any() else d["Check in Date"].max()
@@ -3071,43 +3097,62 @@ def tab_dashboard(df):
     if lead_txt.endswith(" hari"):
         lead_txt, lead_unit = lead_txt[:-5], "hari"
     lead_sub_h = (f"<b>{ui.esc(lead_sub.split(' ')[0])}</b> last-minute" if lead_sub else "")
-    # ---- indikator naik/turun: bulan lengkap terakhir vs bulan sebelumnya (per Issue Time) ----
+    # ---- indikator naik/turun vs periode sebelumnya ----
+    # Filter rentang tanggal aktif → periode terpilih vs periode pembanding (dari data penuh, wilayah sama).
+    # Tanpa filter → bulan lengkap terakhir vs bulan sebelumnya.
     dl = {k: "" for k in ("bk", "tr", "ht", "rn", "rate", "lead")}
     cmp_note = ""
-    if "Issue Time" in d and d["Issue Time"].notna().any():
-        last = _last_complete_month(d)
-        per = d["Issue Time"].dt.to_period("M")
 
-        def _met(x):
-            r = x["Number of Rooms Night"].sum() if "Number of Rooms Night" in x else 0
-            v = x["Invoice Amount"].sum() if "Invoice Amount" in x else 0
-            ld = np.nan
-            if "Check in Date" in x:
-                q = (x["Check in Date"].dt.normalize() - x["Issue Time"].dt.normalize()).dt.days
-                q = q[q >= 0]
-                ld = q.mean() if len(q) else np.nan
-            return dict(bk=len(x), tr=x["Travel Request Number"].nunique() if "Travel Request Number" in x else len(x),
-                        ht=x["Hotel Name"].nunique() if "Hotel Name" in x else 0, rn=r,
-                        rate=v / r if r else np.nan, lead=ld)
+    def _met(x):
+        r = x["Number of Rooms Night"].sum() if "Number of Rooms Night" in x else 0
+        v = x["Invoice Amount"].sum() if "Invoice Amount" in x else 0
+        ld = np.nan
+        if {"Check in Date", "Issue Time"}.issubset(x.columns):
+            q = (x["Check in Date"].dt.normalize() - x["Issue Time"].dt.normalize()).dt.days
+            q = q[q >= 0]
+            ld = q.mean() if len(q) else np.nan
+        return dict(bk=len(x), tr=x["Travel Request Number"].nunique() if "Travel Request Number" in x else len(x),
+                    ht=x["Hotel Name"].nunique() if "Hotel Name" in x else 0, rn=r,
+                    rate=v / r if r else np.nan, lead=ld)
+
+    cur_d = prev_d = None
+    gf = st.session_state.get("_gf_rng")
+    full = st.session_state.get("_df_full")
+    if gf is not None and full is not None and gf[2] in full.columns:
+        a0, b0, dcol = gf
+        pa, pb, nmon = _prev_window(a0, b0)
+        fd = _market(full, market)
+        dn = fd[dcol].dt.normalize()
+        cur_d, prev_d = d, fd[(dn >= pa) & (dn <= pb)]
+        lc, lp = _fmt_range(a0, b0), _fmt_range(pa, pb)
+        vs = (f"vs {_BULAN_ID[pa.month - 1]}" if nmon == 1 or (a0.day == 1 and a0.month == b0.month)
+              else "vs periode lalu")
+        note_basis = ("filter tanggal vs rentang yang sama di bulan sebelumnya" if a0.day == 1
+                      else "filter tanggal vs rentang sebelumnya dengan panjang sama")
+    elif "Issue Time" in d and d["Issue Time"].notna().any():
+        last = _last_complete_month(d)
         if last is not None:
+            per = d["Issue Time"].dt.to_period("M")
             cur_d, prev_d = d[per == last], d[per == last - 1]
-            if len(cur_d):
-                mc = _met(cur_d)
-                mp = _met(prev_d) if len(prev_d) else {k: None for k in mc}
-                lc, lp = (f"{_BULAN_ID[last.month - 1]} {last.year}",
-                          f"{_BULAN_ID[(last - 1).month - 1]} {(last - 1).year}")
-                vs = f"vs {_BULAN_ID[(last - 1).month - 1]}"
-                fmt = dict(bk=ui.fmt_int, tr=ui.fmt_int, ht=ui.fmt_int, rn=ui.fmt_int,
-                           rate=lambda v: ui.fmt_rp(v), lead=lambda v: f"{v:.1f} hari".replace(".", ","))
-                good = dict(bk=True, tr=True, ht=True, rn=True, rate=False, lead=True)
-                for k in dl:
-                    pv_ = mp[k]
-                    tip = (f"{lc}: {fmt[k](mc[k]) if pd.notna(mc[k]) else '-'} · "
-                           f"{lp}: {fmt[k](pv_) if pv_ is not None and pd.notna(pv_) else '-'}")
-                    dl[k] = ui.delta_html(mc[k], pv_, vs, good[k], tip)
-                cmp_note = (f"▲▼ = <b>{lc}</b> vs <b>{lp}</b> (bulan lengkap terakhir, per Issue Time) · "
-                            f"hijau membaik, merah memburuk (rate: turun = membaik) · arahkan kursor ke indikator "
-                            f"untuk melihat angka kedua bulan")
+            lc, lp = (f"{_BULAN_ID[last.month - 1]} {last.year}",
+                      f"{_BULAN_ID[(last - 1).month - 1]} {(last - 1).year}")
+            vs = f"vs {_BULAN_ID[(last - 1).month - 1]}"
+            note_basis = "bulan lengkap terakhir vs bulan sebelumnya"
+    if cur_d is not None and len(cur_d):
+        mc = _met(cur_d)
+        mp = _met(prev_d) if prev_d is not None and len(prev_d) else {k: None for k in mc}
+        fmt = dict(bk=ui.fmt_int, tr=ui.fmt_int, ht=ui.fmt_int, rn=ui.fmt_int,
+                   rate=lambda v: ui.fmt_rp(v), lead=lambda v: f"{v:.1f} hari".replace(".", ","))
+        good = dict(bk=True, tr=True, ht=True, rn=True, rate=False, lead=True)
+        for k in dl:
+            pv_ = mp[k]
+            tip = (f"{lc}: {fmt[k](mc[k]) if pd.notna(mc[k]) else '-'} · "
+                   f"{lp}: {fmt[k](pv_) if pv_ is not None and pd.notna(pv_) else '-'}")
+            dl[k] = ui.delta_html(mc[k], pv_, vs, good[k], tip)
+        miss = "" if prev_d is not None and len(prev_d) else " · <b>data pembanding tidak ada di periode yang dimuat</b>"
+        cmp_note = (f"▲▼ = <b>{lc}</b> vs <b>{lp}</b> ({note_basis}, per Issue Time){miss} · "
+                    f"hijau membaik, merah memburuk (rate: turun = membaik) · arahkan kursor ke indikator "
+                    f"untuk melihat angka kedua periode")
     ui.kpi_row([ui.kpi("Booking", ui.fmt_int(len(d)), icon="booking", delta=dl["bk"],
                        sub=f"<b>{dec(len(d) / max(tr, 1))}</b> booking / request", sub_html=True),
                 ui.kpi("Travel request", ui.fmt_int(tr), icon="request", delta=dl["tr"],
@@ -4119,10 +4164,14 @@ def main_app():
         with st.sidebar:
             rng = st.date_input("Rentang tanggal (semua tab)", (lo, hi), min_value=lo, max_value=hi,
                                 format="DD/MM/YYYY", key=f"gf_range_{ver}")
+        st.session_state["_df_full"] = df          # untuk pembanding periode sebelumnya (indikator ▲▼)
+        st.session_state["_gf_rng"] = None
         if isinstance(rng, (list, tuple)) and len(rng) == 2:
             d_only = df[dc].dt.normalize()
             df = df[(d_only >= pd.Timestamp(rng[0])) & (d_only <= pd.Timestamp(rng[1]))]
             rng_key = f"{rng[0]}_{rng[1]}"
+            if (rng[0], rng[1]) != (lo, hi):
+                st.session_state["_gf_rng"] = (pd.Timestamp(rng[0]), pd.Timestamp(rng[1]), dc)
     data_sig = f"{sig}|{rng_key}"
 
     # Hanya halaman yang dipilih yang dihitung & digambar (st.tabs menghitung SEMUA tab di setiap interaksi).
