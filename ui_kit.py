@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.27-f"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.27-g"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -278,6 +278,22 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 .mx-load .sub {{ font-size: 11px; color: #6B6B6B; margin-top: 2px; font-variant-numeric: tabular-nums; }}
 .mx-load .sub .sec {{ color: #3B7A0B; font-weight: 600; }}
 [data-testid="stSidebar"] [data-testid="stExpander"] {{ margin-top: 2px; margin-bottom: 6px; }}
+/* ---- kartu laporan (Reports) ---- */
+.mx-rep-g {{ display:flex; align-items:baseline; gap:10px; margin:14px 0 2px; flex-wrap:wrap; }}
+.mx-rep-g b {{ font-size:15px; font-weight:600; color:var(--ink); }}
+.mx-rep-g span {{ font-size:12.5px; color:var(--muted); }}
+.mx-rep .hd {{ display:flex; align-items:center; gap:10px; }}
+.mx-rep .ic {{ width:34px; height:34px; border-radius:9px; background:#E9F5FC; display:inline-flex; align-items:center;
+  justify-content:center; flex:0 0 34px; }}
+.mx-rep .ic svg {{ width:18px; height:18px; fill:none; stroke:var(--action); stroke-width:1.8; stroke-linecap:round;
+  stroke-linejoin:round; }}
+.mx-rep .t {{ font-size:15px; font-weight:600; color:var(--ink); line-height:1.25; }}
+.mx-rep .d {{ font-size:13px; color:var(--muted); line-height:1.45; margin-top:10px; min-height:38px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }}
+.mx-rep .m {{ display:flex; justify-content:space-between; font-size:11.5px; color:#8A8A8A; margin:10px 0 2px;
+  padding-top:10px; border-top:1px solid #EFEFEF; font-variant-numeric:tabular-nums; }}
+[class*="st-key-rep_"] {{ background:#fff; transition:border-color .15s, box-shadow .15s; }}
+[class*="st-key-rep_"]:hover {{ border-color:#BFE3F6 !important; box-shadow:0 4px 14px rgba(13,127,204,.08); }}
 .mx-n {{ counter-reset: c var(--v); animation: mxCount 1.3s cubic-bezier(.15,.8,.25,1) both; }}
 .mx-n::after {{ content: counter(c); }}
 .mx-n.p3::after {{ content: counter(c, mxpad3); }}
@@ -749,3 +765,26 @@ $("re").onclick=()=>run(true);
 setInterval(async()=>{ const u=await findUrl(); let v=null; if(u){ try{ v=await ping(u); }catch(e){} } pushHist(v); spark(); },30000);
 drawIp(); place(); run(false);
 </script></body></html>""".replace("__CFG__", cfg)
+
+
+# ---------------------------------------------------------------------------
+# KARTU LAPORAN (halaman Reports)
+# ---------------------------------------------------------------------------
+_REP_ICO = {
+    "hotel": '<path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16M15 9h4a1 1 0 0 1 1 1v11M3 21h18M8 8h3M8 12h3M8 16h3"/>',
+    "pin": '<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+    "trend": '<path d="M3 17l6-6 4 4 8-8M15 7h6v6"/>',
+    "coin": '<circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2A2.6 2.6 0 0 0 12.4 8h-1a2 2 0 0 0 0 4h1.2a2 2 0 0 1 0 4h-1.1a2.6 2.6 0 0 1-2.4-1.3M12 6.5V8M12 16v1.5"/>',
+    "leak": '<path d="M14 4h6v6M20 4l-8 8M10 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4"/>',
+    "target": '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
+    "file": '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+}
+
+
+def report_card(title: str, desc: str, rows: int, icon: str = "file") -> str:
+    """Isi kartu laporan: ikon, judul, deskripsi (2 baris), jumlah baris & format."""
+    ico = _REP_ICO.get(icon, _REP_ICO["file"])
+    return (f'<div class="mx-rep"><div class="hd"><span class="ic"><svg viewBox="0 0 24 24">{ico}</svg></span>'
+            f'<span class="t">{esc(title)}</span></div>'
+            f'<div class="d">{esc(desc)}</div>'
+            f'<div class="m"><span>{fmt_int(rows)} baris</span><span>Excel · .xlsx</span></div></div>')
