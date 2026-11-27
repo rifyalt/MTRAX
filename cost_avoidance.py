@@ -84,6 +84,30 @@ def _fold(s) -> str:
     return re.sub(r"\s+", " ", s.replace(" ", " ")).strip().lower()
 
 
+_ROOM_FIX = [  # ejaan yang sering berbeda -> bentuk baku
+    (r"\bde\s*-?\s*lux(e)?\b", "deluxe"), (r"\bprivila(ge|dge)\b", "privilege"),
+    (r"\bapartement\b", "apartment"), (r"\bguestroom\b", "guest"), (r"\bcondo\s*loft\b", "loft"), (r"\bcondoloft\b", "loft"),
+]
+
+
+def _room_canon(s: str) -> str:
+    for pat, rep in _ROOM_FIX:
+        s = re.sub(pat, rep, s)
+    return s
+
+
+# Tipe non-standar yang variannya digabung (urutan penting: yang pertama cocok dipakai)
+_OTHER_GROUPS = [
+    (r"\bstudio\b", "Studio"),
+    (r"\btriple\b", "Triple"),
+    (r"\bfamily\b", "Family"),
+    (r"\b(run of house|assigned on arrival|roh)\b", "Run of House"),
+    (r"\bloft\b", "Loft"),
+    (r"\b(two|2) beds?\b", "Two Beds"),
+    (r"\b(apartment|\d\s*bedroom)\b", "Apartment"),
+]
+
+
 def norm_room_type(value) -> str:
     """Kelompokkan Room Category/Room Type ke tipe standar. Ganti dengan
     room_category_standardizer bila ingin aturan yang sama dengan modul lain."""
@@ -92,12 +116,16 @@ def norm_room_type(value) -> str:
     s = _fold(value)
     if not s or s in ("nan", "none", "-"):
         return "Lainnya"
-    if "suite" in s:
+    s = _room_canon(s)
+    if "suite" in s or "presidential" in s:
         return "Suite"
-    if any(k in s for k in ("executive", "club", "premier", "premium", "business")):
+    if any(k in s for k in ("executive", "club", "premier", "premium", "business", "privilege")) \
+            or re.search(r"\bthe level\b", s):
         return "Executive"
     if "deluxe" in s or "dlx" in s:
         return "Deluxe"
+    if re.search(r"\bharris\b", s):      # kamar standar jaringan HARRIS punya kategori sendiri
+        return "Harris Room"
     if any(k in s for k in ("superior", "standard", "standar", "moderate", "classic", "std", "spr")):
         return "Superior"
     if re.search(r"\b(smart|pop|single|twin|double|queen|king)\b", s):
@@ -111,13 +139,16 @@ _ROOM_NOISE = re.compile(r"\b(rooms?|kamar|include[sd]?|incl|with|without|w o|ex
 
 
 def room_key(value) -> str:
-    """Kunci tipe kamar untuk pencocokan. Tipe standar (Superior/Deluxe/Executive/Suite) dipakai apa adanya;
+    """Kunci tipe kamar untuk pencocokan. Tipe standar (Superior/Deluxe/Executive/Suite/Harris Room) dipakai apa adanya;
     tipe lain memakai namanya sendiri, mis. 'Signature Rooms' -> 'Lainnya · Signature', supaya
     'Raffles Room' tidak dibandingkan dengan 'Signature Room'."""
     rt = norm_room_type(value)
     if rt != "Lainnya":
         return rt
-    s = re.sub(r"[^a-z0-9 ]", " ", _fold(value))
+    s = re.sub(r"[^a-z0-9 ]", " ", _room_canon(_fold(value)))
+    for pat, name in _OTHER_GROUPS:
+        if re.search(pat, s):
+            return f"Lainnya · {name}"
     s = re.sub(r"\s+", " ", _ROOM_NOISE.sub(" ", s)).strip()
     return f"Lainnya · {s.title()}" if s and s not in ("nan", "none") else "Lainnya"
 
