@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.27-k"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.27-l"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -260,15 +260,22 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 .mx-table td {{ padding:8px 10px; border-bottom:1px solid #EDEDED; text-align:right; white-space:nowrap; }}
 .mx-table tbody tr:hover td {{ background:#F7FBFE; }}
 .mx-scope {{ background:#FFFFFF; border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--shadow);
-  margin:6px 0 18px; }}
-.mx-scope .row {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); }}
-.mx-scope .it {{ padding:14px 18px; border-right:1px solid #EDEDED; }}
-.mx-scope .it:last-child {{ border-right:none; }}
-.mx-scope .l {{ font-size:12.5px; color:var(--muted); }}
-.mx-scope .v {{ font-size:18px; font-weight:600; color:var(--ink); margin-top:4px; font-variant-numeric:tabular-nums; }}
-.mx-scope .s {{ font-size:12.5px; color:var(--muted); margin-top:2px; }}
-.mx-scope .ft {{ border-top:1px solid #EDEDED; padding:9px 18px; font-size:12.5px; color:var(--muted); background:#FAFAFA;
-  border-radius:0 0 var(--r) var(--r); }}
+  margin:4px 0 16px; overflow:hidden; }}
+.mx-scope .row {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); }}
+.mx-scope .it {{ padding:14px 18px 13px; box-shadow:-1px -1px 0 var(--line); min-width:0; display:flex; flex-direction:column; }}
+.mx-scope .hd {{ display:flex; justify-content:space-between; align-items:baseline; gap:8px; }}
+.mx-scope .l {{ font-size:12.5px; font-weight:500; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.mx-scope .p {{ font-size:13px; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }}
+.mx-scope .v {{ font-size:20px; font-weight:700; color:var(--ink); margin-top:8px; letter-spacing:-.01em;
+  font-variant-numeric:tabular-nums; white-space:nowrap; }}
+.mx-scope .v small {{ font-size:13px; font-weight:600; color:var(--muted); margin-left:2px; letter-spacing:0; }}
+.mx-scope .s {{ font-size:12px; color:var(--muted); margin-top:5px; min-height:16px; }}
+.mx-scope .bar {{ height:4px; border-radius:2px; background:#EEF2F5; overflow:hidden; margin-top:10px; }}
+.mx-scope .bar i {{ display:block; height:100%; border-radius:2px; background:{GRADIENT}; }}
+.mx-scope .ft {{ border-top:1px solid var(--line); padding:9px 18px; font-size:12.5px; color:var(--muted); background:#FAFBFC;
+  display:flex; align-items:center; gap:8px; }}
+.mx-scope .ft::before {{ content:"i"; flex:none; width:16px; height:16px; border-radius:50%; background:#EAF5FC; color:var(--p3);
+  font-size:11px; font-weight:700; font-style:italic; display:flex; align-items:center; justify-content:center; font-family:Georgia,serif; }}
 [data-testid="stPopover"] button {{ border-radius:8px; font-size:13.5px; }}
 .mx-footer {{ text-align:center; padding:20px 0 4px; color:var(--muted); font-size:12.5px; }}
 .mx-footer a {{ color:var(--p3); text-decoration:none; }}
@@ -412,6 +419,10 @@ _KPI_ICO = {
     "night": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
     "rate": '<circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2A2.6 2.6 0 0 0 12.4 8h-1a2 2 0 0 0 0 4h1.2a2 2 0 0 1 0 4h-1.1a2.6 2.6 0 0 1-2.4-1.3M12 6.5V8M12 16v1.5"/>',
     "clock": '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    "target": '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
+    "saving": '<path d="M19 7h-9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H5M12 3v18"/>',
+    "shield": '<path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
+    "scale": '<path d="M12 4v16M7 20h10M5 8h14M5 8l-2.5 6a3 3 0 0 0 5 0zM19 8l-2.5 6a3 3 0 0 0 5 0z"/>',
 }
 
 
@@ -455,11 +466,23 @@ def note(text_html, warn=False):
 
 
 def scope_bar(items, footnote_html=""):
-    """Satu kartu berisi beberapa angka cakupan data, dipisah garis tipis, plus catatan kecil di bawah."""
-    cells = "".join(f'<div class="it"><div class="l">{esc(a)}</div><div class="v">{esc(b)}</div>'
-                    f'<div class="s">{esc(c)}</div></div>' for a, b, c in items)
-    ft = f'<div class="ft">{footnote_html}</div>' if footnote_html else ""
-    st.markdown(f'<div class="mx-scope"><div class="row">{cells}</div>{ft}</div>', unsafe_allow_html=True)
+    """Satu kartu cakupan data. items: (label, nilai, keterangan[, persen 0–100]).
+    Nilai 'a / b' ditampilkan dengan b lebih kecil; persen tampil di kanan atas + bar tipis."""
+    cells = []
+    for it in items:
+        a, b, c = it[0], str(it[1]), it[2]
+        pv = it[3] if len(it) > 3 else None
+        if " / " in b:
+            x, y = b.split(" / ", 1)
+            val = f"{esc(x)}<small>/ {esc(y)}</small>"
+        else:
+            val = esc(b)
+        ptxt = f'<span class="p">{pv:.0f}%</span>' if pv is not None else ""
+        bar = (f'<div class="bar"><i style="width:{max(0, min(100, pv)):.1f}%"></i></div>' if pv is not None else "")
+        cells.append(f'<div class="it"><div class="hd"><span class="l">{esc(a)}</span>{ptxt}</div>'
+                     f'<div class="v">{val}</div><div class="s">{esc(c)}</div>{bar}</div>')
+    ft = f'<div class="ft"><span>{footnote_html}</span></div>' if footnote_html else ""
+    st.markdown(f'<div class="mx-scope"><div class="row">{"".join(cells)}</div>{ft}</div>', unsafe_allow_html=True)
 
 
 def badge(status) -> str:
