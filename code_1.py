@@ -2727,6 +2727,38 @@ def _key_column(df, dim, merge, pmap):
 
 
 # ---------------------------------------------------------------- sidebar & header
+def _client_ip() -> str:
+    """IP publik pengguna dari header proxy (hanya ditampilkan ke pengguna itu sendiri, tidak dicatat)."""
+    try:
+        h = st.context.headers
+        fwd = h.get("X-Forwarded-For") or h.get("x-forwarded-for") or ""
+        if isinstance(fwd, str) and fwd:
+            return fwd.split(",")[0].strip()
+        ip = getattr(st.context, "ip_address", None)
+        return ip if isinstance(ip, str) else ""
+    except Exception:
+        return ""
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _drive_ping() -> dict:
+    """Cek singkat koneksi server MTRAX -> Google Drive (di-cache 2 menit)."""
+    if "gcp_service_account" not in st.secrets:
+        return {}
+    t0 = time.time()
+    try:
+        _drive_service().about().get(fields="user(emailAddress)").execute()
+        return {"state": "ok", "secs": round(time.time() - t0, 1)}
+    except Exception as e:
+        return {"state": "err", "msg": type(e).__name__}
+
+
+def _net_chip():
+    """Chip status koneksi di header (iframe kecil yang ditempatkan di atas placeholder chip)."""
+    import streamlit.components.v1 as components
+    components.html(ui.net_chip_html(_client_ip(), _drive_ping()), height=34)
+
+
 def render_sidebar():
     with st.sidebar:
         ui.brand()
@@ -2795,6 +2827,7 @@ def render_sidebar():
             if fx.get("missing"):
                 st.warning(f"{fx['missing']:,} booking tanpa kurs ({', '.join(fx.get('missing_currencies', []))}).")
 
+
         if is_admin():
             with st.expander("Unggah Excel (Admin)"):
                 files = st.file_uploader("File transaksi", type=["xlsx", "xls"], accept_multiple_files=True,
@@ -2856,7 +2889,8 @@ def render_header():
         f'<div class="mx-hero-t">{greet if guest else f"{greet}, {ui.esc(uname.title())}"}</div>'
         f'<div class="mx-hero-s">Analitik transaksi hotel perjalanan dinas untuk negosiasi tarif '
         f'dan pengendalian biaya.</div></div>'
-        f'<div class="mx-hero-r">{chip_html}</div></div>', unsafe_allow_html=True)
+        f'<div class="mx-hero-r">{chip_html}{ui.NET_CHIP_PLACEHOLDER}</div></div>', unsafe_allow_html=True)
+    _net_chip()
 
 
 PAGE_ICONS = {
