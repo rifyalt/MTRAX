@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.26-a"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.27-b"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -264,6 +264,40 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
   .mx-h1 {{ font-size:22px; }}
   .mx-kpi .v {{ font-size:22px; }}
 }}
+
+/* ---- kartu "data dimuat" beranimasi (angka menghitung naik, CSS murni) ---- */
+@property --v {{ syntax: '<integer>'; initial-value: 0; inherits: false; }}
+@counter-style mxpad3 {{ system: extends decimal; pad: 3 "0"; }}
+.mx-load {{ position: relative; overflow: hidden; border-radius: 10px; padding: 12px 14px 14px;
+  background: linear-gradient(135deg, #EEF9E4 0%, #E6F4FB 100%); border: 1px solid #D5EBC3;
+  animation: mxLoadIn .45s ease-out both; }}
+.mx-load .top {{ display: flex; align-items: center; gap: 8px; color: #3B7A0B; font-size: 12px;
+  font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }}
+.mx-load .tick {{ width: 18px; height: 18px; border-radius: 50%; background: #3B7A0B; display: inline-flex;
+  align-items: center; justify-content: center; animation: mxPop .5s .9s cubic-bezier(.2,1.6,.4,1) both; }}
+.mx-load .tick svg {{ width: 11px; height: 11px; stroke: #fff; stroke-width: 3; fill: none;
+  stroke-dasharray: 20; stroke-dashoffset: 20; animation: mxDraw .35s 1.15s ease-out forwards; }}
+.mx-load .big {{ font-size: 26px; font-weight: 700; color: #434343; line-height: 1.15; margin-top: 6px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }}
+.mx-load .big small {{ font-size: 13px; font-weight: 500; color: #6B6B6B; margin-left: 4px; }}
+.mx-load .sub {{ display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }}
+.mx-load .pill {{ font-size: 12px; color: #0A5D96; background: rgba(255,255,255,.75); border: 1px solid #D6EEFA;
+  border-radius: 999px; padding: 2px 9px; white-space: nowrap; font-variant-numeric: tabular-nums;
+  animation: mxLoadIn .4s ease-out both; }}
+.mx-load .pill:nth-child(2) {{ animation-delay: .25s; }}
+.mx-load .bar {{ position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
+  background: linear-gradient(90deg, #1BA0E2, #98EA16); transform-origin: left;
+  animation: mxBar 1.3s ease-out both; }}
+.mx-n {{ counter-reset: c var(--v); animation: mxCount 1.3s cubic-bezier(.15,.8,.25,1) both; }}
+.mx-n::after {{ content: counter(c); }}
+.mx-n.p3::after {{ content: counter(c, mxpad3); }}
+@keyframes mxCount {{ from {{ --v: 0; }} }}
+@keyframes mxBar {{ from {{ transform: scaleX(0); }} to {{ transform: scaleX(1); }} }}
+@keyframes mxLoadIn {{ from {{ opacity: 0; transform: translateY(4px); }} to {{ opacity: 1; transform: none; }} }}
+@keyframes mxPop {{ from {{ transform: scale(0); }} to {{ transform: scale(1); }} }}
+@keyframes mxDraw {{ to {{ stroke-dashoffset: 0; }} }}
+@media (prefers-reduced-motion: reduce) {{ .mx-load, .mx-load *, .mx-n {{ animation: none !important; }}
+  .mx-load .tick svg {{ stroke-dashoffset: 0; }} }}
 </style>""", unsafe_allow_html=True)
 
 
@@ -434,3 +468,34 @@ def fmt_pct(v, signed=False, digits=1) -> str:
     if signed:
         return ("+" if v > 0 else "−" if v < 0 else "") + s
     return s
+
+
+def _count_html(n: int) -> str:
+    """Angka beranimasi (hitung naik) dengan pemisah ribuan titik, tanpa JavaScript."""
+    n = max(int(n), 0)
+    groups = []
+    while True:
+        groups.insert(0, n % 1000)
+        n //= 1000
+        if n == 0:
+            break
+    parts = [f'<span class="mx-n" style="--v:{groups[0]}"></span>']
+    parts += [f'.<span class="mx-n p3" style="--v:{g}"></span>' for g in groups[1:]]
+    return "".join(parts)
+
+
+def load_card(records: int, period: str = "", secs: float | None = None) -> str:
+    """Kartu 'data dimuat': jumlah record & waktu proses menghitung naik saat pertama tampil."""
+    pills = []
+    if period:
+        pills.append(f'<span class="pill">Periode {esc(period)}</span>')
+    if secs is not None and secs >= 0.1:
+        whole, dec = int(secs), int(round((secs - int(secs)) * 10)) % 10
+        if round((secs - int(secs)) * 10) >= 10:
+            whole += 1
+        pills.append(f'<span class="pill">dimuat <span class="mx-n" style="--v:{whole}"></span>,'
+                     f'<span class="mx-n" style="--v:{dec}"></span> detik</span>')
+    return (f'<div class="mx-load"><div class="top"><span class="tick"><svg viewBox="0 0 24 24">'
+            f'<path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Data siap</div>'
+            f'<div class="big">{_count_html(records)}<small>transaksi</small></div>'
+            f'<div class="sub">{"".join(pills)}</div><div class="bar"></div></div>')
