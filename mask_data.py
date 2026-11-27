@@ -1,5 +1,5 @@
 """
-mask_data.py — Anonimisasi data transaksi hotel MTRAX sebelum dipakai dashboard.
+mask_data.py — Anonimisasi data transaksi hotel mtrax sebelum dipakai dashboard.
 
 Apa yang dilakukan:
   1. Hanya menyimpan 13 kolom yang dibutuhkan dashboard (whitelist).
@@ -180,7 +180,7 @@ def collect_files(inp: Path) -> list[Path]:
 # CLI
 # ---------------------------------------------------------------------------
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Anonimisasi data transaksi hotel untuk MTRAX")
+    ap = argparse.ArgumentParser(description="Anonimisasi data transaksi hotel untuk mtrax")
     ap.add_argument("--input", required=True, help="File atau folder data mentah")
     ap.add_argument("--output", help="File hasil (.xlsx). Default: mtrax_masked_<waktu>.xlsx")
     args = ap.parse_args(argv)
