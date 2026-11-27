@@ -2671,12 +2671,12 @@ def _xlsx(df, sheet, **fmt):
     return excel_bytes_with_formats(df, sheet[:31], **fmt)
 
 
-def _dl(label, df, sheet, fname, key, **fmt):
+def _dl(label, df, sheet, fname, key, width="content", **fmt):
     if can_download():
         snap = df.copy()
         st.download_button(label, lambda: _xlsx(snap, sheet, **fmt).getvalue(),
                            file_name=f"{fname}_{datetime.now():%Y%m%d}.xlsx",
-                           mime=XLSX_MIME, key=key)
+                           mime=XLSX_MIME, key=key, width=width)
 
 
 def _fig(fig, key, height=None):
@@ -2900,7 +2900,7 @@ def render_header():
 
 PAGE_ICONS = {
     "Overview": ":material/space_dashboard:", "Price Intelligence": ":material/sell:",
-    "Cost Avoidance": ":material/savings:", "Room Intelligence": ":material/hotel:",
+    "Cost Avoidance": ":material/savings:",
     "Sankey Flow": ":material/account_tree:", "Top Hotel/City": ":material/leaderboard:",
     "Cluster Analysis": ":material/hub:", "Patra Jasa": ":material/apartment:", "Reports": ":material/description:",
 }
@@ -3694,15 +3694,15 @@ def tab_laporan(df, data_sig=None):
         g["Rata-rata rate / malam (Rp)"] = (g["Spend (Rp)"] / g["Room night"].replace(0, np.nan)).round(0)
         return g.reset_index().sort_values("Room night", ascending=False)
 
-    reps = [("Ringkasan per hotel", "Hotel, kota, room night, spend, rata-rata rate per malam",
+    reps = [("Ringkasan per hotel", "Hotel, kota, room night, spend dan rata-rata rate per malam.",
              agg(r, ["Hotel Name", "City"]), "ringkasan_per_hotel"),
-            ("Ringkasan per kota", "Negara, kota, room night, spend, rata-rata rate per malam",
+            ("Ringkasan per kota", "Negara, kota, room night, spend dan rata-rata rate per malam.",
              agg(r, ["Country", "City"]), "ringkasan_per_kota")]
     if "Issue Time" in r:
         m = r.dropna(subset=["Issue Time"]).copy()
         m["Bulan"] = m["Issue Time"].dt.to_period("M").astype(str)
         m["Market"] = np.where(m["Country"].astype(str).str.upper().isin(DOMESTIC_ALIAS), "Domestik", "Internasional")
-        reps.append(("Tren bulanan", "Travel request, room night dan spend per bulan, domestik vs internasional",
+        reps.append(("Tren bulanan", "Travel request, room night dan spend per bulan, domestik vs internasional.",
                      agg(m, ["Bulan", "Market"]).sort_values(["Bulan", "Market"]), "tren_bulanan"))
     src = corp_source()
     if src is None or src.get("df") is None:
@@ -3718,14 +3718,14 @@ def tab_laporan(df, data_sig=None):
                 raise ValueError("belum ada booking yang cocok dengan corp rate")
             mm, corp, pools, s = res["m"], res["corp"], res["pools"], res["summary"]
             if not s.empty:
-                reps.append(("Cost avoidance per hotel & tipe kamar",
-                             "Booking termasuk sarapan · corp rate, rate dibayar, selisih, potensi avoidance, status",
+                reps.append(("Cost avoidance",
+                             "Per hotel & tipe kamar: corp rate, rate dibayar, selisih, potensi dan status daya saing.",
                              _cols(s, ["Hotel", "Kota", "Room type", "Meal plan", "Corp", "Rata-rata dibayar", "Selisih %",
                                        "RN", "Potensi", "Room Night < Corp %", "Posisi kota", "Daya saing"])
                              .rename(columns={"Corp": "Corp rate", "RN": "Room night"}), "cost_avoidance"))
             lk = res["leak100"]
             if not lk.empty:
-                reps.append(("Kebocoran non-kontrak", "Top 100 hotel non-kontrak dan potensi pengalihan",
+                reps.append(("Kebocoran non-kontrak", "100 hotel non-kontrak teratas dan potensi pengalihan ke hotel ber-corp rate.",
                              _cols(lk, ["Hotel", "Kota", "Room type", "Meal plan", "RN", "Rata-rata dibayar", "Setara",
                                         "Selisih %", "Potensi"]).rename(columns={"RN": "Room night",
                                                                                  "Setara": "Corp rate setara"}),
@@ -3733,27 +3733,41 @@ def tab_laporan(df, data_sig=None):
             md = ca.load_manual()
             rg = ca.renegotiation(s, pools, 40, dict(zip(md["key"].astype(str), pd.to_numeric(md["persen"], errors="coerce"))))
             if not rg.empty:
-                reps.append(("Target renegosiasi", "Target P40 kota / target turun manual dan hard savings",
+                reps.append(("Target renegosiasi", "Target rate P40 kota atau target manual, beserta hard savings.",
                              _cols(rg, ["Hotel", "Kota", "Room type", "Meal plan", "Daya saing", "Corp",
                                         "Target dipakai", "Sumber target", "Turun %", "RN", "Hard savings"])
                              .rename(columns={"Corp": "Corp rate", "RN": "Room night"}), "target_renegosiasi"))
         except Exception as e:
             st.caption(f"Laporan Cost Avoidance dilewati: {e}")
-    cols = st.columns(3)
-    for i, (title, desc, data, fname) in enumerate(reps):
-        with cols[i % 3]:
-            with st.container(border=True):
-                st.markdown(f"<div class='mx-h2' style='font-size:15px'>{ui.esc(title)}</div>"
-                            f"<div class='mx-h2sub'>{ui.esc(desc)}<br>{ui.fmt_int(len(data))} baris</div>",
-                            unsafe_allow_html=True)
-                if can_download():
-                    _dl("Unduh Excel", data, title, fname, f"lap_{fname}",
-                        money_cols=tuple(c for c in data.columns if "(Rp)" in c or c in
-                                         ("Corp rate", "Rata-rata dibayar", "Potensi", "Target dipakai", "Hard savings",
-                                          "Corp rate setara")),
-                        int_cols=tuple(c for c in data.columns if c in ("Room night", "Travel request", "RN")))
-                else:
-                    st.caption("Unduhan tidak tersedia untuk akun ini.")
+    icons = {"ringkasan_per_hotel": "hotel", "ringkasan_per_kota": "pin", "tren_bulanan": "trend",
+             "cost_avoidance": "coin", "kebocoran_non_kontrak": "leak", "target_renegosiasi": "target"}
+    groups = [("Ringkasan transaksi", "Agregat dari seluruh data transaksi pada periode terpilih",
+               ("ringkasan_per_hotel", "ringkasan_per_kota", "tren_bulanan")),
+              ("Cost avoidance", "Booking termasuk sarapan yang dibandingkan dengan corp rate",
+               ("cost_avoidance", "kebocoran_non_kontrak", "target_renegosiasi"))]
+    by = {fname: (title, desc, data) for title, desc, data, fname in reps}
+    allow = can_download()
+    for gtitle, gsub, names in groups:
+        items = [n for n in names if n in by]
+        if not items:
+            continue
+        st.markdown(f'<div class="mx-rep-g"><b>{ui.esc(gtitle)}</b><span>{ui.esc(gsub)}</span></div>',
+                    unsafe_allow_html=True)
+        cols = st.columns(3)
+        for i, fname in enumerate(items):
+            title, desc, data = by[fname]
+            with cols[i % 3]:
+                with st.container(border=True, key=f"rep_{fname}"):
+                    st.markdown(ui.report_card(title, desc, len(data), icons.get(fname, "file")),
+                                unsafe_allow_html=True)
+                    if allow:
+                        _dl("Unduh Excel", data, title, fname, f"lap_{fname}", width="stretch",
+                            money_cols=tuple(c for c in data.columns if "(Rp)" in c or c in
+                                             ("Corp rate", "Rata-rata dibayar", "Potensi", "Target dipakai",
+                                              "Hard savings", "Corp rate setara")),
+                            int_cols=tuple(c for c in data.columns if c in ("Room night", "Travel request", "RN")))
+                    else:
+                        st.caption("Unduhan tidak tersedia untuk akun ini.")
     ui.note("<b>Data per transaksi tidak bisa diunduh dari dashboard.</b> Kebutuhan data per booking diajukan lewat "
             "permintaan data dan disetujui atasan serta Pejabat Pelindungan Data Pribadi.")
     if is_super_admin():
@@ -3807,7 +3821,7 @@ def page_akses():
 
 
 # ---------------------------------------------------------------- navigasi halaman
-PAGES = ["Overview", "Price Intelligence", "Cost Avoidance", "Room Intelligence", "Sankey Flow",
+PAGES = ["Overview", "Price Intelligence", "Cost Avoidance", "Sankey Flow",
          "Top Hotel/City", "Cluster Analysis", "Patra Jasa", "Reports"]
 
 
@@ -3827,8 +3841,6 @@ def _render_page(page, df, pmap, data_sig):
                               username=st.session_state.get("username", ""), excel_fn=excel_bytes_with_formats,
                               standardize_name=standardize_name, normalize_city=_normalize_city_key,
                               corp_source=corp_source, data_sig=data_sig)
-    elif page == "Room Intelligence":
-        tab_room(df, pmap)
     elif page == "Sankey Flow":
         tab_sankey(df)
     elif page == "Top Hotel/City":
