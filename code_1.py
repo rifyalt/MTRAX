@@ -2907,6 +2907,8 @@ PAGE_ICONS = {
 
 
 # ---------------------------------------------------------------- tab: Dashboard
+_BULAN_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
+
 def tab_dashboard(df):
     c1, c2 = st.columns([2, 3])
     with c1:
@@ -2970,14 +2972,44 @@ def tab_dashboard(df):
     a, b = st.columns(2)
     with a:
         with st.container(border=True):
-            ui.section("Tren travel request bulanan")
+            ui.section("Tren travel request & room night bulanan", "Berdasarkan bulan Issue Time")
             if "Issue Time" in d and "Travel Request Number" in d:
-                m = d.dropna(subset=["Issue Time"]).assign(Bulan=lambda x: x["Issue Time"].dt.to_period("M").astype(str))
-                t = m.groupby("Bulan")["Travel Request Number"].nunique()
-                fig = go.Figure(go.Bar(x=list(t.index), y=list(t.values), marker_color=ui.P1,
-                                       hovertemplate="%{x}<br>%{y:,} TR<extra></extra>"))
-                fig.update_layout(yaxis=dict(gridcolor="#EDEDED"))
-                _fig(fig, "db_trend", 300)
+                m = d.dropna(subset=["Issue Time"]).assign(Bulan=lambda x: x["Issue Time"].dt.to_period("M"))
+                t = m.groupby("Bulan").agg(TR=("Travel Request Number", "nunique"),
+                                           RN=("Number of Rooms Night", "sum")).sort_index()
+                xs = [p_.to_timestamp() for p_ in t.index]
+                lbl = [f"{_BULAN_ID[p_.month - 1]} {p_.year}" for p_ in t.index]
+                green = "#5FA80C"
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=xs, y=t["TR"], name="Travel request", mode="lines+markers",
+                                         line=dict(color=ui.P1, width=2.5, shape="spline", smoothing=0.5),
+                                         marker=dict(size=6), customdata=lbl,
+                                         hovertemplate="%{y:,d} travel request<extra></extra>"))
+                fig.add_trace(go.Scatter(x=xs, y=t["RN"], name="Room night", mode="lines+markers", yaxis="y2",
+                                         line=dict(color=green, width=2.5, shape="spline", smoothing=0.5),
+                                         marker=dict(size=6), customdata=lbl,
+                                         hovertemplate="%{y:,d} room night<extra></extra>"))
+                def _nice(v, n=4):          # batas atas & langkah "bulat" agar garis bantu kedua sumbu sejajar
+                    import math
+                    raw = max(float(v), 1.0) * 1.08 / n
+                    mag = 10 ** math.floor(math.log10(raw))
+                    step = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
+                    return step * n, step
+                ltop, lstep = _nice(t["TR"].max())
+                rtop, rstep = _nice(t["RN"].max())
+                fig.update_layout(**ui.PLOTLY_LAYOUT)
+                fig.update_layout(
+                    height=320, showlegend=True, hovermode="x unified", separators=",.",
+                    legend=dict(orientation="h", y=1.12, x=0, xanchor="left"),
+                    xaxis=dict(tickvals=xs[::-(-len(xs) // 4) or 1], ticktext=lbl[::-(-len(xs) // 4) or 1], gridcolor="#F3F3F3", tickangle=0),
+                    yaxis=dict(title=dict(text="Travel request", font=dict(color=ui.P1)), gridcolor="#EDEDED",
+                               tickfont=dict(color=ui.P1), range=[0, ltop], dtick=lstep, tickformat=",d"),
+                    yaxis2=dict(title=dict(text="Room night", font=dict(color=green)), overlaying="y", side="right",
+                                tickfont=dict(color=green), range=[0, rtop], dtick=rstep, tickformat=",d",
+                                showgrid=False, tickmode="linear"),
+                    margin=dict(l=10, r=10, t=30, b=10))
+                st.plotly_chart(fig, width="stretch", key="db_trend", config={"displaylogo": False, "displayModeBar": False})
+                st.caption("Sumbu kiri (biru) = travel request unik · sumbu kanan (hijau) = room night.")
     with b:
         with st.container(border=True):
             ui.section("Waktu pengajuan travel request", "Porsi travel request per hari & jam (Issue Time)")
