@@ -31,7 +31,8 @@ import ui_kit as ui
 # KONFIGURASI
 # ---------------------------------------------------------------------------
 DEFAULT_TAX = 0.21                 # pajak + service bila corp rate belum termasuk
-STATUS_RULES = {                   # ambang status daya saing (bisa diubah)
+CORP_CHEAPER_PCT = 10              # Kompetitif bila corp rate minimal 10% lebih murah dari rata-rata dibayar
+STATUS_RULES = {                   # (lama) ambang posisi kota — dipakai untuk penjelasan Posisi kota
     "below_tidak": 25,             # % room night lebih murah dari corp rate  > 25  -> Tidak kompetitif
     "pos_tidak": 75,               # persentil corp rate di kota          > P75 -> Tidak kompetitif
     "below_tinjau": 10,            # >= 10%                                   -> Perlu ditinjau
@@ -560,14 +561,12 @@ def market_pools(b: pd.DataFrame) -> dict:
     return {k: g["_rate"].to_numpy() for k, g in b.groupby(["_city_key", "_rt", "_meal"])}
 
 
-def status_of(below_pct, pos) -> str:
-    r = STATUS_RULES
-    pos = -1 if pd.isna(pos) else pos
-    if below_pct > r["below_tidak"] or pos > r["pos_tidak"]:
+def status_of(corp, avg_paid) -> str:
+    """Kompetitif bila corp rate >= CORP_CHEAPER_PCT % lebih murah dari rata-rata rate yang dibayar;
+    selain itu Tidak kompetitif."""
+    if pd.isna(corp) or pd.isna(avg_paid) or avg_paid <= 0:
         return "Tidak kompetitif"
-    if below_pct >= r["below_tinjau"] or pos > r["pos_tinjau"]:
-        return "Perlu ditinjau"
-    return "Kompetitif"
+    return "Kompetitif" if corp <= avg_paid * (1 - CORP_CHEAPER_PCT / 100) else "Tidak kompetitif"
 
 
 def summarize_matched(m: pd.DataFrame, pools: dict) -> pd.DataFrame:
@@ -590,7 +589,7 @@ def summarize_matched(m: pd.DataFrame, pools: dict) -> pd.DataFrame:
     g["Room Night < Corp %"] = g["RN_below"] / g["RN"] * 100
     g["Posisi kota"] = [_market_percentile(pools, k, r, ml, v)
                         for k, r, ml, v in zip(g["_city_key"], g["_rt"], g["_meal"], g["Corp"])]
-    g["Daya saing"] = [status_of(bl, p) for bl, p in zip(g["Room Night < Corp %"], g["Posisi kota"])]
+    g["Daya saing"] = [status_of(c_, a_) for c_, a_ in zip(g["Corp"], g["Rata-rata dibayar"])]
     hotel_rn = g.groupby(["_hotel_key", "_city_key"])["RN"].transform("sum")
     g["_hotel_rn"] = hotel_rn
     g = g.rename(columns={"_rt": "Room type", "_meal": "Meal plan"})
@@ -992,7 +991,7 @@ def _cumulative_view(s: pd.DataFrame, topn: int, can_download: bool, excel_fn):
         ui.kpi("Kepatuhan rate", _pct((1 - rn_above / rn_tot) * 100) if rn_tot else "-",
                f"{rn_above:,.0f} dari {rn_tot:,.0f} room night di atas corp rate".replace(",", ".")),
         ui.kpi("Daya saing (hotel × tipe)", f"{vc.get('Kompetitif', 0)} kompetitif",
-               f"{vc.get('Perlu ditinjau', 0)} ditinjau · {vc.get('Tidak kompetitif', 0)} tidak"),
+               f"{vc.get('Tidak kompetitif', 0)} tidak kompetitif"),
     ], 200)
 
     with st.container(border=True):
@@ -1044,10 +1043,8 @@ def _cumulative_view(s: pd.DataFrame, topn: int, can_download: bool, excel_fn):
                                      dtick=20, gridcolor="#EDEDED", automargin=True))
         st.plotly_chart(fig, width="stretch", key="ca_cum", config={"displaylogo": False})
 
-        n_tab = min(n80, topn)
-        st.markdown(f"**{n_tab} hotel fokus** · penyumbang {CUM_TARGET}% room night"
-                    + (f" (ditampilkan {topn} teratas dari {n80} hotel)" if n80 > topn else
-                       f" · total {y80:.0f}%"))
+        n_tab = n80                 # semua hotel sampai kumulatif mencapai 80%
+        st.markdown(f"**{n_tab} hotel fokus** · kumulatif {y80:.1f}% room night".replace(".", ","))
         top = full.head(n_tab)[["Hotel", "Kota", "RN", "Kontribusi %", "Kumulatif %", "Tipe", "Potensi", "Selisih"]] \
             .rename(columns={"Potensi": "Potensi (Rp)", "RN": "Room night",
                              "Tipe": "Tipe kamar", "Selisih": "Selisih terbesar %"})
@@ -1105,9 +1102,9 @@ def _position_guide() -> str:
         "dari 70% sisanya. <b>Makin kecil angkanya, makin murah (makin bagus) corp rate-nya.</b><br>"
         f"&nbsp;&nbsp;– <b>P0–P25</b>: termasuk yang termurah di kota itu.<br>"
         f"&nbsp;&nbsp;– <b>P26–P{r['pos_tinjau']}</b>: setara harga pasar.<br>"
-        f"&nbsp;&nbsp;– <b>P{r['pos_tinjau'] + 1}–P{r['pos_tidak']}</b>: mulai mahal (Perlu ditinjau).<br>"
+        f"&nbsp;&nbsp;– <b>P{r['pos_tinjau'] + 1}–P{r['pos_tidak']}</b>: mulai mahal.<br>"
         f"&nbsp;&nbsp;– <b>P{r['pos_tidak'] + 1}–P100</b>: lebih mahal dari kebanyakan transaksi di kota itu "
-        "(Tidak kompetitif).<br>"
+        "(informasi tambahan, tidak menentukan status).<br>"
         f"&nbsp;&nbsp;– <b>\"-\"</b>: transaksi pembanding di kota itu kurang dari {MIN_MARKET_SAMPLE}, jadi belum bisa "
         "dinilai.")
 
@@ -1351,14 +1348,13 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             out = d[["Hotel", "Kota", "Room type", "Meal plan", "Corp", "Rata-rata dibayar", "Selisih %", "RN",
                      "Potensi", "Room Night < Corp %", "Posisi kota", "Daya saing"]].reset_index(drop=True)
             _detail_table(out)
-            R = STATUS_RULES
             with st.expander("Arti status, Room Night < Corp % dan Posisi kota", icon=":material/help:"):
                 st.markdown('<div class="mx-guide">'
-                f"• <span style='color:{COMPETITIVE_GREEN};font-weight:600'>Kompetitif (hijau)</span>: Room Night &lt; Corp % "
-                f"di bawah {R['below_tinjau']}% dan posisi paling tinggi P{R['pos_tinjau']}.<br>"
-                f"• <span style='color:{NOT_COMPETITIVE_RED};font-weight:600'>Tidak kompetitif (merah)</span>: Room Night "
-                f"&lt; Corp % di atas {R['below_tidak']}%, atau posisi di atas P{R['pos_tidak']}.<br>"
-                "• <b>Perlu ditinjau (abu)</b>: di antara keduanya.<br>"
+                f"• <span style='color:{COMPETITIVE_GREEN};font-weight:600'>Kompetitif (hijau)</span>: corp rate minimal "
+                f"{CORP_CHEAPER_PCT}% lebih murah dari rata-rata rate yang dibayar. Contoh: rata-rata dibayar Rp1.000.000, "
+                f"corp rate Rp900.000 atau lebih rendah.<br>"
+                f"• <span style='color:{NOT_COMPETITIVE_RED};font-weight:600'>Tidak kompetitif (merah)</span>: corp rate "
+                f"kurang dari {CORP_CHEAPER_PCT}% lebih murah, sama, atau lebih mahal dari rata-rata dibayar.<br>"
                 f"• <span style='color:{ui.MUTED};font-style:italic'>○ Belum ada corp rate</span>: tipe kamar dibeli di hotel "
                 "ber-kontrak tetapi tidak ada di kontrak. Ditampilkan sebagai informasi, <b>tidak dihitung</b> di potensi, "
                 "kepatuhan, grafik, maupun status. Layak diusulkan masuk kontrak bila room night-nya besar.<br>"
@@ -1393,9 +1389,8 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                 "- **Potensi avoidance** = Σ (rate dibayar per booking − corp rate) × room night, hanya booking di atas corp rate.\n"
                 f"- **Room Night < Corp %**: porsi room night yang lebih murah dari corp rate. **Posisi kota**: persentil corp rate "
                 f"terhadap rate dibayar tipe kamar & meal plan sama di kota yang sama (minimal {MIN_MARKET_SAMPLE} booking).\n"
-                f"- **Status**: Tidak kompetitif bila Room Night < Corp % > {STATUS_RULES['below_tidak']}% atau posisi > "
-                f"P{STATUS_RULES['pos_tidak']}; Perlu ditinjau bila ≥ {STATUS_RULES['below_tinjau']}% atau > "
-                f"P{STATUS_RULES['pos_tinjau']}.")
+                f"- **Status**: Kompetitif bila corp rate ≤ rata-rata dibayar × {(100 - CORP_CHEAPER_PCT) / 100:.2f} "
+                f"(minimal {CORP_CHEAPER_PCT}% lebih murah); selain itu Tidak kompetitif.")
 
     # ================= ANALISIS LANJUTAN =================
     with sub2:
@@ -1446,7 +1441,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
         ui.section("2 · Target renegosiasi corp rate")
         pct = st.slider("Target persentil (P20 agresif · P60 lunak)", 20, 60, pct, 5, key="ca_pct")
         if rg.empty:
-            st.info("Tidak ada corp rate berstatus Tidak kompetitif / Perlu ditinjau.")
+            st.info("Tidak ada corp rate berstatus Tidak kompetitif.")
         else:
             ed = rg[["_key", "Hotel", "Kota", "Room type", "Meal plan", "Daya saing", "Corp", "Target dipakai",
                      "Sumber target", "Turun %", "RN", "Hard savings", "Target turun manual (%)"]].copy()
