@@ -952,32 +952,33 @@ def run_analysis(df_all, data_sig, src, basis_flag, carry, standardize_name=None
                 corp_year)
 
 
-CUM_TARGET = 80   # % potensi yang dijadikan batas fokus
+CUM_TARGET = 80
+TABLE_TOP = 100   # maks. hotel fokus (kontribusi 80%) yang ditampilkan di tabel bawah grafik   # % potensi yang dijadikan batas fokus
 
 
 def hotel_cumulative(s: pd.DataFrame) -> pd.DataFrame:
-    """Potensi per hotel (gabungan semua tipe kamar), urut terbesar, dengan kontribusi & kumulatif %."""
-    x = s[s["Potensi"] > 0]
+    """Room night per hotel (gabungan semua tipe kamar ber-corp rate), urut terbesar, dengan kontribusi & kumulatif %."""
+    x = s[s["RN"] > 0]
     if x.empty:
         return pd.DataFrame()
     g = (x.groupby(["Hotel", "Kota"], dropna=False)
          .agg(Potensi=("Potensi", "sum"), RN=("RN", "sum"), Tipe=("Room type", "nunique"),
               Selisih=("Selisih %", "max"))
-         .reset_index().sort_values("Potensi", ascending=False).reset_index(drop=True))
-    tot = g["Potensi"].sum()
-    g["Kontribusi %"] = g["Potensi"] / tot * 100
+         .reset_index().sort_values(["RN", "Potensi"], ascending=False).reset_index(drop=True))
+    tot = g["RN"].sum()
+    g["Kontribusi %"] = g["RN"] / tot * 100
     g["Kumulatif %"] = g["Kontribusi %"].cumsum().clip(upper=100)
     g.index = g.index + 1
     return g
 
 
 def _cumulative_view(s: pd.DataFrame, topn: int, can_download: bool, excel_fn):
-    """Opsi 7: kurva kumulatif potensi cost avoidance per hotel + daftar hotel fokus."""
+    """Kurva kumulatif room night per hotel (Pareto 80%) + daftar hotel fokus."""
     import plotly.graph_objects as go
     import streamlit as st
     g = hotel_cumulative(s)
     if g.empty:
-        st.info("Tidak ada hotel yang dibayar di atas corp rate.")
+        st.info("Belum ada room night yang cocok dengan corp rate.")
         return
     n80 = int((g["Kumulatif %"] < CUM_TARGET).sum()) + 1
     n80 = min(n80, len(g))
@@ -985,9 +986,9 @@ def _cumulative_view(s: pd.DataFrame, topn: int, can_download: bool, excel_fn):
     rn_tot, rn_above = s["RN"].sum(), s["RN_above"].sum()
     vc = s["Daya saing"].value_counts()
     ui.kpi_row([
-        ui.kpi(f"Hotel penyumbang {CUM_TARGET}% potensi", f"{n80} dari {len(g)} hotel",
-               "fokus penegakan kontrak", dark=True),
-        ui.kpi("Potensi cost avoidance (gross)", _jt(tot), f"{topn} hotel teratas"),
+        ui.kpi(f"Hotel penyumbang {CUM_TARGET}% room night", f"{n80} dari {len(g)} hotel",
+               "fokus negosiasi & penegakan kontrak", dark=True),
+        ui.kpi("Potensi cost avoidance (gross)", _jt(tot), f"semua {len(g)} hotel ber-corp rate"),
         ui.kpi("Kepatuhan rate", _pct((1 - rn_above / rn_tot) * 100) if rn_tot else "-",
                f"{rn_above:,.0f} dari {rn_tot:,.0f} room night di atas corp rate".replace(",", ".")),
         ui.kpi("Daya saing (hotel × tipe)", f"{vc.get('Kompetitif', 0)} kompetitif",
@@ -995,45 +996,61 @@ def _cumulative_view(s: pd.DataFrame, topn: int, can_download: bool, excel_fn):
     ], 200)
 
     with st.container(border=True):
-        ui.section(f"Kumulatif potensi cost avoidance per hotel · {topn} hotel teratas",
-                   "Hotel diurutkan dari potensi terbesar · batang = kontribusi tiap hotel · garis = kumulatif")
+        shown = len(g)              # grafik: semua hotel
+        ui.section(f"Kumulatif room night per hotel · semua {shown} hotel",
+                   f"Hotel diurutkan dari room night terbesar · batang = porsi room night tiap hotel · garis = kumulatif "
+                   f"(dihitung dari total semua hotel) · garis putus merah = kontribusi {CUM_TARGET}%")
+        full = g
+        g = g.head(shown)
         idx = list(range(1, len(g) + 1))
         focus = [i <= n80 for i in idx]
         names = [f"{h} · {k}" if isinstance(k, str) and k else str(h) for h, k in zip(g["Hotel"], g["Kota"])]
-        custom = np.stack([names, [_jt(v) for v in g["Potensi"]], g["Tipe"].astype(int),
-                           g["Kumulatif %"].round(1)], axis=-1)
+        custom = np.stack([names, [f"{v:,.0f}".replace(",", ".") for v in g["RN"]], g["Tipe"].astype(int),
+                           g["Kumulatif %"].round(1), [_jt(v) for v in g["Potensi"]]], axis=-1)
         fig = go.Figure()
         fig.add_trace(go.Bar(x=idx, y=g["Kontribusi %"], name="Kontribusi hotel",
                              marker_color=[ui.P1 if f else ui.TINT for f in focus], customdata=custom,
-                             hovertemplate="#%{x} %{customdata[0]}<br>Potensi %{customdata[1]} · "
-                                           "%{y:.1f}% dari total<br>%{customdata[2]} tipe kamar di atas corp rate"
-                                           "<br>Kumulatif %{customdata[3]}%<extra></extra>"))
+                             hovertemplate="#%{x} %{customdata[0]}<br>%{customdata[1]} room night · "
+                                           "%{y:.1f}% dari total<br>%{customdata[2]} tipe kamar · potensi "
+                                           "%{customdata[4]}<br>Kumulatif %{customdata[3]}%<extra></extra>"))
         fig.add_trace(go.Scatter(x=idx, y=g["Kumulatif %"], name="Kumulatif", mode="lines",
                                  line=dict(color=ui.P3, width=2.5, shape="spline", smoothing=0.6),
                                  fill="tozeroy", fillcolor="rgba(13,127,204,0.07)", customdata=custom,
                                  hovertemplate="#%{x} %{customdata[0]}<br>Kumulatif %{y:.1f}%<extra></extra>"))
-        y80 = float(g["Kumulatif %"].iloc[n80 - 1])
-        fig.add_shape(type="line", x0=0.5, x1=n80, y0=y80, y1=y80, line=dict(color="#9A9A9A", dash="dash", width=1))
-        fig.add_shape(type="line", x0=n80, x1=n80, y0=0, y1=y80, line=dict(color="#9A9A9A", dash="dash", width=1))
-        fig.add_trace(go.Scatter(x=[n80], y=[y80], mode="markers", marker=dict(color=ui.RED_FILL, size=11),
-                                 hoverinfo="skip", showlegend=False))
-        fig.add_annotation(x=n80, y=y80, text=f"<b>{n80} hotel pertama = {y80:.0f}% potensi</b> → fokus di sini",
-                           showarrow=False, xanchor="left", yanchor="bottom", xshift=12, yshift=8,
-                           font=dict(size=13, color=ui.INK), bgcolor="rgba(255,255,255,0.85)")
+        y80 = float(full["Kumulatif %"].iloc[n80 - 1])
         span = max(len(g), 12)          # hotel sedikit -> batang tetap ramping
+        fig.add_shape(type="line", x0=0.4, x1=span + 0.6, y0=CUM_TARGET, y1=CUM_TARGET,
+                      line=dict(color=ui.RED_FILL, dash="dash", width=1.2))
+        fig.add_annotation(x=span + 0.6, y=CUM_TARGET, text=f"kontribusi {CUM_TARGET}%", showarrow=False,
+                           xanchor="right", yanchor="bottom", yshift=2, font=dict(size=11, color=ui.RED_FILL))
+        if n80 <= len(g):
+            fig.add_shape(type="line", x0=n80, x1=n80, y0=0, y1=y80, line=dict(color="#9A9A9A", dash="dash", width=1))
+            fig.add_trace(go.Scatter(x=[n80], y=[y80], mode="markers", marker=dict(color=ui.RED_FILL, size=11),
+                                     hoverinfo="skip", showlegend=False))
+            fig.add_annotation(x=n80, y=y80, text=f"<b>{n80} hotel pertama = {y80:.0f}% room night</b> → fokus di sini",
+                               showarrow=False, xanchor="left", yanchor="top", xshift=12, yshift=-8,
+                               font=dict(size=13, color=ui.INK), bgcolor="rgba(255,255,255,0.85)")
+        else:
+            fig.add_annotation(x=span + 0.6, y=CUM_TARGET, showarrow=False, xanchor="right",
+                               yanchor="top", yshift=-4, font=dict(size=12, color=ui.INK), bgcolor="rgba(255,255,255,0.85)",
+                               text=f"{CUM_TARGET}% baru tercapai di hotel ke-{n80} (di luar {shown} teratas)")
         fig.update_layout(height=400, bargap=0.25, showlegend=False,
                           **{k: v for k, v in ui.PLOTLY_LAYOUT.items() if k not in ("xaxis", "yaxis", "margin")},
                           margin=dict(l=64, r=24, t=34, b=56),
-                          xaxis=dict(title="Jumlah hotel (urut dari potensi terbesar)", gridcolor="#EDEDED",
-                                     range=[0.4, span + 0.6], tick0=1, dtick=max(1, round(span / 10)),
+                          xaxis=dict(title="Jumlah hotel (urut dari room night terbesar)", gridcolor="#EDEDED",
+                                     range=[0.4, span + 0.6], tick0=1 if span < 20 else 0, dtick=next(d for d in (1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000) if d >= span / 10),
                                      tickformat="d", automargin=True),
-                          yaxis=dict(title="% dari total potensi", range=[0, 105], ticksuffix="%",
+                          yaxis=dict(title="% dari total room night", range=[0, 105], ticksuffix="%",
                                      dtick=20, gridcolor="#EDEDED", automargin=True))
         st.plotly_chart(fig, width="stretch", key="ca_cum", config={"displaylogo": False})
 
-        st.markdown(f"**{n80} hotel fokus** · penyumbang {y80:.0f}% potensi")
-        top = g.head(n80).rename(columns={"Potensi": "Potensi (Rp)", "RN": "Room night",
-                                          "Tipe": "Tipe kamar di atas corp", "Selisih": "Selisih terbesar %"})
+        n_tab = min(n80, topn)
+        st.markdown(f"**{n_tab} hotel fokus** · penyumbang {CUM_TARGET}% room night"
+                    + (f" (ditampilkan {topn} teratas dari {n80} hotel)" if n80 > topn else
+                       f" · total {y80:.0f}%"))
+        top = full.head(n_tab)[["Hotel", "Kota", "RN", "Kontribusi %", "Kumulatif %", "Tipe", "Potensi", "Selisih"]] \
+            .rename(columns={"Potensi": "Potensi (Rp)", "RN": "Room night",
+                             "Tipe": "Tipe kamar", "Selisih": "Selisih terbesar %"})
         show = top.copy()
         show["Potensi (Rp)"] = show["Potensi (Rp)"].map(_jt)
         show["Room night"] = show["Room night"].map(lambda v: f"{v:,.0f}".replace(",", "."))
@@ -1041,15 +1058,16 @@ def _cumulative_view(s: pd.DataFrame, topn: int, can_download: bool, excel_fn):
             show[c] = show[c].map(lambda v: _pct(v, c.startswith("Selisih")))
         st.dataframe(show, width="stretch", height=min(420, 36 * len(show) + 40))
         if can_download:
-            st.download_button("Unduh Excel", _excel(g.rename(columns={"Potensi": "Potensi (Rp)", "RN": "Room night",
-                                                                       "Tipe": "Tipe kamar di atas corp",
-                                                                       "Selisih": "Selisih terbesar %"}).reset_index(names="Peringkat"),
-                                                     "Kumulatif potensi", excel_fn,
+            xl = full[["Hotel", "Kota", "RN", "Kontribusi %", "Kumulatif %", "Tipe", "Potensi", "Selisih"]]
+            st.download_button("Unduh Excel (semua hotel)", _excel(xl.rename(columns={"Potensi": "Potensi (Rp)", "RN": "Room night",
+                                                                        "Tipe": "Tipe kamar",
+                                                                        "Selisih": "Selisih terbesar %"}).reset_index(names="Peringkat"),
+                                                     "Kumulatif room night", excel_fn,
                                                      money_cols=("Potensi (Rp)",), int_cols=("Room night",),
                                                      dec_cols=("Selisih terbesar %", "Kontribusi %", "Kumulatif %")),
-                               file_name=f"kumulatif_potensi_hotel_{datetime.now():%Y%m%d}.xlsx",
+                               file_name=f"kumulatif_room_night_hotel_{datetime.now():%Y%m%d}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ca_dl_cum")
-    _chart_guide(g, n80, y80)
+    _chart_guide(full, n80, y80)
 
 
 def _chart_guide(g: pd.DataFrame, n80: int, y80: float):
@@ -1057,23 +1075,24 @@ def _chart_guide(g: pd.DataFrame, n80: int, y80: float):
     import streamlit as st
     with st.expander("Cara membaca grafik", icon=":material/help:"):
         st.markdown('<div class="mx-guide">'
-                    "• Setiap <b>batang</b> = satu hotel (semua tipe kamarnya digabung), diurutkan dari potensi cost "
-                    "avoidance terbesar ke terkecil. Tinggi batang = porsi hotel itu dari total potensi. Arahkan kursor "
-                    "untuk melihat nama hotel, nilai rupiah, dan jumlah tipe kamar yang dibayar di atas corp rate.<br>"
-                    "• <b>Garis biru</b> = potensi yang terkumpul bila hotel ditangani berurutan dari atas. Garis naik "
-                    "tajam di awal lalu mendatar: sebagian kecil hotel menyumbang sebagian besar potensi.<br>"
+                    "• Setiap <b>batang</b> = satu hotel (semua tipe kamar ber-corp rate digabung), diurutkan dari "
+                    "room night terbesar ke terkecil. Tinggi batang = porsi hotel itu dari total room night. Arahkan "
+                    "kursor untuk melihat nama hotel, jumlah room night, jumlah tipe kamar, dan potensi cost avoidance-nya.<br>"
+                    "• <b>Garis biru</b> = room night yang terkumpul bila hotel dihitung berurutan dari atas. Garis naik "
+                    "tajam di awal lalu mendatar: sebagian kecil hotel menampung sebagian besar room night.<br>"
                     f"• <b>Titik merah</b> = batas {CUM_TARGET}%. Hotel di sebelah kiri titik (batang biru tua) adalah "
-                    "hotel fokus: menegakkan corp rate di hotel-hotel ini menutup sebagian besar potensi. Hotel di "
-                    "kanan (batang biru muda) nilainya kecil, cukup dipantau.<br>"
-                    "• <b>Potensi</b> = selisih rate dibayar di atas corp rate × room night, hanya untuk booking termasuk "
-                    "sarapan. Rincian per tipe kamar ada di tabel <b>Detail per hotel &amp; tipe kamar</b> di bawah."
+                    "hotel fokus: volume terbesar ada di sini, jadi kepatuhan dan negosiasi corp rate di hotel-hotel ini "
+                    "paling berdampak. Hotel di kanan (batang biru muda) volumenya kecil, cukup dipantau.<br>"
+                    "• Hanya booking termasuk sarapan yang punya corp rate. Rincian per tipe kamar ada di tabel "
+                    "<b>Detail per hotel &amp; tipe kamar</b> di bawah."
                     "</div>", unsafe_allow_html=True)
     top3 = g.head(3)
-    ui.note(f"<b>Ringkasnya:</b> {n80} dari {len(g)} hotel menyumbang {y80:.0f}% dari total potensi "
-            f"<b>{_jt(g['Potensi'].sum())}</b>. Tiga terbesar: " +
-            ", ".join(f"{ui.esc(r['Hotel'])} ({_jt(r['Potensi'])}, {r['Kontribusi %']:.0f}%)".replace(".", ",")
+    rn = lambda v: f"{v:,.0f}".replace(",", ".")
+    ui.note(f"<b>Ringkasnya:</b> {n80} dari {len(g)} hotel menyumbang {y80:.0f}% dari total "
+            f"<b>{rn(g['RN'].sum())} room night</b>. Tiga terbesar: " +
+            ", ".join(f"{ui.esc(r['Hotel'])} ({rn(r['RN'])} RN, {r['Kontribusi %']:.0f}%)"
                       for _, r in top3.iterrows()) +
-            f". Mulai penegakan kontrak dari {n80} hotel ini.")
+            f". Prioritaskan kepatuhan dan negosiasi corp rate di {n80} hotel ini.")
 
 
 def _position_guide() -> str:
@@ -1295,14 +1314,13 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
 
     # ================= RINGKASAN =================
     with sub1:
-        topn = st.columns([1, 4])[0].selectbox("Hotel teratas (room night)", [25, 50, 100], index=2, key="ca_topn")
-        s = top_hotels(summary, topn)
+        s = summary.copy()          # semua hotel ber-corp rate; tabel fokus maks. TABLE_TOP hotel
         if s.empty:
             st.info("Belum ada booking yang cocok dengan daftar corp rate.")
         else:
-            _cumulative_view(s, topn, can_download, excel_fn)
+            _cumulative_view(s, TABLE_TOP, can_download, excel_fn)
 
-            h1, h3, h2 = st.columns([2.2, 1.6, 1], vertical_alignment="bottom")
+            h1, h3, h2 = st.columns([1.6, 2.2, 1], vertical_alignment="bottom")
             h1.markdown("**Detail per hotel & tipe kamar**")
             show_nc = h3.toggle("Tampilkan tipe kamar yang belum ada corp rate", value=True, key="ca_show_nocorp",
                                 help="Tipe kamar yang dibeli di hotel ber-kontrak tetapi tidak punya corp rate. "
