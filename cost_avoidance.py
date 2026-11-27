@@ -1,5 +1,5 @@
 """
-cost_avoidance.py — Tab "Cost Avoidance" MTRAX.
+cost_avoidance.py — Tab "Cost Avoidance" mtrax.
 
 Membandingkan rate per malam yang dibayar (Invoice Amount ÷ Number of Rooms Night,
 sudah dalam Rupiah) dengan daftar corporate rate per hotel × tipe kamar × meal plan.
