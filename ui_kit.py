@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.27-g"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.27-h"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -294,6 +294,17 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
   padding-top:10px; border-top:1px solid #EFEFEF; font-variant-numeric:tabular-nums; }}
 [class*="st-key-rep_"] {{ background:#fff; transition:border-color .15s, box-shadow .15s; }}
 [class*="st-key-rep_"]:hover {{ border-color:#BFE3F6 !important; box-shadow:0 4px 14px rgba(13,127,204,.08); }}
+/* ---- daftar kota di samping peta (Overview) ---- */
+.mx-maplist {{ font-size:12.5px; color:var(--ink); padding-top:6px; }}
+.mx-maplist > b {{ display:block; font-size:13px; font-weight:600; margin-bottom:6px; }}
+.mx-maplist .r {{ display:grid; grid-template-columns:18px minmax(0,1fr) auto; align-items:center; column-gap:8px;
+  row-gap:4px; padding:6px 0; border-bottom:1px solid #F3F3F3; }}
+.mx-maplist .n {{ color:#9A9A9A; text-align:right; font-size:11.5px; }}
+.mx-maplist .c {{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.mx-maplist .b {{ grid-column:2 / 4; height:4px; background:#F0F4F7; border-radius:2px; overflow:hidden; }}
+.mx-maplist .b i {{ display:block; height:100%; background:var(--p1, #1BA0E2); border-radius:3px; }}
+.mx-maplist .v {{ text-align:right; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }}
+.mx-maplist .ft {{ font-size:11.5px; color:#8A8A8A; margin-top:8px; line-height:1.4; }}
 .mx-n {{ counter-reset: c var(--v); animation: mxCount 1.3s cubic-bezier(.15,.8,.25,1) both; }}
 .mx-n::after {{ content: counter(c); }}
 .mx-n.p3::after {{ content: counter(c, mxpad3); }}
