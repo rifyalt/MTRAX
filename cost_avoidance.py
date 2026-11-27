@@ -1159,9 +1159,10 @@ def _detail_table(out):
         if col.name == "Corp rate":
             return [f"color:{st_col[v]};font-weight:600" if v in ("Kompetitif", "Tidak kompetitif") else ""
                     for v in status]
-        if col.name == "Selisih %":   # dibayar di atas corp = merah, di bawah = hijau
-            return [f"color:{NOT_COMPETITIVE_RED}" if v > 0 else
-                    (f"color:{COMPETITIVE_GREEN}" if _NA_SENT < v < 0 else f"color:{ui.MUTED}" if v == _NA_SENT else "")
+        if col.name == "Selisih %":   # + = corp rate lebih murah dari rata-rata dibayar (hijau), - = lebih mahal (merah)
+            return [f"color:{COMPETITIVE_GREEN};font-weight:600" if v > 0 else
+                    (f"color:{NOT_COMPETITIVE_RED};font-weight:600" if _NA_SENT < v < 0 else
+                     f"color:{ui.MUTED}" if v == _NA_SENT else "")
                     for v in col]
         return [""] * len(col)
 
@@ -1180,7 +1181,7 @@ def _detail_table(out):
             "Corp rate": st.column_config.Column("Corp rate"),
             "Rata-rata dibayar": st.column_config.Column("Rata-rata dibayar"),
             "Selisih %": st.column_config.Column("Selisih", width="small",
-                                                 help="Rata-rata dibayar dibanding corp rate. + = dibayar di atas corp rate."),
+                                                 help="Rata-rata dibayar dibanding corp rate. + (hijau) = corp rate lebih murah; − (merah) = corp rate lebih mahal."),
             "Room night": st.column_config.Column("RN", width="small", help="Room night"),
             "Status": st.column_config.TextColumn("Daya saing"),
         })
@@ -1359,8 +1360,10 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                 f"• <span style='color:{ui.MUTED};font-style:italic'>○ Belum ada corp rate</span>: tipe kamar dibeli di hotel "
                 "ber-kontrak tetapi tidak ada di kontrak. Ditampilkan sebagai informasi, <b>tidak dihitung</b> di potensi, "
                 "kepatuhan, grafik, maupun status. Layak diusulkan masuk kontrak bila room night-nya besar.<br>"
-                "<b>Selisih</b> = rata-rata rate dibayar dibanding corp rate. Tanda + berarti rata-rata dibayar lebih "
-                "mahal dari corp rate.</div>", unsafe_allow_html=True)
+                f"<b>Selisih</b> = rata-rata rate dibayar dibanding corp rate. <span style='color:{COMPETITIVE_GREEN};font-weight:600'>"
+                "+ (hijau)</span> = corp rate lebih murah dari yang biasa dibayar; "
+                f"<span style='color:{NOT_COMPETITIVE_RED};font-weight:600'>− (merah)</span> = corp rate lebih mahal."
+                "</div>", unsafe_allow_html=True)
             if can_download:
                 st.download_button("Unduh Excel", _excel(out.drop(columns=["Posisi kota", "Potensi", "Room Night < Corp %"]).rename(columns={"Corp": "Corp rate", "RN": "Room night"}).pipe(lambda x: x.insert(0, "No.", range(1, len(x) + 1)) or x),
                                    "Cost Avoidance", excel_fn,
