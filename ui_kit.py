@@ -499,3 +499,124 @@ def load_card(records: int, period: str = "", secs: float | None = None) -> str:
             f'<path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Data siap</div>'
             f'<div class="big">{_count_html(records)}<small>transaksi</small></div>'
             f'<div class="sub">{"".join(pills)}</div><div class="bar"></div></div>')
+
+
+# ---------------------------------------------------------------------------
+# KARTU STATUS KONEKSI (sidebar) — diukur di browser pengguna
+# ---------------------------------------------------------------------------
+NET_CARD_HEIGHT = 150
+
+
+def net_card_html(server_ip: str = "", drive: dict | None = None) -> str:
+    """Kartu minimalis status koneksi: kestabilan (ping ke server MTRAX), kecepatan unduh, IP & Google Drive.
+    Diukur di browser; hasil disimpan 5 menit di sessionStorage agar tidak mengulang tes."""
+    import json as _json
+    ip = server_ip if isinstance(server_ip, str) else ""
+    d = drive if isinstance(drive, dict) else {}
+    d = {k: (v if isinstance(v, (str, int, float)) else str(v)) for k, v in d.items()}
+    cfg = _json.dumps({"ip": ip, "drive": d}).replace("</", "<\\/")
+    return """<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Inter,"Source Sans Pro",system-ui,sans-serif;color:#434343;background:transparent}
+.card{border:1px solid #DEDEDE;border-radius:10px;background:#fff;padding:10px 12px}
+.hd{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600}
+.dot{width:7px;height:7px;border-radius:50%;background:#BDBDBD;flex:0 0 7px}
+.ok .dot{background:#3B7A0B}.mid .dot{background:#E0A800}.bad .dot{background:#D61B54}
+.run .dot{animation:blink 1s infinite}@keyframes blink{50%{opacity:.25}}
+#st{flex:1}
+.re{appearance:none;border:0;background:none;color:#6B6B6B;cursor:pointer;width:20px;height:20px;border-radius:6px;
+ display:inline-flex;align-items:center;justify-content:center}
+.re:hover{background:#F0F0F0;color:#0C79C2}.re:disabled{cursor:wait}
+.re svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round}
+.run .re svg{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+.nums{display:grid;grid-template-columns:repeat(3,1fr);margin-top:8px}
+.n{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1;white-space:nowrap}
+.n span{font-size:10px;font-weight:400;color:#6B6B6B;margin-left:2px}
+.l{font-size:10px;color:#6B6B6B;margin-top:2px}
+.bars{display:flex;align-items:flex-end;gap:2px;height:14px;margin-top:8px}
+.bars i{flex:1;border-radius:1px;background:#EDEDED;height:20%;transition:height .3s,background .3s}
+.meta{margin-top:8px;font-size:10.5px;color:#6B6B6B;line-height:1.55}
+.meta b{font-weight:500;color:#434343}
+.ip{font-family:ui-monospace,Menlo,Consolas,monospace;cursor:pointer;border-bottom:1px dotted #BDBDBD}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body>
+<div class="card">
+ <div class="hd run" id="hd"><span class="dot"></span><span id="st">Mengukur koneksi…</span>
+  <button class="re" id="re" title="Tes ulang"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button></div>
+ <div class="nums">
+  <div><div class="n" id="lat">–</div><div class="l">Latensi</div></div>
+  <div><div class="n" id="spd">–</div><div class="l">Unduh</div></div>
+  <div><div class="n" id="jit">–</div><div class="l">Jitter</div></div>
+ </div>
+ <div class="bars" id="bars"></div>
+ <div class="meta">IP <b class="ip" id="ip" title="Klik untuk tampilkan/sembunyikan">–</b><span id="net"></span><br>
+  Cloud Drive <b id="drv">–</b></div>
+</div>
+<script>
+const CFG = __CFG__;
+const N = 10, KEY = "mtrax_net_v1", TTL = 5*60*1000;
+const $ = id => document.getElementById(id);
+const bars = $("bars"); for (let i=0;i<N;i++) bars.appendChild(document.createElement("i"));
+let ipFull = CFG.ip || "", ipShown = false;
+function mask(ip){ if(!ip) return "–"; if(ip.includes(":")) return ip.split(":").slice(0,2).join(":")+":••••";
+  const p=ip.split("."); return p.length===4? p[0]+"."+p[1]+".•••.•••" : ip; }
+function drawIp(){ $("ip").textContent = ipShown? (ipFull||"–") : mask(ipFull); }
+$("ip").onclick = () => { ipShown=!ipShown; drawIp(); };
+function drive(){ const d=CFG.drive||{};
+  $("drv").textContent = !d.state ? "tidak diatur" :
+    d.state==="ok" ? "tersambung · "+String(d.secs).replace(".",",")+" detik" : "gagal";
+  if(d.msg) $("drv").title=d.msg; }
+function base(){ try{ const L=window.parent.location; return L.origin + L.pathname.replace(/[^\\/]*$/,""); }catch(e){ return null; } }
+async function ping(url){ const t=performance.now();
+  const r=await fetch(url+(url.includes("?")?"&":"?")+"t="+Math.random(),{cache:"no-store"});
+  if(!r.ok) throw 0; await r.text(); return performance.now()-t; }
+function colorFor(ms){ return ms<100?"#9CC9E8":ms<250?"#E0A800":"#D61B54"; }
+function setBar(i,ms){ const b=bars.children[i];
+  if(ms==null){ b.style.height="100%"; b.style.background="#D61B54"; return; }
+  b.style.height=Math.max(20,Math.min(100,ms/4))+"%"; b.style.background=colorFor(ms); }
+function setSpeed(m){ $("spd").innerHTML = m==null? "–" :
+  (m>=10? Math.round(m) : m.toFixed(1).replace(".",",")) + "<span>Mbps</span>"; }
+function status(lat,jit,loss){ let cls="ok", txt="stabil";
+  if(lat==null || loss>=3 || lat>400 || jit>120){cls="bad";txt="tidak stabil";}
+  else if(loss>=1 || lat>=150 || jit>=40){cls="mid";txt="kurang stabil";}
+  $("hd").className="hd "+cls; $("st").textContent="Koneksi "+txt; }
+function render(r){ (r.rtts||[]).forEach((v,i)=>setBar(i,v));
+  $("lat").innerHTML = r.lat==null? "–" : Math.round(r.lat)+"<span>ms</span>";
+  $("jit").innerHTML = (r.jit==null? "–" : Math.round(r.jit)+"<span>ms</span>") + (r.loss? "<span>· "+r.loss+" gagal</span>" : "");
+  setSpeed(r.mbps); status(r.lat,r.jit,r.loss);
+  if(r.ip){ ipFull=r.ip; drawIp(); }
+  const c=navigator.connection, parts=[];
+  if(c && c.effectiveType) parts.push(c.effectiveType.toUpperCase());
+  if(r.colo) parts.push("CDN "+r.colo);
+  $("net").textContent = parts.length? " · "+parts.join(" · ") : ""; }
+async function run(force){
+  if(!force){ try{ const s=JSON.parse(window.parent.sessionStorage.getItem(KEY)||"null");
+    if(s && Date.now()-s.at<TTL){ render(s); return; } }catch(e){} }
+  $("re").disabled=true; $("hd").className="hd run"; $("st").textContent="Mengukur koneksi…";
+  for(const b of bars.children){ b.style.height="20%"; b.style.background="#EDEDED"; }
+  setSpeed(null);
+  const b=base(), urls=[]; if(b) urls.push(b+"_stcore/health"); urls.push("/_stcore/health");
+  let url=null; for(const u of urls){ try{ await ping(u); url=u; break; }catch(e){} }
+  const rtts=[]; let loss=0;
+  for(let i=0;i<N;i++){ let v=null; if(url){ try{ v=await ping(url); }catch(e){ v=null; } }
+    if(v==null) loss++; rtts.push(v); setBar(i,v); await new Promise(r=>setTimeout(r,120)); }
+  const ok=rtts.filter(v=>v!=null).sort((a,b)=>a-b);
+  const lat= ok.length? ok[Math.floor(ok.length/2)] : null;
+  let jit=null; const seq=rtts.filter(v=>v!=null);
+  if(seq.length>1){ const d=[]; for(let i=1;i<seq.length;i++) d.push(Math.abs(seq[i]-seq[i-1]));
+    d.sort((a,b)=>a-b); jit=d[Math.floor(d.length/2)]; }   // median: satu lonjakan tidak langsung dianggap tidak stabil
+  let ip=null, colo=null;
+  try{ const t=await (await fetch("https://speed.cloudflare.com/cdn-cgi/trace",{cache:"no-store"})).text();
+    const m=Object.fromEntries(t.trim().split("\\n").map(l=>l.split("="))); ip=m.ip||null; colo=m.colo||null; }catch(e){}
+  let mbps=null;
+  try{ const t0=performance.now();
+    const r=await fetch("https://speed.cloudflare.com/__down?bytes=2000000&r="+Math.random(),{cache:"no-store"});
+    const buf=await r.arrayBuffer(); const sec=(performance.now()-t0)/1000;
+    mbps=(buf.byteLength*8/1e6)/Math.max(sec,0.05);
+  }catch(e){ const c=navigator.connection; if(c && c.downlink) mbps=c.downlink; }
+  const res={at:Date.now(),rtts,lat,jit,loss,mbps,ip,colo};
+  try{ window.parent.sessionStorage.setItem(KEY, JSON.stringify(res)); }catch(e){}
+  render(res); }
+$("re").onclick=()=>run(true).finally(()=>{$("re").disabled=false;});
+drawIp(); drive(); run(false).finally(()=>{$("re").disabled=false;});
+</script></body></html>""".replace("__CFG__", cfg)
