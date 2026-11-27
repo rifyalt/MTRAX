@@ -239,7 +239,7 @@ def check_session_timeout():
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             _clear_session_cookie()
-            st.warning("Session expired. Please login again.")
+            st.warning("Sesi berakhir. Silakan login lagi.")
             st.stop()
 
 
@@ -382,13 +382,13 @@ def get_greeting():
     hour = now.hour
 
     if hour < 11:
-        greet = "Good Morning"
+        greet = "Selamat pagi"
     elif hour < 15:
-        greet = "Good Afternoon"
+        greet = "Selamat siang"
     elif hour < 18:
-        greet = "Good Evening"
+        greet = "Selamat sore"
     else:
-        greet = "Good Night"
+        greet = "Selamat malam"
 
     return greet, now
 
@@ -1127,16 +1127,16 @@ def tab_date_range_filter(df: pd.DataFrame, date_col, key_prefix: str, col_from,
     _lbl = ("<div style='font-size:0.72em;font-weight:600;color:#6a8fa0;text-transform:uppercase;"
             "letter-spacing:0.08em;margin-bottom:6px;'>{}</div>")
     with col_from:
-        st.markdown(_lbl.format(f"From · {date_col}"), unsafe_allow_html=True)
-        d_from = st.date_input("from", min_value=mn, max_value=mx, key=k_from,
+        st.markdown(_lbl.format(f"Dari · {date_col}"), unsafe_allow_html=True)
+        d_from = st.date_input("Dari", min_value=mn, max_value=mx, key=k_from,
                                format="YYYY/MM/DD", label_visibility="collapsed")
     with col_to:
-        st.markdown(_lbl.format("To"), unsafe_allow_html=True)
-        d_to = st.date_input("to", min_value=mn, max_value=mx, key=k_to,
+        st.markdown(_lbl.format("Sampai"), unsafe_allow_html=True)
+        d_to = st.date_input("Sampai", min_value=mn, max_value=mx, key=k_to,
                              format="YYYY/MM/DD", label_visibility="collapsed")
 
     if d_from > d_to:
-        st.warning("Tanggal 'From' lebih besar dari 'To'. Filter tanggal tab ini diabaikan.")
+        st.warning("Tanggal 'Dari' lebih besar dari 'Sampai'. Filter tanggal tab ini diabaikan.")
         return df, f"{mn:%d %b %Y} – {mx:%d %b %Y}"
 
     mask = (_dates.dt.date >= d_from) & (_dates.dt.date <= d_to)
@@ -1274,7 +1274,7 @@ def is_demo_user():
 
 
 def is_admin() -> bool:
-    """Super Admin & Admin: upload Excel, kelola corp rate & target manual renegosiasi."""
+    """Super Admin & Admin: unggah Excel, kelola corp rate & target manual renegosiasi."""
     return st.session_state.get("role") in ("Super Admin", "Admin")
 
 
@@ -2393,7 +2393,7 @@ def login_page():
     current_time = time.time()
     if current_time < st.session_state.lockout_until:
         remaining_lock = int(st.session_state.lockout_until - current_time)
-        st.error(f"Too many failed attempts. Try again in {remaining_lock} seconds.")
+        st.error(f"Terlalu banyak percobaan gagal. Coba lagi dalam {remaining_lock} detik.")
         st.stop()
 
     # Load logo
@@ -2509,11 +2509,11 @@ def login_page():
         <div class="lg-top"></div>
         <div class="lg-hero">
             <div class="lg-rule"></div>
-            <h1 class="lg-title">Corporate Travel<br>Analytics</h1>
-            <p class="lg-sub">Corporate Travel Analytics Platform —
-               hotel spend, corporate rate compliance and savings in one place.</p>
+            <h1 class="lg-title">Analitik<br>Perjalanan Dinas</h1>
+            <p class="lg-sub">Platform analitik perjalanan dinas —
+               spend hotel, kepatuhan corporate rate, dan penghematan dalam satu tempat.</p>
         </div>
-        <div class="lg-foot">No employee identity data · every access is logged</div>
+        <div class="lg-foot">Tanpa data identitas pekerja · setiap akses tercatat</div>
     </div>
     <div class="lg-form-panel"></div>
     <div class="lg-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2026 MTRAX · PT Mitra Tours And Travel</a> · v2026.11.25-PDP</div>
@@ -2523,8 +2523,8 @@ def login_page():
     with col_form:
         st.markdown(f"""
         {wordmark}
-        <div class="lg-h">Welcome back</div>
-        <div class="lg-p">Log in to your MTRAX account.</div>
+        <div class="lg-h">Selamat datang kembali</div>
+        <div class="lg-p">Masuk ke akun MTRAX Anda.</div>
         <div class="lg-label">Username</div>
         """, unsafe_allow_html=True)
 
@@ -2532,18 +2532,18 @@ def login_page():
         # langsung men-submit login (form_submit_button otomatis ter-trigger oleh Enter),
         # tanpa harus mengklik tombol LOG IN secara manual.
         with st.form("login_form", clear_on_submit=False):
-            username = st.text_input("_u", placeholder="Enter username",
+            username = st.text_input("_u", placeholder="Masukkan username",
                                      label_visibility="collapsed", key="login_username")
             st.markdown('<div class="lg-label pw">Password</div>', unsafe_allow_html=True)
-            password = st.text_input("_p", type="password", placeholder="Enter password",
+            password = st.text_input("_p", type="password", placeholder="Masukkan password",
                                      label_visibility="collapsed", key="login_password")
-            submitted = st.form_submit_button("Log in", width="stretch")
-        st.markdown('<div class="lg-note">Accounts with 2FA will be asked for a code from the authenticator app.</div>',
+            submitted = st.form_submit_button("Masuk", width="stretch")
+        st.markdown('<div class="lg-note">Akun dengan 2FA akan diminta kode dari aplikasi authenticator.</div>',
                     unsafe_allow_html=True)
 
         if submitted:
             if not validate_username(username):
-                st.error("Invalid username format.")
+                st.error("Format username tidak valid.")
                 return
             _wait = _user_locked(username)
             if _wait > 0:
@@ -2582,10 +2582,10 @@ def login_page():
             if st.session_state.login_attempts >= MAX_LOGIN_ATTEMPTS:
                 st.session_state.lockout_until  = time.time() + LOCKOUT_SECONDS
                 st.session_state.login_attempts = 0
-                st.error("Too many failed attempts. Account temporarily locked.")
+                st.error("Terlalu banyak percobaan gagal. Akun dikunci sementara.")
             else:
                 remaining_attempts = MAX_LOGIN_ATTEMPTS - st.session_state.login_attempts
-                st.error(f"Login failed. {remaining_attempts} attempt(s) remaining.")
+                st.error(f"Login gagal. Sisa {remaining_attempts} kali percobaan.")
 
 # ======================================
 # MAIN APP — tampilan mengikuti preview "Dashboard final"
@@ -2759,13 +2759,13 @@ def render_sidebar():
             sel = st.selectbox("Periode data", periods, key="sb_period")
             c1, c2 = st.columns([3, 1]) if is_admin() else (st.container(), None)
             with c1:
-                go_clicked = st.button("Get Data", type="primary", width="stretch", key="sb_get")
+                go_clicked = st.button("Muat Data", type="primary", width="stretch", key="sb_get")
             if c2 is not None:
                 with c2:
                     if st.button(":material/refresh:", width="stretch", key="sb_refresh",
                                  help="Bersihkan cache & tarik ulang (kode TR/Booking ID ikut berganti)"):
                         load_drive_data.clear()
-                        st.toast("Cache dibersihkan. Klik Get Data.")
+                        st.toast("Cache dibersihkan. Klik Muat Data.")
             if go_clicked:
                 with st.spinner(f"Memuat data {sel}…"):
                     try:
@@ -2789,14 +2789,14 @@ def render_sidebar():
         _df_now = st.session_state.get("df_all")
         if st.session_state.get("data_loaded") and _df_now is not None and not _df_now.empty:
             secs = st.session_state.get("_load_secs")
-            st.success(f"{len(st.session_state.df_all):,} records · {st.session_state.get('data_period', '')}"
-                       .replace(",", ".") + (f" · dimuat {secs:.1f} dtk".replace(".", ",") if secs and secs >= 0.1 else ""))
+            st.markdown(ui.load_card(len(_df_now), str(st.session_state.get("data_period", "")), secs),
+                        unsafe_allow_html=True)
             fx = st.session_state.get("_fx_info") or {}
             if fx.get("missing"):
                 st.warning(f"{fx['missing']:,} booking tanpa kurs ({', '.join(fx.get('missing_currencies', []))}).")
 
         if is_admin():
-            with st.expander("Upload Excel (Admin)"):
+            with st.expander("Unggah Excel (Admin)"):
                 files = st.file_uploader("File transaksi", type=["xlsx", "xls"], accept_multiple_files=True,
                                          key="sb_upload", label_visibility="collapsed")
                 if files and st.button("Proses file", key="sb_process"):
@@ -2821,7 +2821,7 @@ def render_sidebar():
             elif st.button("Akun & akses", width="stretch", key="sb_akses"):
                 st.session_state.view = "akses"
                 st.rerun()
-        if uname != GUEST_USERNAME and st.button("Logout", width="stretch", key="sb_logout"):
+        if uname != GUEST_USERNAME and st.button("Keluar", width="stretch", key="sb_logout"):
             _revoke_session_token(st.session_state.get("_session_token"))
             _clear_session_cookie()
             time.sleep(0.5)
@@ -2847,7 +2847,7 @@ def render_header():
     chips = [("cal", f"{hari}, {now:%d %b %Y}")] + ([] if guest else [("user", role or "-")])
     raw = st.session_state.get("df_all")
     if st.session_state.get("data_loaded") and raw is not None and not raw.empty:
-        chips.insert(0, ("db", f"{len(raw):,} records".replace(",", ".")))
+        chips.insert(0, ("db", f"{len(raw):,} transaksi".replace(",", ".")))
         chips.insert(0, ("clock", f"Periode {st.session_state.get('data_period', '-')}"))
     chip_html = "".join(f'<span class="mx-chip">{_ICO[i]}{ui.esc(t)}</span>' for i, t in chips)
     st.markdown(
@@ -2863,7 +2863,7 @@ PAGE_ICONS = {
     "Overview": ":material/space_dashboard:", "Price Intelligence": ":material/sell:",
     "Cost Avoidance": ":material/savings:", "Room Intelligence": ":material/hotel:",
     "Sankey Flow": ":material/account_tree:", "Top Hotel/City": ":material/leaderboard:",
-    "Dendrogram": ":material/hub:", "Patra Jasa": ":material/apartment:", "Laporan": ":material/description:",
+    "Cluster Analysis": ":material/hub:", "Patra Jasa": ":material/apartment:", "Reports": ":material/description:",
 }
 
 
@@ -2871,7 +2871,7 @@ PAGE_ICONS = {
 def tab_dashboard(df):
     c1, c2 = st.columns([2, 3])
     with c1:
-        market = ui.choice("Market", ["Semua", "Domestik", "Internasional"], key="db_market")
+        market = ui.choice("Wilayah", ["Semua", "Domestik", "Internasional"], key="db_market")
     with c2:
         st.markdown(f"<div style='padding-top:30px;font-size:13px;color:{ui.MUTED}'>Periode: {_period_label(df)} · "
                     f"nilai dalam Rupiah</div>", unsafe_allow_html=True)
@@ -2888,10 +2888,10 @@ def tab_dashboard(df):
         lt = lt[lt >= 0]
         if len(lt):
             lead_txt, lead_sub = f"{lt.mean():.0f} hari", f"{(lt <= 2).mean() * 100:.0f}% last-minute"
-    ui.kpi_row([ui.kpi("Bookings", ui.fmt_int(len(d))), ui.kpi("Travel requests", ui.fmt_int(tr)),
-                ui.kpi("Hotels", ui.fmt_int(d["Hotel Name"].nunique() if "Hotel Name" in d else 0)),
-                ui.kpi("Room nights", ui.fmt_int(rn)),
-                ui.kpi("Avg rate / malam", f"Rp{inv / rn / 1000:,.0f}k".replace(",", ".") if rn else "-"),
+    ui.kpi_row([ui.kpi("Booking", ui.fmt_int(len(d))), ui.kpi("Travel request", ui.fmt_int(tr)),
+                ui.kpi("Hotel", ui.fmt_int(d["Hotel Name"].nunique() if "Hotel Name" in d else 0)),
+                ui.kpi("Room night", ui.fmt_int(rn)),
+                ui.kpi("Rata-rata rate / malam", f"Rp{inv / rn / 1000:,.0f} rb".replace(",", ".") if rn else "-"),
                 ui.kpi("Lead time rata-rata", lead_txt, lead_sub)], 160)
     multi = "-"
     if "Travel Request Number" in d:
@@ -2912,7 +2912,7 @@ def tab_dashboard(df):
     a, b = st.columns(2)
     with a:
         with st.container(border=True):
-            ui.section("Top kota tujuan (bookings)")
+            ui.section("Kota tujuan teratas (booking)")
             if "City" in d:
                 top = d["City"].value_counts().head(10)
                 _hbar(list(top.index), list(top.values), "db_cities")
@@ -2992,7 +2992,7 @@ def tab_price(df, pmap):
     d, key = _key_column(d, dim, merge, pmap)
     g = d.groupby(key).agg(Spend=("Invoice Amount", "sum"), RN=("Number of Rooms Night", "sum"),
                            Kota=("City", lambda s: s.mode().iat[0] if not s.mode().empty else ""),
-                           Bookings=("Travel Request Number", "nunique") if "Travel Request Number" in d else
+                           Booking=("Travel Request Number", "nunique") if "Travel Request Number" in d else
                            ("Invoice Amount", "size")).reset_index()
     by_rn = basis == "Room night"
     mcol = "RN" if by_rn else "Spend"
@@ -3001,39 +3001,39 @@ def tab_price(df, pmap):
     share = "RN %" if by_rn else "Spend %"
     g = g.sort_values([mcol, "Spend" if by_rn else "RN"], ascending=False).reset_index(drop=True)
     total = g[mcol].sum()
-    g["Avg rate / malam"] = g["Spend"] / g["RN"].replace(0, np.nan)
+    g["Rata-rata rate / malam"] = g["Spend"] / g["RN"].replace(0, np.nan)
     g[share] = g[mcol] / total * 100 if total else 0.0
     g["Kumulatif %"] = g[share].cumsum().clip(upper=100)
     n20 = max(1, int(len(g) * 0.2))
     top_m = g[mcol].head(n20).sum()
     ent = "properti" if dim == "Hotel" else "kota"
     ui.kpi_row([ui.kpi(f"Total {mname} · {wil}", fmt_m(total), _period_label(d), dark=True),
-                ui.kpi("Top 20%", ui.fmt_int(n20), f"dari {ui.fmt_int(len(g))} {ent}"),
-                ui.kpi("Kontribusi top 20%", ui.fmt_pct(top_m / total * 100 if total else 0), f"dari total {mname}"),
+                ui.kpi("20% teratas", ui.fmt_int(n20), f"dari {ui.fmt_int(len(g))} {ent}"),
+                ui.kpi("Kontribusi 20% teratas", ui.fmt_pct(top_m / total * 100 if total else 0), f"dari total {mname}"),
                 ui.kpi("Sisa 80%", fmt_m(total - top_m), f"{ui.fmt_int(len(g) - n20)} {ent}")])
     with st.container(border=True):
-        ui.section(f"Konsentrasi {mname} — Pareto 80/20", "Batang biru tua = top 20% · garis = persentase kumulatif")
-        _pareto_fig(list(g[key]), g[mcol].to_numpy(), n20, "pi_pareto", "Room nights" if by_rn else "Spend (Rp)")
+        ui.section(f"Konsentrasi {mname} — Pareto 80/20", "Batang biru tua = 20% teratas · garis = persentase kumulatif")
+        _pareto_fig(list(g[key]), g[mcol].to_numpy(), n20, "pi_pareto", "Room night" if by_rn else "Spend (Rp)")
     with st.container(border=True):
         h1, h2 = st.columns([4, 1])
         with h1:
-            ui.section("Top contributors", f"Top 20% {ent} dengan {mname} terbesar")
+            ui.section("Kontributor teratas", f"20% teratas: {ent} dengan {mname} terbesar")
         top = g.head(n20)
         if dim != "Hotel":
             top = top.drop(columns=["Kota"])   # kolom 'Kota' bantu hanya untuk dimensi Hotel (hindari kolom kembar)
         top = top.rename(columns={key: "Hotel / properti" if dim == "Hotel" else "Kota"})
         order_cols = ["RN", "Spend"] if by_rn else ["Spend", "RN"]
-        cols = [top.columns[0]] + (["Kota"] if dim == "Hotel" else []) + order_cols + ["Bookings", "Avg rate / malam",
+        cols = [top.columns[0]] + (["Kota"] if dim == "Hotel" else []) + order_cols + ["Booking", "Rata-rata rate / malam",
                                                                                      share, "Kumulatif %"]
-        top = top[cols].rename(columns={"RN": "Room nights", "Spend": "Spend (Rp)"})
+        top = top[cols].rename(columns={"RN": "Room night", "Spend": "Spend (Rp)"})
         with h2:
-            _dl("Unduh Excel", top, "Top contributors", "pareto_room_night" if by_rn else "pareto_spend", "pi_dl",
-                money_cols=("Spend (Rp)", "Avg rate / malam"), int_cols=("Room nights", "Bookings"),
+            _dl("Unduh Excel", top, "Kontributor teratas", "pareto_room_night" if by_rn else "pareto_spend", "pi_dl",
+                money_cols=("Spend (Rp)", "Rata-rata rate / malam"), int_cols=("Room night", "Booking"),
                 pct_cols=(share, "Kumulatif %"))
         show = top.copy()
         show["Spend (Rp)"] = show["Spend (Rp)"].map(ui.fmt_big)
-        show["Room nights"] = show["Room nights"].map(ui.fmt_int)
-        show["Avg rate / malam"] = show["Avg rate / malam"].map(ui.fmt_rp)
+        show["Room night"] = show["Room night"].map(ui.fmt_int)
+        show["Rata-rata rate / malam"] = show["Rata-rata rate / malam"].map(ui.fmt_rp)
         show[share] = show[share].map(ui.fmt_pct)
         show["Kumulatif %"] = show["Kumulatif %"].map(ui.fmt_pct)
         show.index = show.index + 1
@@ -3041,7 +3041,7 @@ def tab_price(df, pmap):
     with st.container(border=True):
         h1, h2 = st.columns([3, 2])
         with h1:
-            ui.section("Hotel price intelligence & simulator negosiasi")
+            ui.section("Analisis harga hotel & simulator negosiasi")
         hd = d.copy()
         hd["_rate"] = hd["Invoice Amount"] / hd["Number of Rooms Night"].replace(0, np.nan)
         hd = hd[hd["_rate"].notna()]
@@ -3057,22 +3057,22 @@ def tab_price(df, pmap):
             st.info("Data rate hotel ini belum cukup.")
             return
         avg = x["Invoice Amount"].sum() / x["Number of Rooms Night"].sum()
-        ui.kpi_row([ui.kpi("Avg rate", ui.fmt_rp(avg)), ui.kpi("Median rate", ui.fmt_rp(x["_rate"].median())),
-                    ui.kpi("Max rate", ui.fmt_rp(x["_rate"].max())), ui.kpi("Min rate", ui.fmt_rp(x["_rate"].min())),
-                    ui.kpi("Room nights", ui.fmt_int(x["Number of Rooms Night"].sum()))], 150)
+        ui.kpi_row([ui.kpi("Rata-rata rate", ui.fmt_rp(avg)), ui.kpi("Rate median", ui.fmt_rp(x["_rate"].median())),
+                    ui.kpi("Rate tertinggi", ui.fmt_rp(x["_rate"].max())), ui.kpi("Rate terendah", ui.fmt_rp(x["_rate"].min())),
+                    ui.kpi("Room night", ui.fmt_int(x["Number of Rooms Night"].sum()))], 150)
         s1, s2, s3 = st.columns([2, 1, 1])
         with s1:
             disc = st.slider("Target diskon (%)", 0, 30, 10, key="pi_disc")
         nego = avg * (1 - disc / 100)
         with s2:
-            st.metric("Negotiated rate", ui.fmt_rp(nego))
+            st.metric("Rate hasil negosiasi", ui.fmt_rp(nego))
         with s3:
-            st.metric("Estimated saving", ui.fmt_big((avg - nego) * x["Number of Rooms Night"].sum()))
+            st.metric("Estimasi penghematan", ui.fmt_big((avg - nego) * x["Number of Rooms Night"].sum()))
 
 
 # ---------------------------------------------------------------- tab: Room Intelligence
 def tab_room(df, pmap):
-    ui.page_title("Room Intelligence", "Konsentrasi room nights · simulator volume leverage · detail per properti")
+    ui.page_title("Room Intelligence", "Konsentrasi room night · simulator volume leverage · detail per properti")
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns([1.3, 2, 1.2, 1.5])
         with c1:
@@ -3096,48 +3096,48 @@ def tab_room(df, pmap):
     if "Hotel / Properti" not in d.columns:
         d = apply_property_merge(d, pmap, hotel_col="Hotel Name", city_col="City")
     g = d.groupby(key).agg(RN=("Number of Rooms Night", "sum"), Spend=("Invoice Amount", "sum"),
-                           Bookings=("Travel Request Number", "nunique") if "Travel Request Number" in d else
+                           Booking=("Travel Request Number", "nunique") if "Travel Request Number" in d else
                            ("Number of Rooms Night", "size")).reset_index().sort_values("RN", ascending=False)
     g = g.reset_index(drop=True)
     tot = g["RN"].sum()
     n20 = max(1, int(len(g) * 0.2))
     top_rn = g["RN"].head(n20).sum()
     ent = "properti" if dim == "Hotel" else "kota"
-    ui.kpi_row([ui.kpi(f"Total room nights · {wil}", ui.fmt_int(tot), _period_label(d), dark=True),
-                ui.kpi("Top 20%", ui.fmt_int(n20), f"dari {ui.fmt_int(len(g))} {ent}"),
-                ui.kpi("Kontribusi top 20%", ui.fmt_pct(top_rn / tot * 100), "dari total room nights"),
-                ui.kpi("Rata-rata lama menginap", f"{tot / max(g['Bookings'].sum(), 1):.1f} malam".replace(".", ","),
+    ui.kpi_row([ui.kpi(f"Total room night · {wil}", ui.fmt_int(tot), _period_label(d), dark=True),
+                ui.kpi("20% teratas", ui.fmt_int(n20), f"dari {ui.fmt_int(len(g))} {ent}"),
+                ui.kpi("Kontribusi 20% teratas", ui.fmt_pct(top_rn / tot * 100), "dari total room night"),
+                ui.kpi("Rata-rata lama menginap", f"{tot / max(g['Booking'].sum(), 1):.1f} malam".replace(".", ","),
                        "per booking")])
     with st.container(border=True):
-        ui.section("Konsentrasi room nights — Pareto 80/20",
-                   f"Top 100 {ent} · batang biru tua = top 20% · garis = persentase kumulatif")
-        _pareto_fig(list(g[key]), g["RN"].to_numpy(), n20, "ri_pareto", "Room nights")
-        with st.expander("Detail data top 20%"):
+        ui.section("Konsentrasi room night — Pareto 80/20",
+                   f"100 teratas: {ent} · batang biru tua = 20% teratas · garis = persentase kumulatif")
+        _pareto_fig(list(g[key]), g["RN"].to_numpy(), n20, "ri_pareto", "Room night")
+        with st.expander("Detail data 20% teratas"):
             t = g.head(n20).copy()
-            t["Avg rate / malam"] = t["Spend"] / t["RN"].replace(0, np.nan)
+            t["Rata-rata rate / malam"] = t["Spend"] / t["RN"].replace(0, np.nan)
             t["RN %"] = t["RN"] / tot * 100
-            t = t.rename(columns={key: "Hotel / properti" if dim == "Hotel" else "Kota", "RN": "Room nights",
+            t = t.rename(columns={key: "Hotel / properti" if dim == "Hotel" else "Kota", "RN": "Room night",
                                   "Spend": "Spend (Rp)"})
-            _dl("Unduh Excel", t, "Top room nights", "pareto_room_nights", "ri_dl",
-                money_cols=("Spend (Rp)", "Avg rate / malam"), int_cols=("Room nights", "Bookings"), pct_cols=("RN %",))
+            _dl("Unduh Excel", t, "Room night teratas", "pareto_room_nights", "ri_dl",
+                money_cols=("Spend (Rp)", "Rata-rata rate / malam"), int_cols=("Room night", "Booking"), pct_cols=("RN %",))
             st.dataframe(t, width="stretch", hide_index=True,
                          column_config={"Spend (Rp)": st.column_config.NumberColumn(format="%,.0f"),
-                                        "Avg rate / malam": st.column_config.NumberColumn(format="%,.0f"),
+                                        "Rata-rata rate / malam": st.column_config.NumberColumn(format="%,.0f"),
                                         "RN %": st.column_config.NumberColumn(format="%.2f%%")})
     with st.container(border=True):
-        ui.section("Simulator volume leverage", "Konsolidasi room nights ke properti top 20% untuk diskon tier volume")
+        ui.section("Simulator volume leverage", "Konsolidasi room night ke properti 20% teratas untuk diskon tier volume")
         s1, s2 = st.columns(2)
         with s1:
-            shift = st.slider("Room nights dialihkan dari 80% bawah (%)", 0, 50, 10, key="ri_shift")
+            shift = st.slider("Room night dialihkan dari 80% bawah (%)", 0, 50, 10, key="ri_shift")
         with s2:
-            disc = st.slider("Diskon tier volume top 20% (%)", 0, 20, 5, key="ri_vdisc")
+            disc = st.slider("Diskon tier volume 20% teratas (%)", 0, 20, 5, key="ri_vdisc")
         top_inv = g["Spend"].head(n20).sum()
         rate = top_inv / top_rn if top_rn else 0
         proj = top_rn + (tot - top_rn) * shift / 100
-        ui.kpi_row([ui.kpi("Room nights top 20% saat ini", ui.fmt_int(top_rn)),
+        ui.kpi_row([ui.kpi("Room night 20% teratas saat ini", ui.fmt_int(top_rn)),
                     ui.kpi("Proyeksi setelah konsolidasi", ui.fmt_int(proj)),
                     ui.kpi("Potensi saving (simulasi)", ui.fmt_big(proj * rate * disc / 100),
-                           f"avg rate top 20% {ui.fmt_rp(rate)}", dark=True)], 220)
+                           f"rata-rata rate 20% teratas {ui.fmt_rp(rate)}", dark=True)], 220)
     with st.container(border=True):
         h1, h2 = st.columns([3, 2])
         with h1:
@@ -3149,17 +3149,17 @@ def tab_room(df, pmap):
         x = d[d["Hotel / Properti"] == pick]
         rn = x["Number of Rooms Night"].sum()
         bk = x["Travel Request Number"].nunique() if "Travel Request Number" in x else len(x)
-        ui.kpi_row([ui.kpi("Room nights", ui.fmt_int(rn)), ui.kpi("Bookings", ui.fmt_int(bk)),
+        ui.kpi_row([ui.kpi("Room night", ui.fmt_int(rn)), ui.kpi("Booking", ui.fmt_int(bk)),
                     ui.kpi("Lama menginap", f"{rn / max(bk, 1):.1f} malam".replace(".", ",")),
-                    ui.kpi("Share room nights", ui.fmt_pct(rn / d["Number of Rooms Night"].sum() * 100, digits=2)),
-                    ui.kpi("Avg rate / malam", ui.fmt_rp(x["Invoice Amount"].sum() / rn if rn else np.nan))], 150)
+                    ui.kpi("Porsi room night", ui.fmt_pct(rn / d["Number of Rooms Night"].sum() * 100, digits=2)),
+                    ui.kpi("Rata-rata rate / malam", ui.fmt_rp(x["Invoice Amount"].sum() / rn if rn else np.nan))], 150)
         if "Check in Date" in x:
             m = x.dropna(subset=["Check in Date"]).groupby(x["Check in Date"].dt.to_period("M").astype(str))[
                 "Number of Rooms Night"].sum()
             fig = go.Figure(go.Bar(x=list(m.index), y=list(m.values), marker_color=ui.BLUE,
                                    hovertemplate="%{x}<br>%{y:,.0f} RN<extra></extra>"))
             fig.update_layout(yaxis=dict(gridcolor="#EDEDED"))
-            st.markdown("<div style='font-size:13px;font-weight:600'>Tren room nights bulanan (check-in)</div>",
+            st.markdown("<div style='font-size:13px;font-weight:600'>Tren room night bulanan (check-in)</div>",
                         unsafe_allow_html=True)
             _fig(fig, "ri_month", 260)
 
@@ -3172,9 +3172,9 @@ def tab_sankey(df):
         with c1:
             wil = ui.choice("Wilayah", ["Semua", "Domestik", "Internasional"], key="sk_wil")
         with c2:
-            n_city = st.selectbox("Top kota", [5, 8, 10, 15, 20], index=2, key="sk_city")
+            n_city = st.selectbox("Kota teratas", [5, 8, 10, 15, 20], index=2, key="sk_city")
         with c3:
-            n_hotel = st.selectbox("Top hotel", [10, 15, 20, 30, 50], index=2, key="sk_hotel")
+            n_hotel = st.selectbox("Hotel teratas", [10, 15, 20, 30, 50], index=2, key="sk_hotel")
     base = _market(df, wil).dropna(subset=["Country", "City", "Hotel Name", "Invoice Amount"])
     if base.empty:
         st.info("Tidak ada data.")
@@ -3223,7 +3223,7 @@ def tab_sankey(df):
 
 # ---------------------------------------------------------------- tab: Top Hotel/City
 def tab_top(df):
-    ui.page_title("Top Hotel / City", "Peringkat hotel dan kota berdasarkan total room nights")
+    ui.page_title("Top Hotel / City", "Peringkat hotel dan kota berdasarkan total room night")
     wil = ui.choice("Wilayah", ["Domestik", "Internasional"], key="th_wil")
     d = _market(df, wil)
     if d.empty:
@@ -3240,7 +3240,7 @@ def tab_top(df):
                               "Average Room Rate": h.index.map(rate).round(0)})
             a, b = st.columns([3, 2])
             with a:
-                ui.section("Top 100 hotel", "Biru tua = top 20 · room nights")
+                ui.section("100 hotel teratas", "Biru tua = 20 teratas · room night")
             with b:
                 _dl("Unduh Excel", t, "Top 100 Hotels", "top_100_hotels", "th_dl_h",
                     money_cols=("Average Room Rate",), int_cols=("Number of Rooms Night",))
@@ -3251,13 +3251,13 @@ def tab_top(df):
             c = d.groupby("City")["Number of Rooms Night"].sum().sort_values(ascending=False).head(100)
             a, b = st.columns([3, 2])
             with a:
-                ui.section("Top 100 kota", "Biru tua = top 20 · room nights")
+                ui.section("100 kota teratas", "Biru tua = 20 teratas · room night")
             with b:
                 _dl("Unduh Excel", c.reset_index(), "Top 100 Cities", "top_100_cities", "th_dl_c",
                     int_cols=("Number of Rooms Night",))
             with st.container(height=640, border=False):
                 _hbar(list(c.index), list(c.values), "th_c", top_highlight=20, height=26 * len(c) + 40)
-    st.caption("File unduhan hotel berisi kota dan Average Room Rate (total Invoice Amount ÷ total room nights).")
+    st.caption("File unduhan hotel berisi kota dan rata-rata rate kamar (total Invoice Amount ÷ total room night).")
 
 
 # ---------------------------------------------------------------- tab: Dendrogram
@@ -3309,15 +3309,15 @@ def _pack(groups: tuple):
 def tab_dendro(df):
     from scipy.cluster.hierarchy import linkage, fcluster
     from sklearn.preprocessing import normalize
-    ui.page_title("Klaster Pola Perjalanan",
+    ui.page_title("Cluster Analysis",
                   "Mengelompokkan kota atau hotel yang pola volume bulanannya mirip")
     with st.container(border=True):
         c = st.columns(5)
         ent = c[0].selectbox("Entitas", ["Kota", "Hotel"], key="dd_ent")
         metric = c[1].selectbox("Metric", ["Invoice Amount", "Number of Rooms Night"], key="dd_metric",
-                                format_func=lambda m: "Spend (Rupiah)" if m == "Invoice Amount" else "Room nights")
-        method = c[2].selectbox("Linkage", ["ward", "complete", "average", "single"], key="dd_link")
-        top_n = c[3].selectbox("Top N", [12, 20, 30, 50], key="dd_n")
+                                format_func=lambda m: "Spend (Rupiah)" if m == "Invoice Amount" else "Room night")
+        method = c[2].selectbox("Metode linkage", ["ward", "complete", "average", "single"], key="dd_link")
+        top_n = c[3].selectbox("Jumlah teratas", [12, 20, 30, 50], key="dd_n")
         k = c[4].selectbox("Jumlah klaster", [4, 3, 5, 6], key="dd_k")
     col = "City" if ent == "Kota" else "Hotel Name"
     unit = "kota" if ent == "Kota" else "hotel"
@@ -3542,7 +3542,7 @@ def tab_patra(df):
     with st.container(border=True):
         c1, c2, c3 = st.columns([1, 1, 2])
         year = c1.selectbox("Tahun (tabel bulanan)", years, key="pj_year") if years else None
-        met = c2.selectbox("Metrik tabel", ["Invoice (TR unik)", "Room nights"], key="pj_met")
+        met = c2.selectbox("Metrik tabel", ["Invoice (TR unik)", "Room night"], key="pj_met")
     tr = "Travel Request Number" in d
     cnt = lambda x: x["Travel Request Number"].nunique() if tr else len(x)  # noqa: E731
     pj, npj = d[d["Grup"] == "Patra Jasa Group"], d[d["Grup"] == "Non-Patra Jasa"]
@@ -3551,12 +3551,12 @@ def tab_patra(df):
                 ui.kpi("Patra Jasa Group", ui.fmt_int(cnt(pj)), f"{ui.fmt_pct(cnt(pj) / max(tot, 1) * 100)} dari total",
                        dark=True),
                 ui.kpi("Non-Patra Jasa", ui.fmt_int(cnt(npj)), f"{ui.fmt_pct(cnt(npj) / max(tot, 1) * 100)} dari total"),
-                ui.kpi("Total room nights domestik", ui.fmt_int(d["Number of Rooms Night"].sum()))], 200)
+                ui.kpi("Total room night domestik", ui.fmt_int(d["Number of Rooms Night"].sum()))], 200)
     a, b = st.columns(2)
     for col, title, v1, v2, center, key in (
             (a, "Invoice unik — Patra vs Non-Patra", cnt(pj), cnt(npj), "invoice", "pj_d1"),
-            (b, "Room nights — Patra vs Non-Patra", pj["Number of Rooms Night"].sum(),
-             npj["Number of Rooms Night"].sum(), "room nights", "pj_d2")):
+            (b, "Room night — Patra vs Non-Patra", pj["Number of Rooms Night"].sum(),
+             npj["Number of Rooms Night"].sum(), "room night", "pj_d2")):
         with col:
             with st.container(border=True):
                 ui.section(title)
@@ -3603,35 +3603,35 @@ def tab_patra(df):
     with st.expander(f"Detail per hotel Patra Jasa Group · {year}"):
         p = y[y["Grup"] == "Patra Jasa Group"].copy()
         p["Hotel"] = p["_h"].map(norm).fillna(p["Hotel Name"])
-        t = p.groupby("Hotel").agg(**{"Travel requests": ("Travel Request Number", "nunique") if tr else
-                                      ("Hotel Name", "size"), "Room nights": ("Number of Rooms Night", "sum")})
-        st.dataframe(t.sort_values("Travel requests", ascending=False), width="stretch")
+        t = p.groupby("Hotel").agg(**{"Travel request": ("Travel Request Number", "nunique") if tr else
+                                      ("Hotel Name", "size"), "Room night": ("Number of Rooms Night", "sum")})
+        st.dataframe(t.sort_values("Travel request", ascending=False), width="stretch")
 
 
 # ---------------------------------------------------------------- tab: Laporan
 def tab_laporan(df, data_sig=None):
     import cost_avoidance as ca
-    ui.page_title("Laporan", "Semua unduhan berupa laporan agregat dalam format Excel dan tercatat atas nama akun Anda")
+    ui.page_title("Reports", "Semua unduhan berupa laporan agregat dalam format Excel dan tercatat atas nama akun Anda")
     r = df.copy()
     has_tr = "Travel Request Number" in r
 
     def agg(x, keys):
-        g = x.groupby(keys, dropna=False).agg(**{"Room nights": ("Number of Rooms Night", "sum"),
+        g = x.groupby(keys, dropna=False).agg(**{"Room night": ("Number of Rooms Night", "sum"),
                                                  "Spend (Rp)": ("Invoice Amount", "sum")})
         if has_tr:
-            g["Travel requests"] = x.groupby(keys, dropna=False)["Travel Request Number"].nunique()
-        g["Avg rate / malam (Rp)"] = (g["Spend (Rp)"] / g["Room nights"].replace(0, np.nan)).round(0)
-        return g.reset_index().sort_values("Room nights", ascending=False)
+            g["Travel request"] = x.groupby(keys, dropna=False)["Travel Request Number"].nunique()
+        g["Rata-rata rate / malam (Rp)"] = (g["Spend (Rp)"] / g["Room night"].replace(0, np.nan)).round(0)
+        return g.reset_index().sort_values("Room night", ascending=False)
 
-    reps = [("Ringkasan per hotel", "Hotel, kota, room nights, spend, rata-rata rate per malam",
+    reps = [("Ringkasan per hotel", "Hotel, kota, room night, spend, rata-rata rate per malam",
              agg(r, ["Hotel Name", "City"]), "ringkasan_per_hotel"),
-            ("Ringkasan per kota", "Negara, kota, room nights, spend, rata-rata rate per malam",
+            ("Ringkasan per kota", "Negara, kota, room night, spend, rata-rata rate per malam",
              agg(r, ["Country", "City"]), "ringkasan_per_kota")]
     if "Issue Time" in r:
         m = r.dropna(subset=["Issue Time"]).copy()
         m["Bulan"] = m["Issue Time"].dt.to_period("M").astype(str)
         m["Market"] = np.where(m["Country"].astype(str).str.upper().isin(DOMESTIC_ALIAS), "Domestik", "Internasional")
-        reps.append(("Tren bulanan", "Travel request, room nights dan spend per bulan, domestik vs internasional",
+        reps.append(("Tren bulanan", "Travel request, room night dan spend per bulan, domestik vs internasional",
                      agg(m, ["Bulan", "Market"]).sort_values(["Bulan", "Market"]), "tren_bulanan"))
     src = corp_source()
     if src is None or src.get("df") is None:
@@ -3649,14 +3649,14 @@ def tab_laporan(df, data_sig=None):
             if not s.empty:
                 reps.append(("Cost avoidance per hotel & tipe kamar",
                              "Booking termasuk sarapan · corp rate, rate dibayar, selisih, potensi avoidance, status",
-                             _cols(s, ["Hotel", "Kota", "Room type", "Meal plan", "Corp", "Avg dibayar", "Selisih %",
+                             _cols(s, ["Hotel", "Kota", "Room type", "Meal plan", "Corp", "Rata-rata dibayar", "Selisih %",
                                        "RN", "Potensi", "Room Night < Corp %", "Posisi kota", "Daya saing"])
-                             .rename(columns={"Corp": "Corp rate", "RN": "Room nights"}), "cost_avoidance"))
+                             .rename(columns={"Corp": "Corp rate", "RN": "Room night"}), "cost_avoidance"))
             lk = res["leak100"]
             if not lk.empty:
                 reps.append(("Kebocoran non-kontrak", "Top 100 hotel non-kontrak dan potensi pengalihan",
-                             _cols(lk, ["Hotel", "Kota", "Room type", "Meal plan", "RN", "Avg dibayar", "Setara",
-                                        "Selisih %", "Potensi"]).rename(columns={"RN": "Room nights",
+                             _cols(lk, ["Hotel", "Kota", "Room type", "Meal plan", "RN", "Rata-rata dibayar", "Setara",
+                                        "Selisih %", "Potensi"]).rename(columns={"RN": "Room night",
                                                                                  "Setara": "Corp rate setara"}),
                              "kebocoran_non_kontrak"))
             md = ca.load_manual()
@@ -3665,7 +3665,7 @@ def tab_laporan(df, data_sig=None):
                 reps.append(("Target renegosiasi", "Target P40 kota / target turun manual dan hard savings",
                              _cols(rg, ["Hotel", "Kota", "Room type", "Meal plan", "Daya saing", "Corp",
                                         "Target dipakai", "Sumber target", "Turun %", "RN", "Hard savings"])
-                             .rename(columns={"Corp": "Corp rate", "RN": "Room nights"}), "target_renegosiasi"))
+                             .rename(columns={"Corp": "Corp rate", "RN": "Room night"}), "target_renegosiasi"))
         except Exception as e:
             st.caption(f"Laporan Cost Avoidance dilewati: {e}")
     cols = st.columns(3)
@@ -3678,9 +3678,9 @@ def tab_laporan(df, data_sig=None):
                 if can_download():
                     _dl("Unduh Excel", data, title, fname, f"lap_{fname}",
                         money_cols=tuple(c for c in data.columns if "(Rp)" in c or c in
-                                         ("Corp rate", "Avg dibayar", "Potensi", "Target dipakai", "Hard savings",
+                                         ("Corp rate", "Rata-rata dibayar", "Potensi", "Target dipakai", "Hard savings",
                                           "Corp rate setara")),
-                        int_cols=tuple(c for c in data.columns if c in ("Room nights", "Travel requests", "RN")))
+                        int_cols=tuple(c for c in data.columns if c in ("Room night", "Travel request", "RN")))
                 else:
                     st.caption("Unduhan tidak tersedia untuk akun ini.")
     ui.note("<b>Data per transaksi tidak bisa diunduh dari dashboard.</b> Kebutuhan data per booking diajukan lewat "
@@ -3688,7 +3688,7 @@ def tab_laporan(df, data_sig=None):
     if is_super_admin():
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         with st.container(border=True):
-            ui.section("Audit log", "Login dan unduhan · 200 catatan terakhir · hanya Super Admin")
+            ui.section("Log audit", "Login dan unduhan · 200 catatan terakhir · hanya Super Admin")
             log = read_audit_tail(200)
             if log.empty:
                 st.caption("Belum ada catatan.")
@@ -3706,8 +3706,8 @@ def page_akses():
         ("Data identitas pekerja", "Tidak ada di sumber", "Tidak ada di sumber", "Tidak ada di sumber",
          "Tidak ada di sumber", "Tidak ada di sumber"),
         ("Unduh laporan agregat", "Ya, tercatat", "Ya, tercatat", "Ya, tercatat", "Ya, tercatat", no),
-        ("Upload Excel, corp rate & target manual", yes, yes, no, no, no),
-        ("Lihat audit log", yes, no, no, no, no),
+        ("Unggah Excel, corp rate & target manual", yes, yes, no, no, no),
+        ("Lihat log audit", yes, no, no, no, no),
     ]
     head = "".join(f"<th>{h}</th>" for h in ["Kemampuan", "superadmin", "admin", "ssc", "dtm", "demo"])
     body = "".join("<tr>" + "".join(f"<td style='text-align:left'>{ui.esc(c)}</td>" for c in r) + "</tr>" for r in matrix)
@@ -3737,7 +3737,7 @@ def page_akses():
 
 # ---------------------------------------------------------------- navigasi halaman
 PAGES = ["Overview", "Price Intelligence", "Cost Avoidance", "Room Intelligence", "Sankey Flow",
-         "Top Hotel/City", "Dendrogram", "Patra Jasa", "Laporan"]
+         "Top Hotel/City", "Cluster Analysis", "Patra Jasa", "Reports"]
 
 
 def ca_frame_sig(df):
@@ -3762,11 +3762,11 @@ def _render_page(page, df, pmap, data_sig):
         tab_sankey(df)
     elif page == "Top Hotel/City":
         tab_top(df)
-    elif page == "Dendrogram":
+    elif page == "Cluster Analysis":
         tab_dendro(df)
     elif page == "Patra Jasa":
         tab_patra(df)
-    elif page == "Laporan":
+    elif page == "Reports":
         tab_laporan(df, data_sig)
 
 
@@ -3797,7 +3797,7 @@ def main_app():
     raw = st.session_state.get("df_all")
     if raw is None or raw.empty:
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
-        ui.note("Pilih <b>periode data</b> di sidebar lalu klik <b>Get Data</b>.")
+        ui.note("Pilih <b>periode data</b> di sidebar lalu klik <b>Muat Data</b>.")
         return
 
     ver = st.session_state.get("_data_ver", 0)
@@ -3833,7 +3833,7 @@ def main_app():
     _render_page(page, df, pmap, data_sig)
 
     st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
-    ui.note("<b>Disclaimer &amp; Compliance Notice</b><br>Aplikasi ini untuk analisis internal. Output tidak bersifat "
+    ui.note("<b>Catatan penggunaan &amp; kepatuhan</b><br>Aplikasi ini untuk analisis internal. Output tidak bersifat "
             "final dan harus divalidasi sesuai kebijakan perusahaan.")
     st.markdown("<div class='mx-footer'>© 2026 MTRAX Travel Analytics · PT Mitra Tours And Travel · Dikembangkan oleh "
                 "<a href='https://www.linkedin.com/in/rifyalt/' target='_blank'>Rifyal Tumber</a>"
