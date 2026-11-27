@@ -987,14 +987,19 @@ def _cumulative_view(s: pd.DataFrame, topn: int, can_download: bool, excel_fn):
     tot = g["Potensi"].sum()
     rn_tot, rn_above = s["RN"].sum(), s["RN_above"].sum()
     vc = s["Daya saing"].value_counts()
+    _f = lambda v: f"{v:,.0f}".replace(",", ".")  # noqa: E731
+    pot = _jt(tot)
+    pot_v, pot_u = (pot[:-2], "M") if pot.endswith(" M") else ((pot[:-3], "jt") if pot.endswith(" jt") else (pot, ""))
+    n_ok, n_no = int(vc.get("Kompetitif", 0)), int(vc.get("Tidak kompetitif", 0))
     ui.kpi_row([
-        ui.kpi(f"Hotel penyumbang {CUM_TARGET}% room night", f"{n80} dari {len(g)} hotel",
-               "fokus negosiasi & penegakan kontrak", dark=True),
-        ui.kpi("Potensi cost avoidance (gross)", _jt(tot), f"semua {len(g)} hotel ber-corp rate"),
-        ui.kpi("Kepatuhan rate", _pct((1 - rn_above / rn_tot) * 100) if rn_tot else "-",
-               f"{rn_above:,.0f} dari {rn_tot:,.0f} room night di atas corp rate".replace(",", ".")),
-        ui.kpi("Daya saing (hotel × tipe)", f"{vc.get('Kompetitif', 0)} kompetitif",
-               f"{vc.get('Tidak kompetitif', 0)} tidak kompetitif"),
+        ui.kpi(f"Hotel penyumbang {CUM_TARGET}% RN", _f(n80), unit=f"/ {_f(len(g))} hotel", icon="target",
+               sub="fokus negosiasi & penegakan kontrak"),
+        ui.kpi("Potensi cost avoidance", pot_v, unit=pot_u, icon="saving",
+               sub=f"gross · <b>{_f(len(g))}</b> hotel ber-corp rate", sub_html=True),
+        ui.kpi("Kepatuhan rate", _pct((1 - rn_above / rn_tot) * 100) if rn_tot else "-", icon="shield",
+               sub=f"<b>{_f(rn_above)}</b> dari {_f(rn_tot)} RN di atas corp rate", sub_html=True),
+        ui.kpi("Daya saing (hotel × tipe)", _f(n_ok), unit="kompetitif", icon="scale",
+               sub=f"<b>{_f(n_no)}</b> tidak kompetitif", sub_html=True),
     ], 200)
 
     with st.container(border=True):
@@ -1294,15 +1299,18 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                                    key="ca_dl_names")
 
     # ---------- satu kartu cakupan data ----------
-    pct = lambda x, t: f"{x / t * 100:.0f}%" if t else "-"  # noqa: E731
+    pv = lambda x, t: (x / t * 100) if t else None  # noqa: E731
     f = lambda v: f"{v:,.0f}".replace(",", ".")  # noqa: E731
     origin = "Google Drive" if src.get("origin") == "drive" else "unggahan server"
     ui.scope_bar([
         ("Corp rate pembanding", f"Tahun {corp_year}" if corp_year else "Per tahun check-in",
          f"{origin} · {f(res['n_hotel'])} hotel kontrak"),
-        ("Hotel kontrak ada di invoice", f"{f(res['n_in'])} / {f(res['n_hotel'])}", pct(res["n_in"], res["n_hotel"])),
-        ("Booking dihitung", f"{f(res['n_bf'])} / {f(res['n_all'])}", pct(res["n_bf"], res["n_all"])),
-        ("Room night dihitung", f"{f(res['rn_bf'])} / {f(res['rn_all'])}", pct(res["rn_bf"], res["rn_all"])),
+        ("Hotel kontrak ada di invoice", f"{f(res['n_in'])} / {f(res['n_hotel'])}", "hotel kontrak yang dipakai",
+         pv(res["n_in"], res["n_hotel"])),
+        ("Booking dihitung", f"{f(res['n_bf'])} / {f(res['n_all'])}", "booking termasuk sarapan",
+         pv(res["n_bf"], res["n_all"])),
+        ("Room night dihitung", f"{f(res['rn_bf'])} / {f(res['rn_all'])}", "room night termasuk sarapan",
+         pv(res["rn_bf"], res["rn_all"])),
     ], "Hanya booking <b>termasuk sarapan</b>. Booking Room Only dan yang meal plan-nya tidak tertulis tidak dihitung.")
     if not res["ready"]:
         st.info("Belum ada booking termasuk sarapan yang bisa dibandingkan dengan corp rate.")
