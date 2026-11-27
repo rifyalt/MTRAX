@@ -964,7 +964,7 @@ def build_property_merge_map(pairs_df: pd.DataFrame, threshold: float = 0.88) ->
         return pd.DataFrame(columns=["_hotel_raw", "_city_key", "Hotel / Properti"])
 
     df = pairs_df.copy()
-    df["_alias"] = df["_hotel_raw"].map(PROPERTY_MANUAL_ALIAS).fillna(df["_hotel_raw"])
+    df["_alias"] = df["_hotel_raw"].map(PROPERTY_MANUAL_ALIAS).astype(object).fillna(df["_hotel_raw"])
     df["_norm"] = [_normalize_property_name(n, c) for n, c in zip(df["_alias"], df["_city_key"])]
     df["_cluster"] = ""
 
@@ -2987,7 +2987,7 @@ def tab_dashboard(df):
                     h = h.drop_duplicates("Travel Request Number")
                 dmap = {0: "Senin", 1: "Selasa–Kamis", 2: "Selasa–Kamis", 3: "Selasa–Kamis", 4: "Jumat",
                         5: "Sabtu–Minggu", 6: "Sabtu–Minggu"}
-                h["Hari"] = h["Issue Time"].dt.weekday.map(dmap)
+                h["Hari"] = h["Issue Time"].dt.day_of_week.map(dmap)
                 h["Jam"] = pd.cut(h["Issue Time"].dt.hour, [-1, 5, 8, 11, 14, 17, 23],
                                   labels=["00–06", "06–09", "09–12", "12–15", "15–18", "18–24"])
                 pv = (h.groupby(["Hari", "Jam"], observed=False).size().unstack(fill_value=0)
