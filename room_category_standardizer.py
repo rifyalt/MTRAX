@@ -31,6 +31,7 @@ ROOM_CLASS_RULES = [
     ("Premier",            r"\bpremi(er|ere|um)\b"),
     ("Grand Deluxe",       r"\bgrand deluxe\b|\bdeluxe grand\b|\bsuper deluxe\b|\bdeluxe premier\b"),
     ("Deluxe",             r"\bdeluxe\b"),
+    ("De luxe",             r"\bdeluxe\b"),
     ("Superior",           r"\bsuperior\b"),
     ("Studio",             r"\bstudio\b"),
     ("Family",             r"\bfamily\b|\btriple\b|\bquad(ruple)?\b"),
