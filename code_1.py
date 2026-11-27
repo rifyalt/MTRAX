@@ -2679,10 +2679,12 @@ def _dl(label, df, sheet, fname, key, width="content", **fmt):
                            mime=XLSX_MIME, key=key, width=width)
 
 
-def _fig(fig, key, height=None):
+def _fig(fig, key, height=None, **after):
     fig.update_layout(**ui.PLOTLY_LAYOUT)
     if height:
         fig.update_layout(height=height)
+    if after:                                   # pengaturan yang harus menang atas gaya bawaan
+        fig.update_layout(**after)
     st.plotly_chart(fig, width="stretch", key=key, config={"displaylogo": False})
 
 
@@ -2693,9 +2695,9 @@ def _hbar(labels, values, key, color=ui.BLUE, top_highlight=None, height=None, t
                            textposition="outside", cliponaxis=False,
                            hovertemplate="%{y}<br>%{x:,.0f}<extra></extra>"))
     fig.update_layout(yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
-                      xaxis=dict(showgrid=True, gridcolor="#EDEDED"), showlegend=False,
-                      margin=dict(l=10, r=60, t=10, b=20))
-    _fig(fig, key, height or max(260, 26 * len(values) + 40))
+                      showlegend=False, margin=dict(l=10, r=60, t=10, b=20))
+    _fig(fig, key, height or max(260, 26 * len(values) + 40),
+         xaxis=dict(showgrid=True, gridcolor="#EDEDED", range=[0, (max(values) if len(values) else 1) * 1.22]))
 
 
 def _pareto_fig(names, values, top_n, key, value_title, max_show=100):
@@ -2907,169 +2909,144 @@ PAGE_ICONS = {
 
 
 # ---------------------------------------------------------------- tab: Dashboard
-# ---------------------------------------------------------------- peta Indonesia (Overview)
-# Koordinat kota tujuan (kunci = hasil _normalize_city_key). Tambahkan sendiri bila ada kota yang belum dikenali.
-GEO_ID = {
-    "JAKARTA": (-6.20, 106.85), "BOGOR": (-6.60, 106.80), "DEPOK": (-6.40, 106.82), "TANGERANG": (-6.18, 106.63),
-    "TANGERANG SELATAN": (-6.29, 106.72), "BEKASI": (-6.24, 106.99), "KARAWANG": (-6.32, 107.34),
-    "CIKARANG": (-6.31, 107.14), "SERANG": (-6.12, 106.15), "CILEGON": (-6.00, 106.05), "BANDUNG": (-6.91, 107.61),
-    "SUBANG": (-6.57, 107.76), "PURWAKARTA": (-6.56, 107.44), "SUKABUMI": (-6.92, 106.93), "CIREBON": (-6.73, 108.55),
-    "INDRAMAYU": (-6.33, 108.32), "BALONGAN": (-6.38, 108.37), "TASIKMALAYA": (-7.33, 108.22), "GARUT": (-7.21, 107.90),
-    "SEMARANG": (-6.97, 110.42), "SOLO": (-7.57, 110.82), "SURAKARTA": (-7.57, 110.82), "YOGYAKARTA": (-7.80, 110.36),
-    "MAGELANG": (-7.47, 110.22), "CILACAP": (-7.73, 109.01), "PURWOKERTO": (-7.43, 109.24), "TEGAL": (-6.87, 109.14),
-    "PEKALONGAN": (-6.89, 109.68), "KUDUS": (-6.81, 110.84), "REMBANG": (-6.71, 111.34), "CEPU": (-7.15, 111.59),
-    "BLORA": (-6.97, 111.42), "SURABAYA": (-7.25, 112.75), "SIDOARJO": (-7.45, 112.72), "GRESIK": (-7.16, 112.65),
-    "MALANG": (-7.98, 112.63), "BATU": (-7.87, 112.52), "KEDIRI": (-7.82, 112.01), "MADIUN": (-7.63, 111.52),
-    "TUBAN": (-6.90, 112.05), "BOJONEGORO": (-7.15, 111.88), "PROBOLINGGO": (-7.75, 113.22), "PASURUAN": (-7.65, 112.91),
-    "JEMBER": (-8.17, 113.70), "BANYUWANGI": (-8.22, 114.37), "MOJOKERTO": (-7.47, 112.43), "BALI": (-8.65, 115.22),
-    "SINGARAJA": (-8.11, 115.09), "MATARAM": (-8.58, 116.12), "LOMBOK": (-8.65, 116.32), "SUMBAWA": (-8.50, 117.42),
-    "BIMA": (-8.46, 118.73), "KUPANG": (-10.18, 123.60), "LABUAN BAJO": (-8.50, 119.88), "MAUMERE": (-8.62, 122.21),
-    "ENDE": (-8.84, 121.66), "BANDA ACEH": (5.55, 95.32), "LHOKSEUMAWE": (5.18, 97.15), "MEDAN": (3.59, 98.67),
-    "BINJAI": (3.60, 98.49), "PEMATANGSIANTAR": (2.96, 99.06), "SIBOLGA": (1.74, 98.78), "PANGKALAN BRANDAN": (4.02, 98.28),
-    "PANGKALAN SUSU": (4.11, 98.21), "PADANG": (-0.95, 100.35), "BUKITTINGGI": (-0.31, 100.37), "PEKANBARU": (0.51, 101.45),
-    "DUMAI": (1.67, 101.45), "DURI": (1.26, 101.21), "BATAM": (1.13, 104.05), "TANJUNG PINANG": (0.92, 104.45),
-    "TANJUNGPINANG": (0.92, 104.45), "NATUNA": (3.95, 108.38), "JAMBI": (-1.60, 103.60), "PALEMBANG": (-2.98, 104.76),
-    "PLAJU": (-3.00, 104.82), "PRABUMULIH": (-3.43, 104.24), "LUBUKLINGGAU": (-3.30, 102.86), "BENGKULU": (-3.80, 102.27),
-    "BANDAR LAMPUNG": (-5.43, 105.26), "LAMPUNG": (-5.43, 105.26), "PANGKAL PINANG": (-2.13, 106.11),
-    "PANGKALPINANG": (-2.13, 106.11), "BELITUNG": (-2.74, 107.65), "PONTIANAK": (-0.03, 109.33),
-    "SINGKAWANG": (0.91, 108.98), "KETAPANG": (-1.85, 109.98), "PALANGKARAYA": (-2.21, 113.92),
-    "PALANGKA RAYA": (-2.21, 113.92), "SAMPIT": (-2.53, 112.95), "PANGKALAN BUN": (-2.68, 111.63),
-    "BANJARMASIN": (-3.32, 114.59), "BANJARBARU": (-3.44, 114.83), "KOTABARU": (-3.29, 116.17), "TANJUNG": (-2.17, 115.38),
-    "BALIKPAPAN": (-1.27, 116.83), "SAMARINDA": (-0.50, 117.15), "BONTANG": (0.13, 117.50), "TENGGARONG": (-0.42, 116.99),
-    "SANGATTA": (0.51, 117.55), "PENAJAM": (-1.29, 116.71), "TANJUNG REDEB": (2.15, 117.49), "BERAU": (2.15, 117.49),
-    "TARAKAN": (3.30, 117.63), "TANJUNG SELOR": (2.84, 117.37), "NUNUKAN": (4.14, 117.66), "MAKASSAR": (-5.14, 119.43),
-    "PAREPARE": (-4.01, 119.62), "PALOPO": (-3.00, 120.20), "SOROWAKO": (-2.53, 121.36), "BONE": (-4.54, 120.33),
-    "KENDARI": (-3.97, 122.51), "BAUBAU": (-5.47, 122.60), "KOLAKA": (-4.05, 121.59), "PALU": (-0.90, 119.87),
-    "LUWUK": (-0.95, 122.79), "MOROWALI": (-2.83, 122.14), "GORONTALO": (0.54, 123.06), "MANADO": (1.47, 124.84),
-    "BITUNG": (1.44, 125.19), "TOMOHON": (1.32, 124.84), "MAMUJU": (-2.68, 118.89), "AMBON": (-3.70, 128.18),
-    "TERNATE": (0.79, 127.38), "SOFIFI": (0.74, 127.56), "TUAL": (-5.63, 132.75), "SAUMLAKI": (-7.98, 131.30),
-    "JAYAPURA": (-2.53, 140.72), "SENTANI": (-2.57, 140.51), "SORONG": (-0.88, 131.25), "MANOKWARI": (-0.86, 134.08),
-    "BIAK": (-1.18, 136.08), "TIMIKA": (-4.55, 136.89), "MERAUKE": (-8.49, 140.40), "NABIRE": (-3.37, 135.50),
-    "FAKFAK": (-2.93, 132.30), "BINTUNI": (-2.10, 133.53), "WAMENA": (-4.10, 138.95),
-}
-_GEO_CITY_NAME = {"BALI": "Bali", "SOLO": "Solo"}
-
-
-def _geo_lookup(key: str):
-    if key in GEO_ID:
-        return GEO_ID[key]
-    for k in sorted(GEO_ID, key=len, reverse=True):      # mis. "KABUPATEN SORONG BARAT" -> SORONG
-        if re.search(rf"\b{re.escape(k)}\b", key):
-            return GEO_ID[k]
-    return None
-
-
-def _map_indonesia(d):
-    """Kartu peta booking per kota (hanya kota di Indonesia)."""
-    if "City" not in d:
-        return
-    x = d
-    if "Country" in x:
-        x = x[x["Country"].astype(str).str.strip().str.upper().isin(DOMESTIC_ALIAS)]
-    with st.container(border=True, key="db_map"):
-        h1, h2 = st.columns([3, 1.3], vertical_alignment="top")
-        metric = h2.segmented_control("Ukuran", ["Booking", "Spend", "Room night"], default="Booking",
-                                      key="db_map_metric", label_visibility="collapsed") or "Booking"
-        unit = {"Booking": "jumlah booking", "Spend": "spend (Rp)", "Room night": "room night"}[metric]
-        with h1:
-            ui.section("Peta booking per kota",
-                       f"Ukuran & warna lingkaran = {unit} · arahkan kursor untuk detail booking, spend dan room night")
-        if x.empty:
-            st.caption("Tidak ada booking di Indonesia untuk pilihan ini (peta hanya menampilkan kota di Indonesia).")
-            return
-        keys = _umap(x["City"], _normalize_city_key)
-        g = (x.assign(_k=keys).groupby("_k")
-             .agg(Kota=("City", lambda s_: s_.mode().iat[0] if not s_.mode().empty else s_.iat[0]),
-                  Booking=("City", "size"),
-                  Spend=("Invoice Amount", "sum") if "Invoice Amount" in x else ("City", "size"),
-                  RN=("Number of Rooms Night", "sum") if "Number of Rooms Night" in x else ("City", "size"))
-             .reset_index())
-        g = g[g["_k"] != ""]
-        ll = g["_k"].map(_geo_lookup)
-        miss = g[ll.isna()]
-        g = g[ll.notna()].copy()
-        if g.empty:
-            st.caption("Belum ada kota yang dikenali koordinatnya.")
-            return
-        g["lat"] = [ll[i][0] for i in g.index]
-        g["lon"] = [ll[i][1] for i in g.index]
-        g["Nama"] = [_GEO_CITY_NAME.get(k, str(k).title()) for k in g["_k"]]
-        col = {"Booking": "Booking", "Spend": "Spend", "Room night": "RN"}[metric]
-        g = g.sort_values(col, ascending=False).reset_index(drop=True)
-        val = g[col].astype(float).to_numpy()
-        vmax = float(val.max()) or 1.0
-        fmt_v = (lambda v: ui.fmt_big(v)) if metric == "Spend" else (lambda v: ui.fmt_int(v))
-        size = 8 + np.sqrt(np.clip(val, 0, None) / vmax) * 44
-        top = g.head(10)
-        # label 10 teratas dengan garis penunjuk; posisi dipilih agar tidak bertabrakan dengan label/kota lain
-        offs = [(0, 2.4), (0, -2.7), (-3.4, 1.8), (3.4, -1.9), (-3.6, -2.4), (3.6, 2.0), (0, -4.2), (0, 4.2),
-                (-2, -4.4), (2, -4.4), (-6, 0), (6, 0)]
-        placed, lab = [], []
-        pts = list(zip(g["lon"], g["lat"]))
-        for _, r in top.iterrows():
-            cx, cy = r["lon"], r["lat"] + 2.4
-            for dx, dy in offs:
-                cx, cy = r["lon"] + dx, r["lat"] + dy
-                ok_l = all(abs(cx - px) > 3.6 or abs(cy - py) > 1.6 for px, py in placed)
-                ok_b = all(abs(cx - px) > 1.9 or abs(cy - py) > 1.0 for px, py in pts)
-                if ok_l and ok_b:
-                    break
-            placed.append((cx, cy))
-            lab.append((r["Nama"], r["lat"], r["lon"], cy, cx, fmt_v(r[col])))
-        fig = go.Figure()
-        for _, la, lo, cy, cx, _v in lab:
-            fig.add_trace(go.Scattergeo(lat=[la, cy - (0.55 if cy > la else -0.55)], lon=[lo, cx], mode="lines",
-                                        line=dict(color="#9A9A9A", width=0.8), hoverinfo="skip", showlegend=False))
-        fig.add_trace(go.Scattergeo(lat=[t[3] for t in lab], lon=[t[4] for t in lab], mode="text",
-                                    text=[f"<b>{n}</b><br>{v}" for n, *_, v in lab], textposition="middle center",
-                                    textfont=dict(size=11, color=ui.INK), hoverinfo="skip", showlegend=False))
-        cd = np.c_[g["Nama"], [ui.fmt_int(v) for v in g["Booking"]], [ui.fmt_big(v) for v in g["Spend"]],
-                   [ui.fmt_int(v) for v in g["RN"]]]
-        fig.add_trace(go.Scattergeo(
-            lat=g["lat"], lon=g["lon"], mode="markers", customdata=cd, showlegend=False,
-            marker=dict(size=size, sizemode="diameter", color=val, cmin=0, cmax=vmax, opacity=1,
-                        colorscale=[[0, "#BFE3F6"], [0.35, ui.P1], [1, "#0A5D96"]], line=dict(color="white", width=1.2),
-                        showscale=False),
-            hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]} booking<br>Spend %{customdata[2]}"
-                          "<br>%{customdata[3]} room night<extra></extra>"))
-        fig.update_geos(projection_type="mercator", lonaxis_range=[94, 142], lataxis_range=[-12, 7.5],
-                        showland=True, landcolor="#EDEDED", showocean=True, oceancolor="#F7FBFE",
-                        showcountries=True, countrycolor="#FFFFFF", countrywidth=1, showcoastlines=True,
-                        coastlinecolor="#D5D5D5", coastlinewidth=0.6, showframe=False, showlakes=False,
-                        resolution=50, bgcolor="rgba(0,0,0,0)")
-        fig.update_layout(height=370, margin=dict(l=0, r=0, t=0, b=0), separators=",.",
-                          paper_bgcolor="rgba(0,0,0,0)", font=dict(color=ui.INK), dragmode=False)
-        m1, m2 = st.columns([3.3, 1])
-        with m1:
-            st.plotly_chart(fig, width="stretch", key="db_map_fig",
-                            config={"displaylogo": False, "displayModeBar": False, "scrollZoom": False})
-        with m2:
-            mx_ = float(top[col].max()) or 1.0
-            rows = "".join(
-                f'<div class="r"><span class="n">{i + 1}</span><span class="c">{ui.esc(r["Nama"])}</span>'
-                f'<span class="v">{fmt_v(r[col])}</span>'
-                f'<span class="b"><i style="width:{r[col] / mx_ * 100:.0f}%"></i></span></div>' for i, (_, r) in enumerate(top.iterrows()))
-            info = f"{len(g)} kota di peta"
-            if len(miss):
-                info += (f" · {len(miss)} kota belum dikenali koordinatnya "
-                         f"({ui.fmt_int(int(miss['Booking'].sum()))} booking)")
-            st.markdown(f'<div class="mx-maplist"><b>10 kota teratas · {metric.lower()}</b>{rows}'
-                        f'<div class="ft">{ui.esc(info)}</div></div>', unsafe_allow_html=True)
-            if len(miss):
-                with st.popover("Kota belum dikenali", width="stretch"):
-                    st.caption("Tambahkan koordinatnya di GEO_ID (code_1.py) agar tampil di peta.")
-                    st.dataframe(miss[["Kota", "Booking"]].sort_values("Booking", ascending=False),
-                                 hide_index=True, width="stretch", height=min(300, 36 * len(miss) + 40))
-
 _BULAN_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
 
+def _last_complete_month(d):
+    """Bulan lengkap terakhir: sebelum bulan data terakhir (data bulan berjalan biasanya belum lengkap)."""
+    ref = d["Issue Time"].max() if "Issue Time" in d and d["Issue Time"].notna().any() else d["Check in Date"].max()
+    return (pd.Timestamp(ref).to_period("M") - 1) if pd.notna(ref) else None
+
+
+def _forecast_card(d):
+    """Prakiraan room night 6 bulan ke depan (per bulan check-in): tren x pola musiman."""
+    if not {"Check in Date", "Number of Rooms Night"}.issubset(d.columns):
+        return
+    with st.container(border=True, key="db_fc"):
+        h1, h2 = st.columns([2, 1.3], vertical_alignment="top")
+        cities = d["City"].dropna().astype(str) if "City" in d else pd.Series(dtype=str)
+        opts = ["Semua kota"] + list(cities.value_counts().head(30).index)
+        pick = h2.selectbox("Kota", opts, key="db_fc_city", label_visibility="collapsed")
+        x = d if pick == "Semua kota" else d[d["City"].astype(str) == pick]
+        last = _last_complete_month(d)
+        m = (x.dropna(subset=["Check in Date"])
+             .assign(P=lambda z: z["Check in Date"].dt.to_period("M"))
+             .groupby("P")["Number of Rooms Night"].sum())
+        if last is not None:
+            m = m[m.index <= last]
+        if len(m):
+            m = m.reindex(pd.period_range(m.index.min(), m.index.max(), freq="M"), fill_value=0)
+        n = len(m)
+        seasonal = n >= 24
+        with h1:
+            ui.section("Prakiraan room night 6 bulan ke depan",
+                       ("Pola musiman + tren" if seasonal else "Tren (pola musiman butuh minimal 24 bulan data)")
+                       + f" dari {n} bulan data check-in · {pick.lower() if pick == 'Semua kota' else pick}")
+        if n < 6 or m.sum() <= 0:
+            st.caption("Data belum cukup: prakiraan butuh minimal 6 bulan data check-in yang lengkap. "
+                       "Muat periode data yang lebih panjang (mis. 2 tahun) untuk hasil yang lebih baik.")
+            return
+        t = np.arange(n)
+        lg = np.log(np.clip(m.to_numpy(float), 1, None))
+        mon = np.array([p.month - 1 for p in m.index])
+        base = np.polyval(np.polyfit(t, lg, 1), t)
+        si = np.zeros(12)
+        if seasonal:
+            for k in range(12):
+                if (mon == k).any():
+                    si[k] = np.mean((lg - base)[mon == k])
+            si -= si.mean()
+        coef = np.polyfit(t, lg - si[mon], 1)
+        resid = lg - (np.polyval(coef, t) + si[mon])
+        sd = float(np.std(resid, ddof=1)) if n > 2 else 0.1
+        h = 6
+        fidx = pd.period_range(m.index[-1] + 1, periods=h, freq="M")
+        ft = np.arange(n, n + h)
+        fm = np.polyval(coef, ft) + si[np.array([p.month - 1 for p in fidx])]
+        widen = 1.28 * sd * np.sqrt(1 + np.arange(1, h + 1) / max(n, 1))
+        fy, lo, hi = np.exp(fm), np.exp(fm - widen), np.exp(fm + widen)
+        lab = lambda p: f"{_BULAN_ID[p.month - 1]} {p.year}"
+        xs = [p.to_timestamp() for p in m.index]
+        fx = [p.to_timestamp() for p in fidx]
+        green = "#5FA80C"
+        fmt = ui.fmt_int
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=[xs[-1]] + fx + fx[::-1] + [xs[-1]],
+                                 y=[m.iloc[-1]] + list(hi) + list(lo[::-1]) + [m.iloc[-1]], fill="toself", mode="lines",
+                                 fillcolor="rgba(95,168,12,0.13)", line=dict(width=0), hoverinfo="skip",
+                                 name="Rentang perkiraan (80%)"))
+        fig.add_trace(go.Scatter(x=xs, y=m.to_numpy(), mode="lines+markers", name="Aktual",
+                                 line=dict(color=ui.P1, width=2.4), marker=dict(size=5),
+                                 customdata=[lab(p) for p in m.index],
+                                 hovertemplate="%{customdata}<br>%{y:,.0f} room night<extra></extra>"))
+        fig.add_trace(go.Scatter(x=[xs[-1]] + fx, y=[m.iloc[-1]] + list(fy), mode="lines+markers", name="Prakiraan",
+                                 line=dict(color=green, width=2.6, dash="dash"),
+                                 marker=dict(size=7, symbol="circle-open", line=dict(width=2)),
+                                 customdata=[lab(m.index[-1])] + [f"{lab(p)}<br>rentang {fmt(a)}–{fmt(c)}"
+                                                                  for p, a, c in zip(fidx, lo, hi)],
+                                 hovertemplate="%{customdata}<br><b>%{y:,.0f}</b> room night<extra></extra>"))
+        fig.add_vrect(x0=xs[-1], x1=fx[-1], fillcolor="rgba(95,168,12,0.05)", line_width=0)
+        prev = [m.get(p - 12) for p in fidx]
+        yoy = (fy.sum() / sum(prev) - 1) if all(v is not None and v > 0 for v in prev) else None
+        top_txt = (f"<b>{lab(fidx[0])} – {lab(fidx[-1])}: {fmt(fy.sum())} room night</b><br>"
+                   f"<span style='font-size:11px;color:#6B6B6B'>rentang {fmt(lo.sum())} – {fmt(hi.sum())}"
+                   + (f" · {'+' if yoy >= 0 else ''}{yoy * 100:.0f}% vs tahun lalu" if yoy is not None else "")
+                   + "</span>")
+        fig.add_annotation(x=0.01, xref="paper", y=1.0, yref="paper", xanchor="left", yanchor="top", align="left",
+                           text=top_txt, showarrow=False, font=dict(size=12, color=ui.INK),
+                           bgcolor="rgba(255,255,255,0.9)")
+        allx, alll = xs + fx, [lab(p) for p in m.index] + [lab(p) for p in fidx]
+        step = max(1, -(-len(allx) // 4))
+        fig.update_layout(**ui.PLOTLY_LAYOUT)
+        fig.update_layout(height=320, separators=",.", hovermode="x unified", showlegend=False,
+                          margin=dict(l=10, r=10, t=20, b=10),
+                          xaxis=dict(tickvals=allx[::step], ticktext=alll[::step], tickangle=0, gridcolor="#F3F3F3"),
+                          yaxis=dict(title="Room night per bulan", tickformat=",d", gridcolor="#EFEFEF",
+                                     range=[0, float(max(hi.max(), m.max())) * 1.35]),
+                          legend=dict(orientation="h", y=-0.12, x=0))
+        st.plotly_chart(fig, width="stretch", key="db_fc_fig",
+                        config={"displaylogo": False, "displayModeBar": False})
+        tb = pd.DataFrame({"Bulan": [lab(p) for p in fidx], "Prakiraan room night": np.round(fy).astype(int),
+                           "Batas bawah": np.round(lo).astype(int), "Batas atas": np.round(hi).astype(int)})
+        with st.expander("Tabel prakiraan per bulan", icon=":material/table_chart:"):
+            st.dataframe(tb.style.format({c: lambda v: ui.fmt_int(v) for c in tb.columns[1:]}),
+                         hide_index=True, width="stretch")
+            _dl("Unduh Excel", tb, "Prakiraan room night", "prakiraan_room_night", "db_fc_dl",
+                int_cols=("Prakiraan room night", "Batas bawah", "Batas atas"))
+        st.caption("Garis biru = aktual · garis hijau putus-putus = prakiraan · pita hijau = rentang perkiraan 80% "
+                   "(8 dari 10 kali angka sebenarnya ada di dalam rentang). Dihitung per bulan check-in; bulan "
+                   "berjalan yang datanya belum lengkap tidak dipakai.")
+
+
+def _checkin_heatmap(d):
+    """Heatmap porsi booking menurut hari check-in x bulan check-in (gaya sama dengan 'Waktu pengajuan')."""
+    if "Check in Date" not in d:
+        return
+    with st.container(border=True, key="db_ci"):
+        ui.section("Hari mulai check-in", "Porsi booking per hari & bulan check-in (Check in Date)")
+        x = d.dropna(subset=["Check in Date"])
+        if x.empty:
+            st.caption("Tidak ada data check-in.")
+            return
+        dmap = {0: "Senin", 1: "Selasa–Kamis", 2: "Selasa–Kamis", 3: "Selasa–Kamis", 4: "Jumat",
+                5: "Sabtu–Minggu", 6: "Sabtu–Minggu"}
+        x = x.assign(Hari=x["Check in Date"].dt.day_of_week.map(dmap), P=x["Check in Date"].dt.to_period("M"))
+        pv = (x.groupby(["Hari", "P"]).size().unstack(fill_value=0)
+              .reindex(["Senin", "Selasa–Kamis", "Jumat", "Sabtu–Minggu"]).fillna(0))
+        pv = pv[list(pv.columns)[-12:]]                     # 12 bulan terakhir agar tetap terbaca
+        multi_year = len({p_.year for p_ in pv.columns}) > 1
+        lab = [f"{_BULAN_ID[p_.month - 1]}" + (f" {str(p_.year)[2:]}" if multi_year else "") for p_ in pv.columns]
+        pct = pv / max(pv.values.sum(), 1) * 100
+        fig = go.Figure(go.Heatmap(z=pct.values, x=lab, y=list(pct.index), colorscale=ui.SEQUENTIAL,
+                                   text=[[f"{v:.0f}%" for v in r] for r in pct.values], texttemplate="%{text}",
+                                   customdata=pv.values, showscale=False, textfont=dict(size=10.5),
+                                   hovertemplate="%{y} · %{x}<br>%{z:.1f}% · %{customdata:,d} booking<extra></extra>"))
+        fig.update_layout(yaxis=dict(autorange="reversed"), separators=",.")
+        _fig(fig, "db_ci_fig", 300)
+
 def tab_dashboard(df):
-    c1, c2 = st.columns([2, 3])
-    with c1:
-        market = ui.choice("Wilayah", ["Semua", "Domestik", "Internasional"], key="db_market")
-    with c2:
-        st.markdown(f"<div style='padding-top:30px;font-size:13px;color:{ui.MUTED}'>Periode: {_period_label(df)} · "
-                    f"nilai dalam Rupiah</div>", unsafe_allow_html=True)
+    market = ui.choice("Wilayah", ["Semua", "Domestik", "Internasional"], key="db_market")
+    st.markdown(f"<div style='margin-top:-6px;font-size:13px;color:{ui.MUTED}'>Periode: {_period_label(df)} · "
+                f"nilai dalam Rupiah</div>", unsafe_allow_html=True)
     d = _market(df, market)
     if d.empty:
         st.info("Tidak ada data untuk pilihan ini.")
@@ -3103,8 +3080,6 @@ def tab_dashboard(df):
     ui.mini_row([("Kota", ui.fmt_int(d["City"].nunique() if "City" in d else 0)),
                  ("Negara", ui.fmt_int(d["Country"].nunique() if "Country" in d else 0)),
                  ("Multi-booking", multi), ("Breakfast included", bf)])
-
-    _map_indonesia(d)
 
     a, b = st.columns(2)
     with a:
@@ -3166,6 +3141,7 @@ def tab_dashboard(df):
                     margin=dict(l=10, r=10, t=30, b=10))
                 st.plotly_chart(fig, width="stretch", key="db_trend", config={"displaylogo": False, "displayModeBar": False})
                 st.caption("Sumbu kiri (biru) = travel request unik · sumbu kanan (hijau) = room night.")
+        _forecast_card(d)
     with b:
         with st.container(border=True):
             ui.section("Waktu pengajuan travel request", "Porsi travel request per hari & jam (Issue Time)")
@@ -3187,6 +3163,7 @@ def tab_dashboard(df):
                                            showscale=False, hovertemplate="%{y} · %{x}<br>%{z:.1f}%<extra></extra>"))
                 fig.update_layout(yaxis=dict(autorange="reversed"))
                 _fig(fig, "db_heat", 300)
+        _checkin_heatmap(d)
     st.caption("Data transaksi hotel tanpa identitas pekerja, dipakai untuk negosiasi tarif dan pengendalian biaya "
                "perjalanan dinas. Invoice non-Rupiah dikonversi dengan kurs.")
 
