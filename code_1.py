@@ -3045,28 +3045,35 @@ def _forecast_card(d):
 
 
 def _checkin_heatmap(d):
-    """Heatmap porsi booking menurut hari check-in x bulan check-in (gaya sama dengan 'Waktu pengajuan')."""
+    """Heatmap hari check-in x bulan check-in: % dari total travel request unik (gaya sama dengan 'Waktu pengajuan')."""
     if "Check in Date" not in d:
         return
     with st.container(border=True, key="db_ci"):
-        ui.section("Hari mulai check-in", "Jumlah booking per hari & bulan check-in (Check in Date)")
         x = d.dropna(subset=["Check in Date"])
         if x.empty:
+            ui.section("Hari mulai check-in")
             st.caption("Tidak ada data check-in.")
             return
+        has_tr = "Travel Request Number" in x
         dmap = dict(enumerate(_HARI_ID))
         x = x.assign(Hari=x["Check in Date"].dt.day_of_week.map(dmap), P=x["Check in Date"].dt.to_period("M"))
-        pv = (x.groupby(["Hari", "P"]).size().unstack(fill_value=0)
-              .reindex(_HARI_ID).fillna(0))
-        pv = pv[list(pv.columns)[-12:]]                     # 12 bulan terakhir agar tetap terbaca
+        months = sorted(x["P"].unique())[-12:]              # 12 bulan terakhir agar tetap terbaca
+        x = x[x["P"].isin(months)]
+        total = x["Travel Request Number"].nunique() if has_tr else len(x)
+        unit = "travel request" if has_tr else "booking"
+        ui.section("Hari mulai check-in", f"% dari {ui.fmt_int(total)} {unit} unik · per hari & bulan check-in")
+        g = x.groupby(["Hari", "P"])
+        cnt = (g["Travel Request Number"].nunique() if has_tr else g.size())
+        pv = cnt.unstack(fill_value=0).reindex(index=_HARI_ID, columns=months).fillna(0)
+        pct = pv / max(total, 1) * 100
         multi_year = len({p_.year for p_ in pv.columns}) > 1
         lab = [f"{_BULAN_ID[p_.month - 1]}" + (f" {str(p_.year)[2:]}" if multi_year else "") for p_ in pv.columns]
-        pct = pv / max(pv.values.sum(), 1) * 100
-        fig = go.Figure(go.Heatmap(z=pv.values, x=lab, y=list(pv.index), colorscale=ui.SEQUENTIAL,
-                                   text=[[ui.fmt_int(v) for v in r] for r in pv.values], texttemplate="%{text}",
-                                   customdata=pct.values, showscale=False, textfont=dict(size=9.5), xgap=1.5, ygap=1.5,
-                                   hovertemplate="%{y} · %{x}<br>%{z:,d} booking · %{customdata:.1f}% dari total"
-                                                 "<extra></extra>"))
+        fig = go.Figure(go.Heatmap(z=pct.values, x=lab, y=list(pct.index), colorscale=ui.SEQUENTIAL,
+                                   text=[[f"{v:.1f}".replace(".", ",") for v in r] for r in pct.values],
+                                   texttemplate="%{text}%", customdata=pv.values, showscale=False,
+                                   textfont=dict(size=9.5), xgap=1.5, ygap=1.5,
+                                   hovertemplate=f"%{{y}} · %{{x}}<br>%{{z:.2f}}% dari {ui.fmt_int(total)} {unit}"
+                                                 f"<br>%{{customdata:,d}} {unit}<br><i>1 request bisa check-in di beberapa hari</i><extra></extra>"))
         fig.update_layout(yaxis=dict(autorange="reversed"), separators=",.")
         _fig(fig, "db_ci_fig", 340)
 
