@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.27-h"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.27-j"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -73,6 +73,7 @@ PLOTLY_LAYOUT = dict(
     xaxis=dict(gridcolor="#EDEDED", linecolor=LINE, zerolinecolor=LINE, tickfont=dict(size=12, color=MUTED)),
     yaxis=dict(gridcolor="#EDEDED", linecolor=LINE, zerolinecolor=LINE, tickfont=dict(size=12, color=MUTED)),
     legend=dict(font=dict(size=12, color=INK)),
+    separators=",.",                      # format Indonesia: 1.234,5
 )
 
 STATUS_STYLE = {
@@ -305,6 +306,12 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 .mx-maplist .b i {{ display:block; height:100%; background:var(--p1, #1BA0E2); border-radius:3px; }}
 .mx-maplist .v {{ text-align:right; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }}
 .mx-maplist .ft {{ font-size:11.5px; color:#8A8A8A; margin-top:8px; line-height:1.4; }}
+/* ---- grafik berdampingan: susun ke bawah bila layar sempit ---- */
+@media (max-width: 1200px) {{
+  [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) {{ flex-wrap: wrap !important; }}
+  [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) > [data-testid="stColumn"] {{
+    width: 100% !important; flex: 1 1 100% !important; min-width: 100% !important; }}
+}}
 .mx-n {{ counter-reset: c var(--v); animation: mxCount 1.3s cubic-bezier(.15,.8,.25,1) both; }}
 .mx-n::after {{ content: counter(c); }}
 .mx-n.p3::after {{ content: counter(c, mxpad3); }}
