@@ -3115,11 +3115,12 @@ def tab_dashboard(df):
             if "Country" in d:
                 dom = d["Country"].astype(str).str.upper().isin(DOMESTIC_ALIAS)
                 fig = go.Figure(go.Pie(labels=["Domestik", "Internasional"], values=[int(dom.sum()), int((~dom).sum())],
-                                       hole=0.6, marker=dict(colors=[ui.BLUE, ui.LIME]), textinfo="percent",
-                                       sort=False))
-                fig.update_layout(annotations=[dict(text=f"<b>{ui.fmt_int(len(d))}</b><br>bookings", x=0.5, y=0.5,
+                                       hole=0.6, marker=dict(colors=[ui.BLUE, ui.LIME]), texttemplate="%{percent:.1%}",
+                                       sort=False, domain=dict(x=[0.1, 0.9], y=[0.14, 1])))
+                fig.update_layout(annotations=[dict(text=f"<b>{ui.fmt_int(len(d))}</b><br>booking", x=0.5, y=0.57,
                                                     showarrow=False, font=dict(size=14))],
-                                  legend=dict(orientation="h", y=-0.1))
+                                  legend=dict(orientation="h", x=0.5, xanchor="center", y=0, yanchor="top",
+                                              itemwidth=40, bgcolor="rgba(0,0,0,0)"))
                 _fig(fig, "db_market_pie", 300)
     a, b = st.columns(2)
     with a:
@@ -3810,7 +3811,8 @@ def tab_patra(df):
                                        marker=dict(colors=[ui.BLUE, ui.ORANGE]), sort=False, textinfo="percent"))
                 fig.update_layout(annotations=[dict(text=f"<b>{ui.fmt_int(v1 + v2)}</b><br>{center}", x=0.5, y=0.5,
                                                     showarrow=False, font=dict(size=14))],
-                                  legend=dict(orientation="h", y=-0.1))
+                                  legend=dict(orientation="h", x=0.5, xanchor="center", y=0, yanchor="top",
+                                              itemwidth=40, bgcolor="rgba(0,0,0,0)"))
                 _fig(fig, key, 300)
     if year is None:
         return
