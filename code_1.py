@@ -2909,6 +2909,7 @@ PAGE_ICONS = {
 
 
 # ---------------------------------------------------------------- tab: Dashboard
+_HARI_ID = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 _BULAN_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
 
 def _last_complete_month(d):
@@ -3022,26 +3023,26 @@ def _checkin_heatmap(d):
     if "Check in Date" not in d:
         return
     with st.container(border=True, key="db_ci"):
-        ui.section("Hari mulai check-in", "Porsi booking per hari & bulan check-in (Check in Date)")
+        ui.section("Hari mulai check-in", "Jumlah booking per hari & bulan check-in (Check in Date)")
         x = d.dropna(subset=["Check in Date"])
         if x.empty:
             st.caption("Tidak ada data check-in.")
             return
-        dmap = {0: "Senin", 1: "Selasa–Kamis", 2: "Selasa–Kamis", 3: "Selasa–Kamis", 4: "Jumat",
-                5: "Sabtu–Minggu", 6: "Sabtu–Minggu"}
+        dmap = dict(enumerate(_HARI_ID))
         x = x.assign(Hari=x["Check in Date"].dt.day_of_week.map(dmap), P=x["Check in Date"].dt.to_period("M"))
         pv = (x.groupby(["Hari", "P"]).size().unstack(fill_value=0)
-              .reindex(["Senin", "Selasa–Kamis", "Jumat", "Sabtu–Minggu"]).fillna(0))
+              .reindex(_HARI_ID).fillna(0))
         pv = pv[list(pv.columns)[-12:]]                     # 12 bulan terakhir agar tetap terbaca
         multi_year = len({p_.year for p_ in pv.columns}) > 1
         lab = [f"{_BULAN_ID[p_.month - 1]}" + (f" {str(p_.year)[2:]}" if multi_year else "") for p_ in pv.columns]
         pct = pv / max(pv.values.sum(), 1) * 100
-        fig = go.Figure(go.Heatmap(z=pct.values, x=lab, y=list(pct.index), colorscale=ui.SEQUENTIAL,
-                                   text=[[f"{v:.0f}%" for v in r] for r in pct.values], texttemplate="%{text}",
-                                   customdata=pv.values, showscale=False, textfont=dict(size=10.5),
-                                   hovertemplate="%{y} · %{x}<br>%{z:.1f}% · %{customdata:,d} booking<extra></extra>"))
+        fig = go.Figure(go.Heatmap(z=pv.values, x=lab, y=list(pv.index), colorscale=ui.SEQUENTIAL,
+                                   text=[[ui.fmt_int(v) for v in r] for r in pv.values], texttemplate="%{text}",
+                                   customdata=pct.values, showscale=False, textfont=dict(size=9.5), xgap=1.5, ygap=1.5,
+                                   hovertemplate="%{y} · %{x}<br>%{z:,d} booking · %{customdata:.1f}% dari total"
+                                                 "<extra></extra>"))
         fig.update_layout(yaxis=dict(autorange="reversed"), separators=",.")
-        _fig(fig, "db_ci_fig", 300)
+        _fig(fig, "db_ci_fig", 340)
 
 def tab_dashboard(df):
     market = ui.choice("Wilayah", ["Semua", "Domestik", "Internasional"], key="db_market")
@@ -3170,20 +3171,19 @@ def tab_dashboard(df):
                 h = d.dropna(subset=["Issue Time"]).copy()
                 if "Travel Request Number" in h:
                     h = h.drop_duplicates("Travel Request Number")
-                dmap = {0: "Senin", 1: "Selasa–Kamis", 2: "Selasa–Kamis", 3: "Selasa–Kamis", 4: "Jumat",
-                        5: "Sabtu–Minggu", 6: "Sabtu–Minggu"}
+                dmap = dict(enumerate(_HARI_ID))
                 h["Hari"] = h["Issue Time"].dt.day_of_week.map(dmap)
                 h["Jam"] = pd.cut(h["Issue Time"].dt.hour, [-1, 5, 8, 11, 14, 17, 23],
                                   labels=["00–06", "06–09", "09–12", "12–15", "15–18", "18–24"])
                 pv = (h.groupby(["Hari", "Jam"], observed=False).size().unstack(fill_value=0)
-                      .reindex(["Senin", "Selasa–Kamis", "Jumat", "Sabtu–Minggu"]).fillna(0))
+                      .reindex(_HARI_ID).fillna(0))
                 pct = pv / max(pv.values.sum(), 1) * 100
                 fig = go.Figure(go.Heatmap(z=pct.values, x=list(pct.columns), y=list(pct.index),
                                            colorscale=ui.SEQUENTIAL,
                                            text=[[f"{v:.0f}%" for v in r] for r in pct.values], texttemplate="%{text}",
                                            showscale=False, hovertemplate="%{y} · %{x}<br>%{z:.1f}%<extra></extra>"))
                 fig.update_layout(yaxis=dict(autorange="reversed"))
-                _fig(fig, "db_heat", 300)
+                _fig(fig, "db_heat", 340)
     with b:
         _checkin_heatmap(d)
     st.caption("Data transaksi hotel tanpa identitas pekerja, dipakai untuk negosiasi tarif dan pengendalian biaya "
