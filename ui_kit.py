@@ -1,5 +1,5 @@
 """
-ui_kit.py — design system MTRAX (dipakai app.py dan cost_avoidance.py).
+ui_kit.py — design system mtrax (dipakai app.py dan cost_avoidance.py).
 
 Warna dipakai menurut FUNGSI, bukan dekorasi:
   Primary   #1BA0E2 data utama · #1494C6 sekunder · #0D7FCC aksi/penekanan
@@ -412,10 +412,10 @@ def wordmark_b64(height: int = 96) -> str:
 
 
 def brand():
-    """Wordmark MTRAX di sidebar (fallback: teks)."""
+    """Wordmark mtrax di sidebar (fallback: teks)."""
     b64 = wordmark_b64()
-    mark = (f'<img src="data:image/png;base64,{b64}" alt="MTRAX" class="mx-wordmark"/>' if b64
-            else '<div class="t">MTRAX</div>')
+    mark = (f'<img src="data:image/png;base64,{b64}" alt="mtrax" class="mx-wordmark"/>' if b64
+            else '<div class="t">mtrax</div>')
     st.markdown(f'<div class="mx-brand">{mark}</div>', unsafe_allow_html=True)
 
 
@@ -616,7 +616,7 @@ NET_CARD_HEIGHT = 150
 
 
 def net_card_html(server_ip: str = "", drive: dict | None = None) -> str:
-    """Kartu minimalis status koneksi: kestabilan (ping ke server MTRAX), kecepatan unduh, IP & Google Drive.
+    """Kartu minimalis status koneksi: kestabilan (ping ke server mtrax), kecepatan unduh, IP & Google Drive.
     Diukur di browser; hasil disimpan 5 menit di sessionStorage agar tidak mengulang tes."""
     import json as _json
     ip = server_ip if isinstance(server_ip, str) else ""
