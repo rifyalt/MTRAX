@@ -54,6 +54,15 @@ try:
 except ImportError:
     TOTP_AVAILABLE = False
 
+
+def _html_frame(html: str, height: int = 0):
+    """Render HTML+JS di iframe. Pakai st.iframe (Streamlit baru); jatuh ke components.html bila belum ada.
+    `st.components.v1.html` dijadwalkan dihapus oleh Streamlit, jadi semua pemanggilan lewat fungsi ini."""
+    if hasattr(st, "iframe"):
+        return st.iframe(html, height=max(int(height), 1))
+    import streamlit.components.v1 as _components
+    return _components.html(html, height=height, scrolling=False)
+
 def _hotp(key_b32: str, counter: int) -> str:
     """HMAC-based OTP — RFC 4226."""
     key  = _b64_mod.b32decode(key_b32.upper().replace(" ", ""), casefold=True)
@@ -322,9 +331,8 @@ def _set_session_cookie(token: str):
     benar mengeksekusi baris document.cookie di dalamnya sebelum DOM diganti
     oleh render hasil rerun.
     """
-    import streamlit.components.v1 as _components
     max_age = int(SESSION_TIMEOUT)
-    _components.html(
+    _html_frame(
         f"""<script>
         document.cookie = "{_SESSION_COOKIE_NAME}={token}; max-age={max_age}; path=/; SameSite=Lax";
         </script>""",
@@ -333,8 +341,7 @@ def _set_session_cookie(token: str):
 
 def _clear_session_cookie():
     """Hapus cookie sesi di browser (dipanggil saat logout / timeout)."""
-    import streamlit.components.v1 as _components
-    _components.html(
+    _html_frame(
         f"""<script>
         document.cookie = "{_SESSION_COOKIE_NAME}=; max-age=0; path=/; SameSite=Lax";
         </script>""",
@@ -1974,7 +1981,7 @@ function copyKey(el) {{
 </body>
 </html>"""
 
-    _components.html(html_content, height=540, scrolling=False)
+    _html_frame(html_content, height=540)
 
     # ── OTP input styling ──────────────────────────────────────────
     st.markdown("""
@@ -2281,7 +2288,7 @@ body {{
 </body>
 </html>"""
 
-    _components.html(html_content, height=420, scrolling=False)
+    _html_frame(html_content, height=420)
 
     st.markdown("""
     <style>
@@ -2755,8 +2762,7 @@ def _drive_ping() -> dict:
 
 def _net_chip():
     """Chip status koneksi di header (iframe kecil yang ditempatkan di atas placeholder chip)."""
-    import streamlit.components.v1 as components
-    components.html(ui.net_chip_html(_client_ip(), _drive_ping()), height=34)
+    _html_frame(ui.net_chip_html(_client_ip(), _drive_ping()), height=34)
 
 
 def render_sidebar():
