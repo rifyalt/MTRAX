@@ -2938,9 +2938,9 @@ def _forecast_card(d):
         n = len(m)
         seasonal = n >= 24
         with h1:
-            ui.section("Prakiraan room night 6 bulan ke depan",
-                       ("Pola musiman + tren" if seasonal else "Tren (pola musiman butuh minimal 24 bulan data)")
-                       + f" dari {n} bulan data check-in · {pick.lower() if pick == 'Semua kota' else pick}")
+            ui.section("Prakiraan room night 6 bulan",
+                       ("Tren + pola musiman" if seasonal else "Tren saja (musiman butuh ≥ 24 bulan)")
+                       + f" · {n} bulan data")
         if n < 6 or m.sum() <= 0:
             st.caption("Data belum cukup: prakiraan butuh minimal 6 bulan data check-in yang lengkap. "
                        "Muat periode data yang lebih panjang (mis. 2 tahun) untuk hasil yang lebih baik.")
@@ -3007,14 +3007,14 @@ def _forecast_card(d):
                         config={"displaylogo": False, "displayModeBar": False})
         tb = pd.DataFrame({"Bulan": [lab(p) for p in fidx], "Prakiraan room night": np.round(fy).astype(int),
                            "Batas bawah": np.round(lo).astype(int), "Batas atas": np.round(hi).astype(int)})
-        with st.expander("Tabel prakiraan per bulan", icon=":material/table_chart:"):
+        with st.expander("Tabel & cara membaca", icon=":material/table_chart:"):
             st.dataframe(tb.style.format({c: lambda v: ui.fmt_int(v) for c in tb.columns[1:]}),
                          hide_index=True, width="stretch")
             _dl("Unduh Excel", tb, "Prakiraan room night", "prakiraan_room_night", "db_fc_dl",
                 int_cols=("Prakiraan room night", "Batas bawah", "Batas atas"))
-        st.caption("Garis biru = aktual · garis hijau putus-putus = prakiraan · pita hijau = rentang perkiraan 80% "
-                   "(8 dari 10 kali angka sebenarnya ada di dalam rentang). Dihitung per bulan check-in; bulan "
-                   "berjalan yang datanya belum lengkap tidak dipakai.")
+            st.caption("Garis biru = aktual · garis hijau putus-putus = prakiraan · pita hijau = rentang perkiraan 80% "
+                       "(8 dari 10 kali angka sebenarnya ada di dalam rentang). Dihitung per bulan check-in; bulan "
+                       "berjalan yang datanya belum lengkap tidak dipakai. Pola musiman dipakai bila data ≥ 24 bulan.")
 
 
 def _checkin_heatmap(d):
@@ -3140,9 +3140,30 @@ def tab_dashboard(df):
                                 showgrid=False, tickmode="linear"),
                     margin=dict(l=10, r=10, t=30, b=10))
                 st.plotly_chart(fig, width="stretch", key="db_trend", config={"displaylogo": False, "displayModeBar": False})
-                st.caption("Sumbu kiri (biru) = travel request unik · sumbu kanan (hijau) = room night.")
-        _forecast_card(d)
+                with st.expander("Cara membaca", icon=":material/menu_book:"):
+                    pk_tr, pk_rn = t["TR"].idxmax(), t["RN"].idxmax()
+                    lo_rn = t["RN"].idxmin()
+                    ratio = t["RN"].sum() / max(t["TR"].sum(), 1)
+                    lbl_of = lambda p_: f"{_BULAN_ID[p_.month - 1]} {p_.year}"
+                    st.markdown(
+                        "- **Garis biru** = jumlah travel request (TR) unik yang diajukan per bulan, dibaca di "
+                        "**sumbu kiri**.\n"
+                        "- **Garis hijau** = total room night dari TR yang diajukan di bulan itu, dibaca di "
+                        "**sumbu kanan**. Skala kedua sumbu berbeda, jadi bandingkan **naik-turunnya**, bukan "
+                        "tinggi garisnya.\n"
+                        "- Bila kedua garis naik-turun bersamaan, kebutuhan menginap mengikuti jumlah perjalanan. "
+                        "Bila garis hijau naik sendiri, perjalanan yang ada makin lama menginapnya.\n"
+                        "- Bulan dihitung dari **tanggal pengajuan (Issue Time)**, bukan tanggal menginap; bulan "
+                        "berjalan biasanya masih rendah karena datanya belum lengkap.\n"
+                        "- Arahkan kursor ke satu bulan untuk melihat kedua angkanya sekaligus.")
+                    ui.note(f"<b>Ringkasnya:</b> puncak travel request di <b>{lbl_of(pk_tr)}</b> "
+                            f"({ui.fmt_int(t.loc[pk_tr, 'TR'])} TR), puncak room night di <b>{lbl_of(pk_rn)}</b> "
+                            f"({ui.fmt_int(t.loc[pk_rn, 'RN'])} RN), terendah di {lbl_of(lo_rn)}. Rata-rata "
+                            f"<b>{ratio:.1f}".replace(".", ",") + " room night per travel request</b>.")
     with b:
+        _forecast_card(d)
+    a, b = st.columns(2)
+    with a:
         with st.container(border=True):
             ui.section("Waktu pengajuan travel request", "Porsi travel request per hari & jam (Issue Time)")
             if "Issue Time" in d:
@@ -3163,6 +3184,7 @@ def tab_dashboard(df):
                                            showscale=False, hovertemplate="%{y} · %{x}<br>%{z:.1f}%<extra></extra>"))
                 fig.update_layout(yaxis=dict(autorange="reversed"))
                 _fig(fig, "db_heat", 300)
+    with b:
         _checkin_heatmap(d)
     st.caption("Data transaksi hotel tanpa identitas pekerja, dipakai untuk negosiasi tarif dan pengendalian biaya "
                "perjalanan dinas. Invoice non-Rupiah dikonversi dengan kurs.")
