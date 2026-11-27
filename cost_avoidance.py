@@ -1307,7 +1307,8 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             show_nc = h3.toggle("Tampilkan tipe kamar yang belum ada corp rate", value=True, key="ca_show_nocorp",
                                 help="Tipe kamar yang dibeli di hotel ber-kontrak tetapi tidak punya corp rate. "
                                      "Hanya ditampilkan, tidak ikut dihitung.")
-            sort_by = h2.selectbox("Urutkan", ["Room night", "Potensi avoidance", "Selisih %"], key="ca_sort")
+            sort_by = h2.selectbox("Urutkan", ["Nama hotel (A–Z)", "Room night", "Potensi avoidance", "Selisih %"],
+                                   key="ca_sort")
             u = res.get("uncovered")
             if show_nc and u is not None and not u.empty:
                 hk = ["_hotel_key", "_city_key"]
@@ -1321,8 +1322,11 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                                        "Room Night < Corp %": np.nan, "Posisi kota": np.nan,
                                        "Daya saing": NO_CORP, "_hotel_rn": ux["_hotel_rn"]})
                     s = pd.concat([s, ux], ignore_index=True)
-            col = {"Room night": "RN", "Potensi avoidance": "Potensi", "Selisih %": "Selisih %"}[sort_by]
-            if sort_by == "Room night":
+            col = {"Room night": "RN", "Potensi avoidance": "Potensi", "Selisih %": "Selisih %"}.get(sort_by)
+            if sort_by == "Nama hotel (A–Z)":   # abjad hotel, lalu kota, lalu tipe kamar dengan room night terbesar
+                d = s.assign(_h=s["Hotel"].astype(str).str.casefold(), _k=s["Kota"].astype(str).str.casefold()) \
+                     .sort_values(["_h", "_k", "RN"], ascending=[True, True, False])
+            elif sort_by == "Room night":
                 d = s.sort_values(["_hotel_rn", "RN"], ascending=False)
             else:
                 d = s.sort_values(col, ascending=False)
