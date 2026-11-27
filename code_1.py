@@ -4099,8 +4099,23 @@ def ca_frame_sig(df):
     return _ca.frame_sig(df)
 
 
+PRINTABLE_PAGES = ["Overview"]          # tombol Cetak PDF hanya di Overview (A4 potret)
+
+
+def _print_bar(page, df):
+    """Tombol 'Cetak PDF' (kanan atas halaman) + kop yang hanya tampil di hasil cetak."""
+    if page not in PRINTABLE_PAGES or not can_download():
+        return
+    with st.container(key="mx_print"):
+        _, c = st.columns([5, 1])
+        with c:
+            _html_frame(ui.print_button_html(), height=38)
+    ui.print_head(page, _period_label(df))
+
+
 @st.fragment
 def _render_page(page, df, pmap, data_sig):
+    _print_bar(page, df)
     if page == "Overview":
         tab_dashboard(df)
     elif page == "Price Intelligence":
