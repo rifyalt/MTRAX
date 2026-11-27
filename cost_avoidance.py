@@ -32,6 +32,7 @@ import ui_kit as ui
 # ---------------------------------------------------------------------------
 DEFAULT_TAX = 0.21                 # pajak + service bila corp rate belum termasuk
 CORP_CHEAPER_PCT = 10              # Kompetitif bila corp rate minimal 10% lebih murah dari rata-rata dibayar
+RULES_VERSION = f"2026-11-27b|{CORP_CHEAPER_PCT}"   # naikkan bila aturan status/tipe kamar berubah -> cache lama tidak dipakai
 STATUS_RULES = {                   # (lama) ambang posisi kota — dipakai untuk penjelasan Posisi kota
     "below_tidak": 25,             # % room night lebih murah dari corp rate  > 25  -> Tidak kompetitif
     "pos_tidak": 75,               # persentil corp rate di kota          > P75 -> Tidak kompetitif
@@ -779,7 +780,7 @@ def read_corp_file(path) -> pd.DataFrame:
     """Baca sheet 'Corp Rate' bila ada, selain itu sheet pertama."""
     xl = pd.ExcelFile(path, engine="openpyxl")
     sheet = next((n for n in xl.sheet_names if _fold(n) in ("corp rate", "corporate rate")), xl.sheet_names[0])
-    return xl.parse(sheet)
+    return pd.read_excel(xl, sheet_name=sheet)
 
 
 # ---------------------------------------------------------------- sumber corp rate & pipeline ber-cache
@@ -920,7 +921,7 @@ def run_analysis(df_all, data_sig, src, basis_flag, carry, standardize_name=None
     import streamlit as st
 
     @st.cache_data(max_entries=8, show_spinner=False)
-    def _run(_df, dsig, _corp_raw, csig, basis, carry_, _std, _nc, year):
+    def _run(_df, dsig, _corp_raw, csig, basis, carry_, _std, _nc, year, rules):
         corp, issues = prepare_corp(_corp_raw, basis, _std, _nc, carry_forward=carry_)
         if year and not corp.empty and "_from" in corp.columns:
             # bandingkan SEMUA booking dengan corp rate satu tahun pilihan (masa berlaku diabaikan)
@@ -948,7 +949,7 @@ def run_analysis(df_all, data_sig, src, basis_flag, carry, standardize_name=None
         return res
 
     return _run(df_all, data_sig, src["df"], src["sig"], basis_flag, carry, standardize_name, normalize_city,
-                corp_year)
+                corp_year, RULES_VERSION)
 
 
 CUM_TARGET = 80
