@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.27-e"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.27-f"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -276,6 +276,7 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
   font-variant-numeric: tabular-nums; white-space: nowrap; }}
 .mx-load .big small {{ font-size: 12px; font-weight: 400; color: #6B6B6B; margin-left: 4px; }}
 .mx-load .sub {{ font-size: 11px; color: #6B6B6B; margin-top: 2px; font-variant-numeric: tabular-nums; }}
+.mx-load .sub .sec {{ color: #3B7A0B; font-weight: 600; }}
 [data-testid="stSidebar"] [data-testid="stExpander"] {{ margin-top: 2px; margin-bottom: 6px; }}
 .mx-n {{ counter-reset: c var(--v); animation: mxCount 1.3s cubic-bezier(.15,.8,.25,1) both; }}
 .mx-n::after {{ content: counter(c); }}
@@ -481,8 +482,8 @@ def load_card(records: int, period: str = "", secs: float | None = None) -> str:
         whole, dec = int(secs), int(round((secs - int(secs)) * 10))
         if dec >= 10:
             whole, dec = whole + 1, 0
-        meta.append(f'dimuat <span class="mx-n" style="--v:{whole}"></span>,'
-                    f'<span class="mx-n" style="--v:{dec}"></span> detik')
+        meta.append(f'dimuat <b class="sec"><span class="mx-n" style="--v:{whole}"></span>,'
+                    f'<span class="mx-n" style="--v:{dec}"></span></b> detik')
     return (f'<div class="mx-load"><div class="top"><i></i>Data siap</div>'
             f'<div class="big">{_count_html(records)}<small>transaksi</small></div>'
             f'<div class="sub">{" · ".join(meta)}</div></div>')
