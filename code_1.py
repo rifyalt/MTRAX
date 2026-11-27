@@ -2880,7 +2880,6 @@ def render_header():
     chips = [("cal", f"{hari}, {now:%d %b %Y}")] + ([] if guest else [("user", role or "-")])
     raw = st.session_state.get("df_all")
     if st.session_state.get("data_loaded") and raw is not None and not raw.empty:
-        chips.insert(0, ("db", f"{len(raw):,} transaksi".replace(",", ".")))
         chips.insert(0, ("clock", f"Periode {st.session_state.get('data_period', '-')}"))
     chip_html = "".join(f'<span class="mx-chip">{_ICO[i]}{ui.esc(t)}</span>' for i, t in chips)
     st.markdown(
