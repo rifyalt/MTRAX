@@ -88,7 +88,7 @@ def _generate_totp_secret() -> str:
     """Generate random 20-byte base32 TOTP secret."""
     return _b64_mod.b32encode(os.urandom(20)).decode()
 
-def _provisioning_uri(secret: str, username: str, issuer: str = "MTRAX") -> str:
+def _provisioning_uri(secret: str, username: str, issuer: str = "mtrax") -> str:
     from urllib.parse import quote
     return (
         f"otpauth://totp/{quote(issuer)}:{quote(username)}"
@@ -1730,7 +1730,7 @@ def _2fa_css():
 def twofa_setup_page(username: str):
     """Halaman setup 2FA — redesign v2: editorial split-panel."""
     import streamlit.components.v1 as _components
-    st.set_page_config(page_title="Setup 2FA | MTRAX", layout="centered")
+    st.set_page_config(page_title="Setup 2FA | mtrax", layout="centered")
 
     totp_secrets = _load_totp_secrets()
     secret       = totp_secrets[username]
@@ -1897,7 +1897,7 @@ details[open] .save-summary::before{{transform:rotate(90deg);}}
 
   <!-- topbar -->
   <div class="topbar">
-    <span class="logo">MTRAX</span>
+    <span class="logo">mtrax</span>
     <span class="badge"><span class="badge-dot"></span>SETUP 2FA</span>
   </div>
 
@@ -1931,7 +1931,7 @@ details[open] .save-summary::before{{transform:rotate(90deg);}}
         </div>
         <div class="step">
           <div class="sn">3</div>
-          <div class="st">Nama akun: <strong>MTRAX:{username}</strong>, tipe: <em>Time-based</em>.</div>
+          <div class="st">Nama akun: <strong>mtrax:{username}</strong>, tipe: <em>Time-based</em>.</div>
         </div>
         <div class="step">
           <div class="sn">4</div>
@@ -2062,7 +2062,7 @@ function copyKey(el) {{
 def twofa_verify_page(username: str):
     """Halaman verifikasi OTP untuk login berikutnya — premium redesign."""
     import streamlit.components.v1 as _components
-    st.set_page_config(page_title="Verifikasi 2FA | MTRAX", layout="centered")
+    st.set_page_config(page_title="Verifikasi 2FA | mtrax", layout="centered")
 
     totp_secrets = _load_totp_secrets()
     secret       = totp_secrets[username]
@@ -2106,7 +2106,7 @@ body {{
 }}
 .brand-name {{
   font-size: 0.78em; font-weight: 700;
-  letter-spacing: 0.22em; text-transform: uppercase;
+  letter-spacing: 0.06em; text-transform: none;
   color: #1BA0E2;
 }}
 .step-pill {{
@@ -2249,7 +2249,7 @@ body {{
 <div class="shell">
 
   <div class="brand-bar">
-    <span class="brand-name">MTRAX</span>
+    <span class="brand-name">mtrax</span>
     <span class="step-pill">VERIFIKASI 2FA</span>
   </div>
 
@@ -2262,7 +2262,7 @@ body {{
       <div class="header-title">Masukkan Kode OTP</div>
       <div class="header-sub">
         Halo <strong>{username}</strong>, password sudah benar!<br>
-        Buka <strong>Google Authenticator</strong> dan masukkan kode 6 digit untuk akun <em>MTRAX:{username}</em>.
+        Buka <strong>Google Authenticator</strong> dan masukkan kode 6 digit untuk akun <em>mtrax:{username}</em>.
       </div>
     </div>
 
@@ -2278,7 +2278,7 @@ body {{
       <div class="hint-box">
         
         <div class="hint-text">
-          Buka <strong>Google Authenticator</strong> &rarr; cari akun <em>MTRAX:{username}</em> &rarr; masukkan <strong>6 digit kode</strong> yang ditampilkan.
+          Buka <strong>Google Authenticator</strong> &rarr; cari akun <em>mtrax:{username}</em> &rarr; masukkan <strong>6 digit kode</strong> yang ditampilkan.
         </div>
       </div>
     </div>
@@ -2392,7 +2392,7 @@ def _finish_login(username: str):
 # ======================================
 def login_page():
     st.set_page_config(
-        page_title="Login | MTRAX",
+        page_title="Login | mtrax",
         layout="wide",
         initial_sidebar_state="collapsed"
     )
@@ -2410,10 +2410,10 @@ def login_page():
         except Exception: return ""
 
     wm_b64 = ui.wordmark_b64()
-    wordmark = (f'<img class="lg-wordmark" src="data:image/png;base64,{wm_b64}" alt="MTRAX" />' if wm_b64
-                else '<div class="lg-h" style="letter-spacing:.12em">MTRAX</div>')
+    wordmark = (f'<img class="lg-wordmark" src="data:image/png;base64,{wm_b64}" alt="mtrax" />' if wm_b64
+                else '<div class="lg-h" style="letter-spacing:.12em">mtrax</div>')
 
-    # Palet mengikuti identitas MTRAX: lime -> hijau toska -> biru -> biru tua
+    # Palet mengikuti identitas mtrax: lime -> hijau toska -> biru -> biru tua
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -2523,7 +2523,7 @@ def login_page():
         <div class="lg-foot">Tanpa data identitas pekerja · setiap akses tercatat</div>
     </div>
     <div class="lg-form-panel"></div>
-    <div class="lg-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2026 MTRAX · PT Mitra Tours And Travel</a> · v2026.11.25-PDP</div>
+    <div class="lg-copy"><a href="https://www.linkedin.com/in/rifyalt/" target="_blank">© 2026 mtrax · PT Mitra Tours And Travel</a> · v2026.11.25-PDP</div>
     """, unsafe_allow_html=True)
 
     _dummy, col_form = st.columns(2)
@@ -2531,7 +2531,7 @@ def login_page():
         st.markdown(f"""
         {wordmark}
         <div class="lg-h">Selamat datang kembali</div>
-        <div class="lg-p">Masuk ke akun MTRAX Anda.</div>
+        <div class="lg-p">Masuk ke akun mtrax Anda.</div>
         <div class="lg-label">Username</div>
         """, unsafe_allow_html=True)
 
@@ -2751,7 +2751,7 @@ def _client_ip() -> str:
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _drive_ping() -> dict:
-    """Cek singkat koneksi server MTRAX -> Google Drive (di-cache 2 menit)."""
+    """Cek singkat koneksi server mtrax -> Google Drive (di-cache 2 menit)."""
     if "gcp_service_account" not in st.secrets:
         return {}
     t0 = time.time()
@@ -4125,7 +4125,7 @@ def _ensure_state():
 
 def main_app():
     _ensure_state()
-    st.set_page_config(page_title="MTRAX | Travel Analytics", layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(page_title="mtrax | Travel Analytics", layout="wide", initial_sidebar_state="expanded")
     if st.session_state.get("_session_token"):
         _set_session_cookie(st.session_state._session_token)
     ui.inject_css()
@@ -4184,7 +4184,7 @@ def main_app():
     st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
     ui.note("<b>Catatan penggunaan &amp; kepatuhan</b><br>Aplikasi ini untuk analisis internal. Output tidak bersifat "
             "final dan harus divalidasi sesuai kebijakan perusahaan.")
-    st.markdown("<div class='mx-footer'>© 2026 MTRAX Travel Analytics · PT Mitra Tours And Travel · Dikembangkan oleh "
+    st.markdown("<div class='mx-footer'>© 2026 mtrax Travel Analytics · PT Mitra Tours And Travel · Dikembangkan oleh "
                 "<a href='https://www.linkedin.com/in/rifyalt/' target='_blank'>Rifyal Tumber</a>"
                 f" · UI {getattr(ui, 'UI_VERSION', 'lama')}</div>",
                 unsafe_allow_html=True)
