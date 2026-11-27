@@ -3071,18 +3071,58 @@ def tab_dashboard(df):
     if lead_txt.endswith(" hari"):
         lead_txt, lead_unit = lead_txt[:-5], "hari"
     lead_sub_h = (f"<b>{ui.esc(lead_sub.split(' ')[0])}</b> last-minute" if lead_sub else "")
-    ui.kpi_row([ui.kpi("Booking", ui.fmt_int(len(d)), icon="booking",
+    # ---- indikator naik/turun: bulan lengkap terakhir vs bulan sebelumnya (per Issue Time) ----
+    dl = {k: "" for k in ("bk", "tr", "ht", "rn", "rate", "lead")}
+    cmp_note = ""
+    if "Issue Time" in d and d["Issue Time"].notna().any():
+        last = _last_complete_month(d)
+        per = d["Issue Time"].dt.to_period("M")
+
+        def _met(x):
+            r = x["Number of Rooms Night"].sum() if "Number of Rooms Night" in x else 0
+            v = x["Invoice Amount"].sum() if "Invoice Amount" in x else 0
+            ld = np.nan
+            if "Check in Date" in x:
+                q = (x["Check in Date"].dt.normalize() - x["Issue Time"].dt.normalize()).dt.days
+                q = q[q >= 0]
+                ld = q.mean() if len(q) else np.nan
+            return dict(bk=len(x), tr=x["Travel Request Number"].nunique() if "Travel Request Number" in x else len(x),
+                        ht=x["Hotel Name"].nunique() if "Hotel Name" in x else 0, rn=r,
+                        rate=v / r if r else np.nan, lead=ld)
+        if last is not None:
+            cur_d, prev_d = d[per == last], d[per == last - 1]
+            if len(cur_d):
+                mc = _met(cur_d)
+                mp = _met(prev_d) if len(prev_d) else {k: None for k in mc}
+                lc, lp = (f"{_BULAN_ID[last.month - 1]} {last.year}",
+                          f"{_BULAN_ID[(last - 1).month - 1]} {(last - 1).year}")
+                vs = f"vs {_BULAN_ID[(last - 1).month - 1]}"
+                fmt = dict(bk=ui.fmt_int, tr=ui.fmt_int, ht=ui.fmt_int, rn=ui.fmt_int,
+                           rate=lambda v: ui.fmt_rp(v), lead=lambda v: f"{v:.1f} hari".replace(".", ","))
+                good = dict(bk=True, tr=True, ht=True, rn=True, rate=False, lead=True)
+                for k in dl:
+                    pv_ = mp[k]
+                    tip = (f"{lc}: {fmt[k](mc[k]) if pd.notna(mc[k]) else '-'} · "
+                           f"{lp}: {fmt[k](pv_) if pv_ is not None and pd.notna(pv_) else '-'}")
+                    dl[k] = ui.delta_html(mc[k], pv_, vs, good[k], tip)
+                cmp_note = (f"▲▼ = <b>{lc}</b> vs <b>{lp}</b> (bulan lengkap terakhir, per Issue Time) · "
+                            f"hijau membaik, merah memburuk (rate: turun = membaik) · arahkan kursor ke indikator "
+                            f"untuk melihat angka kedua bulan")
+    ui.kpi_row([ui.kpi("Booking", ui.fmt_int(len(d)), icon="booking", delta=dl["bk"],
                        sub=f"<b>{dec(len(d) / max(tr, 1))}</b> booking / request", sub_html=True),
-                ui.kpi("Travel request", ui.fmt_int(tr), icon="request",
+                ui.kpi("Travel request", ui.fmt_int(tr), icon="request", delta=dl["tr"],
                        sub=f"<b>{dec(rn / max(tr, 1))}</b> malam / request", sub_html=True),
-                ui.kpi("Hotel", ui.fmt_int(n_hotel), icon="hotel",
+                ui.kpi("Hotel", ui.fmt_int(n_hotel), icon="hotel", delta=dl["ht"],
                        sub=f"tersebar di <b>{ui.fmt_int(n_city)}</b> kota", sub_html=True),
-                ui.kpi("Room night", ui.fmt_int(rn), icon="night",
+                ui.kpi("Room night", ui.fmt_int(rn), icon="night", delta=dl["rn"],
                        sub=f"<b>{dec(rn / max(len(d), 1))}</b> malam / booking", sub_html=True),
-                ui.kpi("Rate / malam", rate_txt, unit=rate_unit, icon="rate",
+                ui.kpi("Rate / malam", rate_txt, unit=rate_unit, icon="rate", delta=dl["rate"],
                        sub=f"total <b>{ui.esc(ui.fmt_big(inv))}</b>", sub_html=True),
-                ui.kpi("Lead time", lead_txt, unit=lead_unit, icon="clock",
+                ui.kpi("Lead time", lead_txt, unit=lead_unit, icon="clock", delta=dl["lead"],
                        sub=lead_sub_h, sub_html=True)], 138)
+    if cmp_note:
+        st.markdown(f"<div style='margin:-8px 0 12px;font-size:12px;color:{ui.MUTED}'>{cmp_note}</div>",
+                    unsafe_allow_html=True)
     multi, multi_p = "-", None
     if "Travel Request Number" in d:
         per_tr = d.groupby("Travel Request Number").size()
