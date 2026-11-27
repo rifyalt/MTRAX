@@ -3061,26 +3061,46 @@ def tab_dashboard(df):
         lt = lt[lt >= 0]
         if len(lt):
             lead_txt, lead_sub = f"{lt.mean():.0f} hari", f"{(lt <= 2).mean() * 100:.0f}% last-minute"
-    ui.kpi_row([ui.kpi("Booking", ui.fmt_int(len(d))), ui.kpi("Travel request", ui.fmt_int(tr)),
-                ui.kpi("Hotel", ui.fmt_int(d["Hotel Name"].nunique() if "Hotel Name" in d else 0)),
-                ui.kpi("Room night", ui.fmt_int(rn)),
-                ui.kpi("Rata-rata rate / malam", f"Rp{inv / rn / 1000:,.0f} rb".replace(",", ".") if rn else "-"),
-                ui.kpi("Lead time rata-rata", lead_txt, lead_sub)], 160)
-    multi = "-"
+    n_hotel = d["Hotel Name"].nunique() if "Hotel Name" in d else 0
+    n_city = d["City"].nunique() if "City" in d else 0
+    dec = lambda v: f"{v:.1f}".replace(".", ",")
+    rate_txt, rate_unit = ("-", "")
+    if rn:
+        rate_txt, rate_unit = f"Rp{inv / rn / 1000:,.0f}".replace(",", "."), "rb"
+    lead_unit = ""
+    if lead_txt.endswith(" hari"):
+        lead_txt, lead_unit = lead_txt[:-5], "hari"
+    lead_sub_h = (f"<b>{ui.esc(lead_sub.split(' ')[0])}</b> last-minute" if lead_sub else "")
+    ui.kpi_row([ui.kpi("Booking", ui.fmt_int(len(d)), icon="booking",
+                       sub=f"<b>{dec(len(d) / max(tr, 1))}</b> booking / request", sub_html=True),
+                ui.kpi("Travel request", ui.fmt_int(tr), icon="request",
+                       sub=f"<b>{dec(rn / max(tr, 1))}</b> malam / request", sub_html=True),
+                ui.kpi("Hotel", ui.fmt_int(n_hotel), icon="hotel",
+                       sub=f"tersebar di <b>{ui.fmt_int(n_city)}</b> kota", sub_html=True),
+                ui.kpi("Room night", ui.fmt_int(rn), icon="night",
+                       sub=f"<b>{dec(rn / max(len(d), 1))}</b> malam / booking", sub_html=True),
+                ui.kpi("Rate / malam", rate_txt, unit=rate_unit, icon="rate",
+                       sub=f"total <b>{ui.esc(ui.fmt_big(inv))}</b>", sub_html=True),
+                ui.kpi("Lead time", lead_txt, unit=lead_unit, icon="clock",
+                       sub=lead_sub_h, sub_html=True)], 138)
+    multi, multi_p = "-", None
     if "Travel Request Number" in d:
         per_tr = d.groupby("Travel Request Number").size()
-        multi = ui.fmt_pct((per_tr > 1).mean() * 100, digits=0)
-    bf = "-"
+        multi_p = (per_tr > 1).mean() * 100
+        multi = ui.fmt_pct(multi_p, digits=0)
+    bf, bf_p = "-", None
     if "Meal Plan" in d or "Room Category" in d:
         import cost_avoidance as _ca
         meal = _ca.umap(d["Meal Plan"], _ca.norm_meal) if "Meal Plan" in d else pd.Series("Tidak diketahui", index=d.index)
         if "Room Category" in d:
             meal = meal.where(meal != "Tidak diketahui", _ca.umap(d["Room Category"], _ca.norm_meal))
         known = meal != "Tidak diketahui"
-        bf = ui.fmt_pct((meal[known] == "Breakfast Included").mean() * 100, digits=0) if known.any() else "-"
-    ui.mini_row([("Kota", ui.fmt_int(d["City"].nunique() if "City" in d else 0)),
+        if known.any():
+            bf_p = (meal[known] == "Breakfast Included").mean() * 100
+            bf = ui.fmt_pct(bf_p, digits=0)
+    ui.mini_row([("Kota tujuan", ui.fmt_int(n_city)),
                  ("Negara", ui.fmt_int(d["Country"].nunique() if "Country" in d else 0)),
-                 ("Multi-booking", multi), ("Breakfast included", bf)])
+                 ("Multi-booking", multi, multi_p), ("Breakfast included", bf, bf_p)])
 
     a, b = st.columns(2)
     with a:
