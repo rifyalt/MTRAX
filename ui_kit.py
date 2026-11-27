@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.27-b"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.27-c"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -619,4 +619,145 @@ async function run(force){
   render(res); }
 $("re").onclick=()=>run(true).finally(()=>{$("re").disabled=false;});
 drawIp(); drive(); run(false).finally(()=>{$("re").disabled=false;});
+</script></body></html>""".replace("__CFG__", cfg)
+
+
+# ---------------------------------------------------------------------------
+# CHIP STATUS KONEKSI DI HEADER (+ popover detail)
+# Iframe komponen diletakkan (position:fixed) tepat di atas placeholder .mx-net-ph di header.
+# ---------------------------------------------------------------------------
+NET_CHIP_PLACEHOLDER = '<span class="mx-chip mx-net-ph" style="visibility:hidden">● Mengukur…</span>'
+
+
+def net_chip_html(server_ip: str = "", drive: dict | None = None) -> str:
+    import json as _json
+    ip = server_ip if isinstance(server_ip, str) else ""
+    d = drive if isinstance(drive, dict) else {}
+    d = {k: (v if isinstance(v, (str, int, float)) else str(v)) for k, v in d.items()}
+    cfg = _json.dumps({"ip": ip, "drive": d}).replace("</", "<\\/")
+    return """<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:transparent;overflow:hidden;font-family:"Source Sans Pro","Source Sans 3",Inter,system-ui,sans-serif;color:#434343}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;font-size:12.5px;font-weight:600;
+ white-space:nowrap;cursor:pointer;border:1px solid #E6EBEF;background:#F5F8FA;color:#434343;user-select:none;
+ transition:background .2s,border-color .2s,color .2s}
+.chip .d{width:7px;height:7px;border-radius:50%;background:#BDBDBD}
+.chip .c{font-weight:400;color:#6B6B6B}
+.chip.ok{background:#EEF7E6;border-color:#CFE6BB;color:#3B7A0B}.chip.ok .d{background:#3B7A0B;box-shadow:0 0 0 3px rgba(59,122,11,.15)}
+.chip.mid{background:#FFF8E0;border-color:#F2DE9B;color:#8A6400}.chip.mid .d{background:#E0A800}
+.chip.bad{background:#FDEBF1;border-color:#F3C1D1;color:#B0123F}.chip.bad .d{background:#D61B54}
+.chip.run .d{animation:blink 1s infinite}@keyframes blink{50%{opacity:.25}}
+.pop{position:absolute;top:42px;left:0;width:300px;background:#fff;border:1px solid #DEDEDE;border-radius:12px;
+ box-shadow:0 10px 30px rgba(0,0,0,.10);padding:14px;font-size:12.5px;display:none}
+.pop.on{display:block;animation:in .15s ease-out}@keyframes in{from{opacity:0;transform:translateY(-4px)}}
+.pop:before{content:"";position:absolute;top:-6px;left:24px;width:10px;height:10px;background:#fff;border-left:1px solid #DEDEDE;
+ border-top:1px solid #DEDEDE;transform:rotate(45deg)}
+.h{display:flex;align-items:center;gap:7px;font-weight:600;font-size:13px}.h .d{width:7px;height:7px;border-radius:50%;background:#BDBDBD}
+.ok2 .d{background:#3B7A0B}.mid2 .d{background:#E0A800}.bad2 .d{background:#D61B54}
+.h .r{margin-left:auto;color:#6B6B6B;font-weight:400;font-size:11px}
+.g{display:grid;grid-template-columns:repeat(3,1fr);margin-top:10px}
+.n{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}.n small{font-size:10.5px;font-weight:400;color:#6B6B6B;margin-left:2px}
+.l{font-size:10.5px;color:#6B6B6B}
+.sp{margin-top:10px}.sp .t{display:flex;justify-content:space-between;font-size:10.5px;color:#6B6B6B}
+.sp svg{display:block;width:100%;height:38px;margin-top:4px}
+.m{margin-top:10px;padding-top:10px;border-top:1px solid #EFEFEF;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:11.5px}
+.m .k{color:#6B6B6B}.m b{font-weight:500}
+.ip{font-family:ui-monospace,Menlo,Consolas,monospace;border-bottom:1px dotted #BDBDBD;cursor:pointer}
+.bt{margin-top:12px;display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:#9A9A9A}
+button{border:1px solid #DEDEDE;background:#fff;border-radius:8px;padding:4px 10px;font:500 11.5px inherit;color:#0C79C2;cursor:pointer}
+button:hover{background:#F5F8FA}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body>
+<span class="chip run" id="chip"><span class="d"></span><span id="ct">Mengukur…</span><span class="c" id="cm"></span></span>
+<div class="pop" id="pop">
+ <div class="h" id="ph"><span class="d"></span><span id="pt">Mengukur koneksi…</span><span class="r" id="at"></span></div>
+ <div class="g"><div><div class="n" id="lat">–</div><div class="l">Latensi</div></div>
+  <div><div class="n" id="spd">–</div><div class="l">Unduh</div></div>
+  <div><div class="n" id="jit">–</div><div class="l">Jitter</div></div></div>
+ <div class="sp"><div class="t"><span>Latensi 10 menit terakhir</span><span id="mx"></span></div><svg id="sv" viewBox="0 0 270 38" preserveAspectRatio="none"></svg></div>
+ <div class="m"><span class="k">IP publik</span><b><span class="ip" id="ip" title="Klik untuk tampilkan/sembunyikan">–</span></b>
+  <span class="k">Jaringan</span><b id="net">–</b>
+  <span class="k">Cloud Drive</span><b id="drv">–</b></div>
+ <div class="bt"><span>IP tidak disimpan di server</span><button id="re">↻ Tes ulang</button></div>
+</div>
+<script>
+const CFG=__CFG__, N=10, KEY="mtrax_net_v2", HKEY="mtrax_net_hist", TTL=5*60*1000;
+const $=id=>document.getElementById(id), fe=window.frameElement, P=window.parent;
+let D=null; try{ D=P.document; }catch(e){}
+let open=false, ipFull=CFG.ip||"", ipShown=false;
+const POP_H=336;
+function ph(){ return D? D.querySelector(".mx-net-ph") : null; }
+function place(){ if(!fe||!D) return; const p=ph();
+  if(!p){ fe.style.display="none"; return; }
+  const w=$("chip").offsetWidth+1; p.style.width=w+"px"; p.style.display="inline-flex";
+  const b=p.getBoundingClientRect();
+  Object.assign(fe.style,{display:"block",position:"fixed",left:b.left+"px",top:b.top+"px",border:"0",zIndex:"999",
+    width:(open?Math.max(302,w):w)+"px",height:(open?POP_H:b.height)+"px",colorScheme:"normal",background:"transparent"});
+  const box=fe.closest('[data-testid="stElementContainer"]')||fe.parentElement;   // keluarkan dari alur layout
+  if(box){ box.style.position="absolute"; box.style.height="0px"; box.style.width="0px"; box.style.overflow="visible"; } }
+if(D){ D.addEventListener("scroll",place,true); P.addEventListener("resize",place);
+  D.addEventListener("mousedown",()=>{ if(open){ setOpen(false); } }); }
+setInterval(place,400);
+function setOpen(v){ open=v; $("pop").classList.toggle("on",v); place(); }
+$("chip").onclick=()=>setOpen(!open);
+function mask(ip){ if(!ip) return "–"; if(ip.includes(":")) return ip.split(":").slice(0,2).join(":")+":••••";
+  const p=ip.split("."); return p.length===4? p[0]+"."+p[1]+".•••.•••" : ip; }
+function drawIp(){ $("ip").textContent=ipShown?(ipFull||"–"):mask(ipFull); }
+$("ip").onclick=()=>{ ipShown=!ipShown; drawIp(); };
+(function(){ const d=CFG.drive||{}; const el=$("drv");
+  if(!d.state){ el.textContent="tidak diatur"; el.style.color="#6B6B6B"; }
+  else if(d.state==="ok"){ el.textContent="● tersambung · "+String(d.secs).replace(".",",")+" detik"; el.style.color="#3B7A0B"; }
+  else { el.textContent="● gagal"; el.style.color="#D61B54"; if(d.msg) el.title=d.msg; } })();
+function base(){ try{ const L=P.location; return L.origin+L.pathname.replace(/[^\\/]*$/,""); }catch(e){ return null; } }
+let URL_=null;
+async function ping(url){ const t=performance.now();
+  const r=await fetch(url+(url.includes("?")?"&":"?")+"t="+Math.random(),{cache:"no-store"}); if(!r.ok) throw 0; await r.text();
+  return performance.now()-t; }
+async function findUrl(){ if(URL_) return URL_; const b=base(), us=[]; if(b) us.push(b+"_stcore/health"); us.push("/_stcore/health");
+  for(const u of us){ try{ await ping(u); URL_=u; return u; }catch(e){} } return null; }
+function ss(){ try{ return P.sessionStorage; }catch(e){ return null; } }
+function hist(){ try{ return JSON.parse((ss()&&ss().getItem(HKEY))||"[]"); }catch(e){ return []; } }
+function pushHist(ms){ const h=hist().filter(p=>Date.now()-p.t<10*60*1000); h.push({t:Date.now(),ms}); try{ ss()&&ss().setItem(HKEY,JSON.stringify(h.slice(-40))); }catch(e){} return h; }
+function spark(){ const h=hist().filter(p=>Date.now()-p.t<10*60*1000), sv=$("sv");
+  if(h.length<2){ sv.innerHTML='<text x="135" y="23" text-anchor="middle" font-size="10" fill="#9A9A9A">grafik terisi otomatis tiap 30 detik</text>'; $("mx").textContent=""; return; }
+  const vals=h.map(p=>p.ms==null?null:p.ms), ok=vals.filter(v=>v!=null), mx=Math.max(50,...ok);
+  const x=i=>i*270/(h.length-1), y=v=>36-(v/mx)*32;
+  let pts=[]; vals.forEach((v,i)=>{ if(v!=null) pts.push(x(i).toFixed(1)+","+y(v).toFixed(1)); });
+  const fails=vals.map((v,i)=>v==null?'<line x1="'+x(i)+'" x2="'+x(i)+'" y1="2" y2="38" stroke="#D61B54" stroke-width="1.5" stroke-dasharray="2 2"/>':"").join("");
+  const last=pts[pts.length-1]||"0,36";
+  sv.innerHTML='<polygon points="'+pts.join(" ")+' '+last.split(",")[0]+',38 '+(pts[0]||"0,36").split(",")[0]+',38" fill="rgba(27,160,226,.08)"/>'+
+    '<polyline points="'+pts.join(" ")+'" fill="none" stroke="#1BA0E2" stroke-width="1.8" stroke-linejoin="round"/>'+fails+
+    '<circle cx="'+last.split(",")[0]+'" cy="'+last.split(",")[1]+'" r="3" fill="#1BA0E2"/>';
+  $("mx").textContent= ok.length? "maks "+Math.round(Math.max(...ok))+" ms" : ""; }
+function status(lat,jit,loss){ let c="ok",t="Stabil";
+  if(lat==null||loss>=3||lat>400||jit>120){c="bad";t="Tidak stabil";} else if(loss>=1||lat>=150||jit>=40){c="mid";t="Kurang stabil";}
+  return [c,t]; }
+function render(r){ const [c,t]=status(r.lat,r.jit,r.loss);
+  $("chip").className="chip "+c; $("ct").textContent=t; $("cm").textContent=r.lat==null?"":"· "+Math.round(r.lat)+" ms";
+  $("ph").className="h "+c+"2"; $("pt").textContent="Koneksi "+t.toLowerCase();
+  $("at").textContent="diukur "+new Date(r.at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
+  $("lat").innerHTML=r.lat==null?"–":Math.round(r.lat)+"<small>ms</small>";
+  $("jit").innerHTML=(r.jit==null?"–":Math.round(r.jit)+"<small>ms</small>")+(r.loss?"<small>· "+r.loss+" gagal</small>":"");
+  $("spd").innerHTML=r.mbps==null?"–":(r.mbps>=10?Math.round(r.mbps):r.mbps.toFixed(1).replace(".",","))+"<small>Mbps</small>";
+  if(r.ip){ ipFull=r.ip; } drawIp();
+  const cn=navigator.connection, parts=[]; if(cn&&cn.effectiveType) parts.push(cn.effectiveType.toUpperCase()); if(r.colo) parts.push("CDN "+r.colo);
+  $("net").textContent=parts.length?parts.join(" · "):"–"; spark(); place(); }
+async function run(force){
+  if(!force){ try{ const s=JSON.parse((ss()&&ss().getItem(KEY))||"null"); if(s&&Date.now()-s.at<TTL){ render(s); return; } }catch(e){} }
+  $("chip").className="chip run"; $("ct").textContent="Mengukur…"; $("cm").textContent=""; $("re").disabled=true; place();
+  const u=await findUrl(), rtts=[]; let loss=0;
+  for(let i=0;i<N;i++){ let v=null; if(u){ try{ v=await ping(u); }catch(e){} } if(v==null) loss++; rtts.push(v); await new Promise(r=>setTimeout(r,120)); }
+  const ok=rtts.filter(v=>v!=null).sort((a,b)=>a-b), lat=ok.length?ok[Math.floor(ok.length/2)]:null;
+  let jit=null; const seq=rtts.filter(v=>v!=null); if(seq.length>1){ const d=[]; for(let i=1;i<seq.length;i++) d.push(Math.abs(seq[i]-seq[i-1])); d.sort((a,b)=>a-b); jit=d[Math.floor(d.length/2)]; }
+  let ip=null,colo=null; try{ const t=await (await fetch("https://speed.cloudflare.com/cdn-cgi/trace",{cache:"no-store"})).text();
+    const m=Object.fromEntries(t.trim().split("\\n").map(l=>l.split("="))); ip=m.ip||null; colo=m.colo||null; }catch(e){}
+  let mbps=null; try{ const t0=performance.now(); const r=await fetch("https://speed.cloudflare.com/__down?bytes=2000000&r="+Math.random(),{cache:"no-store"});
+    const buf=await r.arrayBuffer(); mbps=(buf.byteLength*8/1e6)/Math.max((performance.now()-t0)/1000,0.05);
+  }catch(e){ const cn=navigator.connection; if(cn&&cn.downlink) mbps=cn.downlink; }
+  if(lat!=null) pushHist(lat);
+  const res={at:Date.now(),lat,jit,loss,mbps,ip,colo}; try{ ss()&&ss().setItem(KEY,JSON.stringify(res)); }catch(e){}
+  render(res); $("re").disabled=false; }
+$("re").onclick=()=>run(true);
+setInterval(async()=>{ const u=await findUrl(); let v=null; if(u){ try{ v=await ping(u); }catch(e){} } pushHist(v); spark(); },30000);
+drawIp(); place(); run(false);
 </script></body></html>""".replace("__CFG__", cfg)
