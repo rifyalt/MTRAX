@@ -1157,9 +1157,11 @@ def _detail_table(out):
         if col.name == "Status":
             return [f"color:{st_col.get(v, ui.INK)};background-color:{st_bg.get(v, 'transparent')};font-weight:600"
                     for v in status]
-        if col.name == "Corp rate":
-            return [f"color:{st_col[v]};font-weight:600" if v in ("Kompetitif", "Tidak kompetitif") else ""
-                    for v in status]
+        if col.name == "Corp rate":   # hijau = lebih murah dari rata-rata dibayar, merah = sama/lebih mahal
+            paid = show["Rata-rata dibayar"].to_numpy()
+            return ["" if (pd.isna(c_) or c_ == 0 or pd.isna(p_)) else
+                    f"color:{COMPETITIVE_GREEN if c_ < p_ else NOT_COMPETITIVE_RED};font-weight:600"
+                    for c_, p_ in zip(col, paid)]
         if col.name == "Selisih %":   # + = corp rate lebih murah dari rata-rata dibayar (hijau), - = lebih mahal (merah)
             return [f"color:{COMPETITIVE_GREEN};font-weight:600" if v > 0 else
                     (f"color:{NOT_COMPETITIVE_RED};font-weight:600" if _NA_SENT < v < 0 else
@@ -1179,7 +1181,8 @@ def _detail_table(out):
             "Hotel": st.column_config.TextColumn("Hotel", width="medium"),
             "Kota": st.column_config.TextColumn("Kota"),
             "Room type": st.column_config.TextColumn("Tipe kamar"),
-            "Corp rate": st.column_config.Column("Corp rate"),
+            "Corp rate": st.column_config.Column("Corp rate", help="Hijau = lebih murah dari rata-rata dibayar; "
+                                                                "merah = sama atau lebih mahal."),
             "Rata-rata dibayar": st.column_config.Column("Rata-rata dibayar"),
             "Selisih %": st.column_config.Column("Selisih", width="small",
                                                  help="Rata-rata dibayar dibanding corp rate. + (hijau) = corp rate lebih murah; − (merah) = corp rate lebih mahal."),
