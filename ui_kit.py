@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.27-m"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.27-n"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -285,9 +285,61 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
   font-size:11px; font-weight:700; font-style:italic; display:flex; align-items:center; justify-content:center; font-family:Georgia,serif; }}
 [data-testid="stPopover"] button {{ border-radius:8px; font-size:13.5px; }}
 .mx-footer {{ text-align:center; padding:20px 0 4px; color:var(--muted); font-size:12.5px; }}
+/* ---------- Cetak ke PDF: Overview, 1 lembar A4 potret (tombol "Cetak PDF" → dialog print browser) ---------- */
+.mx-print-head {{ display:none; }}
+/* mode siap-cetak di layar: tata letak desktop selebar --mx-pw lalu diperkecil (--mx-pz) agar pas 1 halaman A4 */
+.mx-printing [data-testid="stSidebar"],
+.mx-printing [data-testid="stSidebarCollapsedControl"],
+.mx-printing [data-testid="stHeader"],
+.mx-printing [data-testid="stToolbar"],
+.mx-printing [data-testid="stDecoration"],
+.mx-printing [data-testid="stStatusWidget"],
+.mx-printing .st-key-mx_nav,
+.mx-printing .mx-footer,
+.mx-printing .mx-hero,
+.mx-printing [data-testid="stDownloadButton"],
+.mx-printing [data-testid="stPopover"],
+.mx-printing [data-testid="stExpander"],
+.mx-printing .stButton,
+.mx-printing [data-testid="stElementToolbar"],
+.mx-printing .modebar-container,
+.mx-printing .mx-cmp-note,
+.mx-printing .mx-print-skip {{ display:none !important; }}
+.mx-printing .st-key-mx_print {{ position:absolute !important; height:0 !important; overflow:hidden !important; }}
+.mx-printing [data-testid="stMain"] [data-testid="stVerticalBlock"],
+.mx-printing [data-testid="stMain"] [data-testid="stLayoutWrapper"] {{ height:auto !important; max-height:none !important; }}
+.mx-printing [data-testid="stMainBlockContainer"], .mx-printing .block-container {{
+  max-width:none !important; width:var(--mx-pw, 1100px) !important; padding:0 !important; margin:0 !important; }}
+.mx-printing [data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {{ gap:.7rem !important; }}
+.mx-printing .mx-kpis {{ grid-template-columns:repeat(6, minmax(0, 1fr)) !important; }}
+.mx-printing .mx-mini {{ grid-template-columns:repeat(4, minmax(0, 1fr)) !important; margin-bottom:6px; }}
+.mx-printing .mx-print-head {{ display:flex; justify-content:space-between; align-items:flex-end; gap:16px;
+  border-bottom:2px solid var(--p3); padding:0 0 8px; margin:0 0 4px; }}
+.mx-print-head .t {{ font-size:22px; font-weight:700; color:var(--ink); }}
+.mx-print-head .t span {{ color:var(--p3); }}
+.mx-print-head .m {{ font-size:12px; color:var(--muted); text-align:right; line-height:1.45; }}
+@media print {{
+  @page {{ size:A4 portrait; margin:8mm; }}
+  * {{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; box-shadow:none !important; }}
+  html, body, .stApp, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-testid="stMain"] {{
+    background:#FFFFFF !important; overflow:visible !important; height:auto !important; min-height:0 !important;
+    position:static !important; padding-bottom:0 !important; margin-bottom:0 !important; }}
+  [data-testid="stBottom"], [data-testid="stBottomBlockContainer"] {{ display:none !important; }}
+  [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], [data-testid="stHeader"], [data-testid="stToolbar"],
+  [data-testid="stDecoration"], [data-testid="stStatusWidget"], .st-key-mx_nav, .mx-footer, .mx-hero,
+  [data-testid="stDownloadButton"], [data-testid="stPopover"], [data-testid="stExpander"], .stButton,
+  [data-testid="stElementToolbar"], .modebar-container, .mx-cmp-note, .mx-print-skip, iframe, .st-key-mx_print {{ display:none !important; }}
+  /* Streamlit melebarkan kolom jadi 100% saat print → kembalikan berdampingan seperti di layar */
+  [data-testid="stHorizontalBlock"] {{ display:flex !important; flex-wrap:nowrap !important; }}
+  [data-testid="stHorizontalBlock"] > [data-testid="stColumn"], [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
+    display:flex !important; width:auto !important; min-width:0 !important; margin-bottom:0 !important; }}
+  .mx-print-head {{ display:flex !important; }}
+  /* perkecil hanya saat cetak: grafik sudah digambar di layar selebar --mx-pw, lalu diskalakan pas 1 halaman */
+  .mx-printing [data-testid="stMainBlockContainer"], .mx-printing .block-container {{ zoom:var(--mx-pz, 1); }}
+}}
 .mx-footer a {{ color:var(--p3); text-decoration:none; }}
 
-@media (max-width: 760px) {{
+@media screen and (max-width: 760px) {{
   .block-container {{ padding-left:1rem; padding-right:1rem; }}
   .mx-h1 {{ font-size:22px; }}
   .mx-kpi .v {{ font-size:22px; }}
@@ -335,7 +387,7 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 .mx-maplist .ft {{ font-size:11.5px; color:#8A8A8A; margin-top:8px; line-height:1.4; }}
 /* ---- grafik berdampingan: susun ke bawah bila layar sempit ---- */
 @media (max-width: 1500px) {{ .mx-kpi .l {{ font-size:12px; }} .mx-kpi .ic {{ width:24px; height:24px; }} }}
-@media (max-width: 1200px) {{
+@media screen and (max-width: 1200px) {{
   [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) {{ flex-wrap: wrap !important; }}
   [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) > [data-testid="stColumn"] {{
     width: 100% !important; flex: 1 1 100% !important; min-width: 100% !important; }}
@@ -883,6 +935,69 @@ _REP_ICO = {
     "target": '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
     "file": '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
 }
+
+
+def print_button_html(label="Cetak PDF") -> str:
+    """Tombol di iframe: lebarkan halaman induk ke ukuran kertas, biarkan grafik menyesuaikan, lalu buka dialog print."""
+    return """<!doctype html><html><head><style>
+html,body{margin:0;padding:0;background:transparent;font-family:"Source Sans Pro","Source Sans 3",sans-serif}
+.w{display:flex;justify-content:flex-end}
+button{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 14px;border-radius:9px;cursor:pointer;
+ border:1px solid #D5E3EE;background:#fff;color:#1F2A37;font:600 13.5px/1 inherit;font-family:inherit;
+ transition:background .15s,border-color .15s,color .15s}
+button:hover{border-color:#1BA0E2;color:#0E6BA8;background:#F4FAFE}
+button:disabled{opacity:.6;cursor:progress}
+svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+</style></head><body><div class="w"><button id="b" title="Simpan halaman ini sebagai PDF (pilih 'Simpan sebagai PDF' di dialog print)">
+<svg viewBox="0 0 24 24"><path d="M7 9V3h10v6M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="7" y="14" width="10" height="7" rx="1"/></svg>
+<span>__LABEL__</span></button></div>
+<script>
+const b=document.getElementById("b");
+let P,D; try{P=window.parent;D=P.document;}catch(e){P=null;}
+// Area cetak A4 potret (margin 8 mm) dalam px CSS: 194 × 281 mm ≈ 733 × 1062 → pakai sedikit cadangan
+const PW=726, PH=1045;
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+function box(){ return D.querySelector('[data-testid="stMainBlockContainer"]')||D.querySelector(".block-container"); }
+async function prep(){
+  const R=D.documentElement;
+  R.style.setProperty("--mx-pz","1"); R.style.setProperty("--mx-pw","1100px");
+  R.classList.add("mx-printing"); P.dispatchEvent(new Event("resize")); await wait(700);
+  // 2 putaran: cari lebar tata letak yang membuat isi pas selebar & setinggi 1 halaman
+  let lw=1100, z=1;
+  for(let k=0;k<2;k++){
+    const h=box().scrollHeight||1;
+    lw=Math.round(Math.min(1700, Math.max(980, PW*h/PH)));
+    R.style.setProperty("--mx-pw", lw+"px"); P.dispatchEvent(new Event("resize")); await wait(650);
+  }
+  const h=box().scrollHeight||1;
+  z=Math.min(PW/lw, PH/h);
+  R.style.setProperty("--mx-pz", (z*0.97).toFixed(4));   // hanya dipakai @media print
+  return {lw, h, z};
+}
+function done(){
+  const R=D.documentElement; R.classList.remove("mx-printing");
+  R.style.removeProperty("--mx-pz"); R.style.removeProperty("--mx-pw");
+  P.dispatchEvent(new Event("resize")); b.disabled=false;
+}
+if(P){ P.__mxPrep=prep; P.__mxDone=done; }
+b.onclick=async ()=>{
+  if(!P){window.print();return;}
+  b.disabled=true; P.addEventListener("afterprint",done,{once:true});
+  try{ await prep(); }catch(e){}
+  try{ P.focus(); P.print(); }catch(e){ done(); }
+  setTimeout(()=>{ if(b.disabled) done(); },1500);
+};
+</script></body></html>""".replace("__LABEL__", esc(label))
+
+
+def print_head(page, period, by=""):
+    """Kop halaman yang hanya muncul saat dicetak."""
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=7))).strftime("%d/%m/%Y %H:%M")
+    who = f" · oleh {esc(by)}" if by else ""
+    st.markdown(f'<div class="mx-print-head"><div class="t"><span>mtrax</span> · {esc(page)}</div>'
+                f'<div class="m">Periode {esc(period)}<br>Dicetak {now} WIB{who}</div></div>',
+                unsafe_allow_html=True)
 
 
 def report_card(title: str, desc: str, rows: int, icon: str = "file") -> str:
