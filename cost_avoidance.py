@@ -960,8 +960,10 @@ def hotel_cumulative(s: pd.DataFrame) -> pd.DataFrame:
     x = s[s["RN"] > 0]
     if x.empty:
         return pd.DataFrame()
-    g = (x.groupby(["Hotel", "Kota"], dropna=False)
-         .agg(Potensi=("Potensi", "sum"), RN=("RN", "sum"), Tipe=("Room type", "nunique"),
+    keys = ["_hotel_key", "_city_key"] if "_hotel_key" in x.columns else ["Hotel", "Kota"]
+    agg = {} if keys[0] == "Hotel" else {"Hotel": ("Hotel", _top), "Kota": ("Kota", _top)}
+    g = (x.groupby(keys, dropna=False)
+         .agg(**agg, Potensi=("Potensi", "sum"), RN=("RN", "sum"), Tipe=("Room type", "nunique"),
               Selisih=("Selisih %", "max"))
          .reset_index().sort_values(["RN", "Potensi"], ascending=False).reset_index(drop=True))
     tot = g["RN"].sum()
@@ -978,7 +980,7 @@ def _cumulative_view(s: pd.DataFrame, topn: int, can_download: bool, excel_fn):
     g = hotel_cumulative(s)
     if g.empty:
         st.info("Belum ada room night yang cocok dengan corp rate.")
-        return
+        return set()
     n80 = int((g["Kumulatif %"] < CUM_TARGET).sum()) + 1
     n80 = min(n80, len(g))
     tot = g["Potensi"].sum()
@@ -1065,6 +1067,8 @@ def _cumulative_view(s: pd.DataFrame, topn: int, can_download: bool, excel_fn):
                                file_name=f"kumulatif_room_night_hotel_{datetime.now():%Y%m%d}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ca_dl_cum")
     _chart_guide(full, n80, y80)
+    kc = ["_hotel_key", "_city_key"] if "_hotel_key" in full.columns else ["Hotel", "Kota"]
+    return set(map(tuple, full.head(n80)[kc].to_numpy()))
 
 
 def _chart_guide(g: pd.DataFrame, n80: int, y80: float):
@@ -1120,6 +1124,7 @@ def _detail_table(out):
     warna status konsisten (hijau / abu / merah)."""
     import streamlit as st
     show = pd.DataFrame({
+        "No.": np.arange(1, len(out) + 1),
         "Hotel": out["Hotel"],
         "Kota": out["Kota"],
         "Room type": out["Room type"].astype(str).str.replace(r"^Lainnya · ", "Lainnya: ", regex=True),
@@ -1127,8 +1132,6 @@ def _detail_table(out):
         "Rata-rata dibayar": out["Rata-rata dibayar"].round(0),
         "Selisih %": out["Selisih %"].round(1).fillna(_NA_SENT),
         "Room night": out["RN"],
-        "Potensi (Rp jt)": (out["Potensi"] / 1e6).round(1),
-        "Room Night < Corp %": out["Room Night < Corp %"].round(0),
         "Status": out["Daya saing"].map(STATUS_ICON).fillna(out["Daya saing"]),
     })
     st_col = {"Kompetitif": COMPETITIVE_GREEN, "Tidak kompetitif": NOT_COMPETITIVE_RED,
@@ -1167,10 +1170,10 @@ def _detail_table(out):
            .format({"Corp rate": rp, "Rata-rata dibayar": rp,
                     "Selisih %": lambda v: "–" if pd.isna(v) or v == _NA_SENT else f"{v:+.1f}%".replace(".", ","),
                     "Room night": lambda v: f"{v:,.0f}".replace(",", ".")}, na_rep="-"))
-    pmax = float(show["Potensi (Rp jt)"].max() or 1)
     st.dataframe(
         sty, hide_index=True, width="stretch", height=min(560, 35 * len(show) + 38),
         column_config={
+            "No.": st.column_config.NumberColumn("No.", width=48, format="%d"),
             "Hotel": st.column_config.TextColumn("Hotel", width="medium"),
             "Kota": st.column_config.TextColumn("Kota"),
             "Room type": st.column_config.TextColumn("Tipe kamar"),
@@ -1179,15 +1182,10 @@ def _detail_table(out):
             "Selisih %": st.column_config.Column("Selisih", width="small",
                                                  help="Rata-rata dibayar dibanding corp rate. + = dibayar di atas corp rate."),
             "Room night": st.column_config.Column("RN", width="small", help="Room night"),
-            "Potensi (Rp jt)": st.column_config.ProgressColumn(
-                "Potensi", format="Rp%.0f jt", min_value=0, max_value=pmax, width="small",
-                help="Potensi avoidance: penghematan bila semua room night dibayar sesuai corp rate."),
-            "Room Night < Corp %": st.column_config.ProgressColumn(
-                "RN < Corp", format="%.0f%%", min_value=0, max_value=100, width="small",
-                help="Room Night < Corp %: porsi room night yang dibayar lebih murah dari corp rate. Makin kecil makin bagus."),
             "Status": st.column_config.TextColumn("Daya saing"),
         })
-    st.caption("Semua baris adalah booking Breakfast Included. Klik judul kolom untuk mengurutkan."
+    st.caption("Hotel yang sama dengan tabel hotel fokus (kumulatif 80% room night), dirinci per tipe kamar. "
+               "Semua baris adalah booking Breakfast Included. Klik judul kolom untuk mengurutkan."
                + (" Baris abu-abu (○ Belum ada corp rate) = tipe kamar yang dibeli tetapi tidak ada di kontrak: "
                   "hanya ditampilkan, tidak ikut dihitung di potensi, kepatuhan, maupun status." if nocorp.any() else ""))
 
@@ -1315,7 +1313,10 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
         if s.empty:
             st.info("Belum ada booking yang cocok dengan daftar corp rate.")
         else:
-            _cumulative_view(s, TABLE_TOP, can_download, excel_fn)
+            focus_keys = _cumulative_view(s, TABLE_TOP, can_download, excel_fn)
+            # Tabel detail = hotel yang sama dengan tabel hotel fokus (kumulatif 80%), dirinci per tipe kamar
+            if focus_keys:
+                s = s[[k in focus_keys for k in zip(s["_hotel_key"], s["_city_key"])]].copy()
 
             h1, h3, h2 = st.columns([1.6, 2.2, 1], vertical_alignment="bottom")
             h1.markdown("**Detail per hotel & tipe kamar**")
@@ -1348,7 +1349,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
             out = d[["Hotel", "Kota", "Room type", "Meal plan", "Corp", "Rata-rata dibayar", "Selisih %", "RN",
                      "Potensi", "Room Night < Corp %", "Posisi kota", "Daya saing"]].reset_index(drop=True)
             _detail_table(out)
-            with st.expander("Arti status, Room Night < Corp % dan Posisi kota", icon=":material/help:"):
+            with st.expander("Arti status daya saing", icon=":material/help:"):
                 st.markdown('<div class="mx-guide">'
                 f"• <span style='color:{COMPETITIVE_GREEN};font-weight:600'>Kompetitif (hijau)</span>: corp rate minimal "
                 f"{CORP_CHEAPER_PCT}% lebih murah dari rata-rata rate yang dibayar. Contoh: rata-rata dibayar Rp1.000.000, "
@@ -1358,16 +1359,13 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
                 f"• <span style='color:{ui.MUTED};font-style:italic'>○ Belum ada corp rate</span>: tipe kamar dibeli di hotel "
                 "ber-kontrak tetapi tidak ada di kontrak. Ditampilkan sebagai informasi, <b>tidak dihitung</b> di potensi, "
                 "kepatuhan, grafik, maupun status. Layak diusulkan masuk kontrak bila room night-nya besar.<br>"
-                "<b>Room Night &lt; Corp %</b> = persentase room night yang dibayar lebih murah dari corp rate. "
-                "Rate per malam tiap booking = Invoice Amount ÷ Number of Rooms Night; bila lebih rendah dari corp rate, "
-                "semua room night booking itu dihitung. Contoh: 3 dari 5 room night dibayar di bawah corp rate = 60%. "
-                "Makin kecil angkanya, makin bagus corp rate-nya.<br>"
-                + _position_guide() + "</div>", unsafe_allow_html=True)
+                "<b>Selisih</b> = rata-rata rate dibayar dibanding corp rate. Tanda + berarti rata-rata dibayar lebih "
+                "mahal dari corp rate.</div>", unsafe_allow_html=True)
             if can_download:
-                st.download_button("Unduh Excel", _excel(out.drop(columns=["Posisi kota"]).rename(columns={"Corp": "Corp rate", "RN": "Room night"}),
+                st.download_button("Unduh Excel", _excel(out.drop(columns=["Posisi kota", "Potensi", "Room Night < Corp %"]).rename(columns={"Corp": "Corp rate", "RN": "Room night"}).pipe(lambda x: x.insert(0, "No.", range(1, len(x) + 1)) or x),
                                    "Cost Avoidance", excel_fn,
-                                   money_cols=("Corp rate", "Rata-rata dibayar", "Potensi"),
-                                   int_cols=("Room night",), dec_cols=("Selisih %", "Room Night < Corp %")),
+                                   money_cols=("Corp rate", "Rata-rata dibayar"),
+                                   int_cols=("No.", "Room night"), dec_cols=("Selisih %",)),
                                    file_name=f"cost_avoidance_{datetime.now():%Y%m%d}.xlsx",
                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                    key="ca_dl_detail")
