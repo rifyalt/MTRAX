@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.27-j"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.27-k"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -190,22 +190,35 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 
 /* KPI */
 .mx-kpis {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(var(--mx-min, 180px), 1fr)); gap:12px; margin:4px 0 16px; }}
-.mx-kpi {{ background:#FFFFFF; border:1px solid var(--line); border-radius:var(--r); padding:16px 18px;
-  box-shadow:var(--shadow); transition:box-shadow .15s, transform .15s; }}
-.mx-kpi:hover {{ box-shadow:var(--shadow-h); transform:translateY(-1px); }}
+.mx-kpi {{ background:#FFFFFF; border:1px solid var(--line); border-radius:var(--r); padding:15px 14px 14px 16px;
+  box-shadow:var(--shadow); transition:box-shadow .15s, transform .15s, border-color .15s;
+  display:flex; flex-direction:column; min-width:0; }}
+.mx-kpi:hover {{ box-shadow:var(--shadow-h); transform:translateY(-1px); border-color:#CFE6F5; }}
 .mx-kpi.dark {{ background:var(--dark); border-color:var(--dark); color:#FFFFFF; position:relative; overflow:hidden; }}
 .mx-kpi.dark::before {{ content:""; position:absolute; left:0; top:0; right:0; height:3px; background:{GRADIENT}; }}
-.mx-kpi .l {{ font-size:12.5px; font-weight:500; color:var(--muted); }}
+.mx-kpi .hd {{ display:flex; align-items:center; justify-content:space-between; gap:6px; min-width:0; }}
+.mx-kpi .ic {{ order:2; flex:none; width:26px; height:26px; border-radius:8px; background:#EAF5FC; display:flex;
+  align-items:center; justify-content:center; }}
+.mx-kpi .ic svg {{ width:15px; height:15px; fill:none; stroke:var(--p3); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }}
+.mx-kpi .l {{ font-size:12.5px; font-weight:500; color:var(--muted); line-height:1.3; min-width:0; white-space:nowrap; }}
 .mx-kpi.dark .l, .mx-kpi.dark .s {{ color:#D7E9F6; }}
-.mx-kpi .v {{ font-size:26px; font-weight:700; margin-top:6px; line-height:1.15; color:var(--ink); letter-spacing:-.01em;
-  font-variant-numeric:tabular-nums; }}
+.mx-kpi .v {{ font-size:25px; font-weight:700; margin-top:10px; line-height:1.15; color:var(--ink); letter-spacing:-.015em;
+  font-variant-numeric:tabular-nums; white-space:nowrap; }}
+.mx-kpi .v small {{ font-size:14px; font-weight:600; color:var(--muted); margin-left:3px; letter-spacing:0; }}
 .mx-kpi.dark .v {{ color:#FFFFFF; }}
-.mx-kpi .s {{ font-size:12.5px; color:var(--muted); margin-top:4px; }}
-.mx-mini {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:12px; margin:0 0 16px; }}
-.mx-mini div {{ background:#FFFFFF; border:1px solid var(--line); border-radius:var(--r); padding:12px 16px;
-  display:flex; justify-content:space-between; align-items:center; font-size:13.5px; box-shadow:var(--shadow); }}
-.mx-mini span {{ color:var(--muted); }}
-.mx-mini strong {{ color:var(--ink); font-variant-numeric:tabular-nums; }}
+.mx-kpi .s {{ font-size:12px; color:var(--muted); margin-top:6px; min-height:16px; line-height:1.35; }}
+.mx-kpi .s b {{ color:var(--ink); font-weight:600; }}
+/* Baris statistik ringkas: satu kartu, dibagi garis tipis */
+.mx-mini {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); margin:0 0 18px;
+  background:#FFFFFF; border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; }}
+.mx-mini > div {{ padding:13px 18px 12px; display:flex; flex-direction:column; gap:8px;
+  box-shadow:-1px -1px 0 var(--line); min-width:0; }}
+.mx-mini .bar.e {{ visibility:hidden; }}
+.mx-mini .r {{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; font-size:13px; }}
+.mx-mini span {{ color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.mx-mini strong {{ color:var(--ink); font-size:15px; font-weight:700; font-variant-numeric:tabular-nums; }}
+.mx-mini .bar {{ height:4px; border-radius:2px; background:#EEF2F5; overflow:hidden; }}
+.mx-mini .bar i {{ display:block; height:100%; border-radius:2px; background:{GRADIENT}; }}
 
 /* Judul */
 .mx-h1 {{ font-size:26px; font-weight:700; color:var(--ink); margin:0; letter-spacing:-.015em; }}
@@ -307,6 +320,7 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 .mx-maplist .v {{ text-align:right; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }}
 .mx-maplist .ft {{ font-size:11.5px; color:#8A8A8A; margin-top:8px; line-height:1.4; }}
 /* ---- grafik berdampingan: susun ke bawah bila layar sempit ---- */
+@media (max-width: 1500px) {{ .mx-kpi .l {{ font-size:12px; }} .mx-kpi .ic {{ width:24px; height:24px; }} }}
 @media (max-width: 1200px) {{
   [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) {{ flex-wrap: wrap !important; }}
   [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) > [data-testid="stColumn"] {{
@@ -391,9 +405,23 @@ def brand():
     st.markdown(f'<div class="mx-brand">{mark}</div>', unsafe_allow_html=True)
 
 
-def kpi(label, value, sub="", dark=False) -> str:
-    return (f'<div class="mx-kpi{" dark" if dark else ""}"><div class="l">{esc(label)}</div>'
-            f'<div class="v">{esc(value)}</div><div class="s">{esc(sub)}</div></div>')
+_KPI_ICO = {
+    "booking": '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M9 15l2 2 4-4"/>',
+    "request": '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+    "hotel": '<path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16M15 9h4a1 1 0 0 1 1 1v11M3 21h18M8 8h3M8 12h3M8 16h3"/>',
+    "night": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+    "rate": '<circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2A2.6 2.6 0 0 0 12.4 8h-1a2 2 0 0 0 0 4h1.2a2 2 0 0 1 0 4h-1.1a2.6 2.6 0 0 1-2.4-1.3M12 6.5V8M12 16v1.5"/>',
+    "clock": '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+}
+
+
+def kpi(label, value, sub="", dark=False, icon=None, unit="", sub_html=False) -> str:
+    ico = (f'<span class="ic"><svg viewBox="0 0 24 24">{_KPI_ICO[icon]}</svg></span>'
+           if icon in _KPI_ICO else "")
+    u = f"<small>{esc(unit)}</small>" if unit else ""
+    sub_s = sub if sub_html else esc(sub)
+    return (f'<div class="mx-kpi{" dark" if dark else ""}"><div class="hd">{ico}<div class="l">{esc(label)}</div></div>'
+            f'<div class="v">{esc(value)}{u}</div><div class="s">{sub_s}</div></div>')
 
 
 def kpi_row(items, min_width=180):
@@ -401,8 +429,14 @@ def kpi_row(items, min_width=180):
 
 
 def mini_row(pairs):
-    cells = "".join(f'<div><span>{esc(a)}</span><strong>{esc(b)}</strong></div>' for a, b in pairs)
-    st.markdown(f'<div class="mx-mini">{cells}</div>', unsafe_allow_html=True)
+    """pairs: (label, nilai) atau (label, nilai, persen 0–100 untuk bar)."""
+    cells = []
+    for p in pairs:
+        a, b = p[0], p[1]
+        bar = (f'<div class="bar"><i style="width:{max(0, min(100, float(p[2]))):.1f}%"></i></div>'
+               if len(p) > 2 and p[2] is not None else '<div class="bar e"></div>')
+        cells.append(f'<div><div class="r"><span>{esc(a)}</span><strong>{esc(b)}</strong></div>{bar}</div>')
+    st.markdown(f'<div class="mx-mini">{"".join(cells)}</div>', unsafe_allow_html=True)
 
 
 def page_title(title, sub=""):
