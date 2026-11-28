@@ -84,6 +84,8 @@ _BRAND_RES = [(re.compile(p, re.IGNORECASE), r) for p, r in BRAND_RULES]
 # Gabungkan otomatis nama standar yang hanya berbeda kata-kata ini (atau urutannya),
 # mis. "Hotel Aston Manado" = "ASTON Manado Hotel", "Akmani Legian" = "The Akmani Legian".
 MERGE_STANDARD_VARIANTS = True
+FOLLOW_CHAINS = False          # True = ikuti semua rantai A->B->C di Excel (perilaku lama)
+SAME_HOTEL_RATIO = 0.85        # rantai hanya diikuti bila nama B & C semirip ini (beda ejaan saja)
 MERGE_IGNORE_WORDS = {"hotel", "the"}
 STRICT_PREFIX = "~"            # penanda kunci cadangan (tidak mungkin muncul di name_key)
 MERGE_REPORT = [pd.DataFrame()]
@@ -194,14 +196,42 @@ def build_mapping(table: pd.DataFrame):
     for k in canon_spelling:
         mapping.setdefault(k, k)
 
-    # 4) Ikuti rantai A -> B -> C sampai stabil (hindari siklus)
+    # 4) Rantai A -> B -> C di Excel hanya diikuti bila B dan C memang hotel yang sama
+    #    (beda ejaan saja, mis. "De_Rain Hotel Bandung" -> "DeRain Hotel Bandung").
+    #    Rantai ke hotel lain (mis. "The Alana ... Solo by ASTON" -> "... Malioboro Yogyakarta",
+    #    "Arthama Hotel Wahid-Hasyim Jakarta" -> "Arthama Hotel Makassar") TIDAK diikuti:
+    #    nama yang sudah menjadi nama standar di baris lain tetap dirinya sendiri.
+    def _same(a, b):
+        sa, sb = strict_key(a), strict_key(b)
+        ta, tb = set(sa.split()), set(sb.split())
+        if min(len(ta), len(tb)) >= 2 and (ta <= tb or tb <= ta):   # hanya menambah kata (mis. nama kota)
+            return True
+        return difflib.SequenceMatcher(None, sa, sb).ratio() >= SAME_HOTEL_RATIO
     resolved = {}
     for k in mapping:
         seen, cur = [k], mapping[k]
-        while cur in mapping and mapping[cur] != cur and cur not in seen:
+        while (cur in mapping and mapping[cur] != cur and cur not in seen
+               and (FOLLOW_CHAINS or _same(cur, mapping[cur]))):
             seen.append(cur)
             cur = mapping[cur]
         resolved[k] = cur
+    # Idempoten: setiap nama standar dipetakan ke dirinya sendiri. Bila nama standar itu
+    # di Excel diarahkan ke ejaan lain dari hotel yang SAMA, semua yang menuju ke sana ikut
+    # dipindah ke ejaan tersebut; bila ke hotel LAIN, nama standar tetap dirinya sendiri.
+    for _ in range(3):
+        moved = False
+        for v in set(resolved.values()):
+            w = resolved.get(v, v)
+            if w == v:
+                continue
+            moved = True
+            if _same(v, w):
+                for k in [k for k, c in resolved.items() if c == v]:
+                    resolved[k] = w
+            else:
+                resolved[v] = v
+        if not moved:
+            break
 
     final = {k: canon_spelling.get(v, v) for k, v in resolved.items()}
 
@@ -233,8 +263,9 @@ def build_mapping(table: pd.DataFrame):
         dst = apply_brand_rules(dst)
         final[name_key(src)] = dst
         final[name_key(dst)] = dst
-    for k, v in list(final.items()):          # arahkan ulang yang menuju nama yang di-override
-        ov = final.get(name_key(v))
+    ov_keys = {name_key(src): apply_brand_rules(dst) for src, dst in FULL_NAME_OVERRIDES.items()}
+    for k, v in list(final.items()):          # arahkan ulang HANYA yang menuju nama yang di-override
+        ov = ov_keys.get(name_key(v))
         if ov is not None and ov != v:
             final[k] = ov
 
