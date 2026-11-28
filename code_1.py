@@ -3078,7 +3078,11 @@ def _checkin_heatmap(d):
         _fig(fig, "db_ci_fig", 340)
 
 def tab_dashboard(df):
-    market = ui.choice("Wilayah", ["Semua", "Domestik", "Internasional"], key="db_market")
+    fa, fb = st.columns([5, 1], vertical_alignment="bottom")
+    with fa:
+        market = ui.choice("Wilayah", ["Semua", "Domestik", "Internasional"], key="db_market")
+    with fb:
+        _print_button()
     st.markdown(f"<div style='margin-top:-6px;font-size:13px;color:{ui.MUTED}'>Periode: {_period_label(df)} · "
                 f"nilai dalam Rupiah</div>", unsafe_allow_html=True)
     d = _market(df, market)
@@ -4103,14 +4107,18 @@ PRINTABLE_PAGES = ["Overview"]          # tombol Cetak PDF hanya di Overview (A4
 
 
 def _print_bar(page, df):
-    """Tombol 'Cetak PDF' (kanan atas halaman) + kop yang hanya tampil di hasil cetak."""
+    """Kop yang hanya tampil di hasil cetak. Tombolnya digambar di halaman (lihat _print_button)."""
     if page not in PRINTABLE_PAGES or not can_download():
         return
-    with st.container(key="mx_print"):
-        _, c = st.columns([5, 1])
-        with c:
-            _html_frame(ui.print_button_html(), height=38)
     ui.print_head(page, _period_label(df))
+
+
+def _print_button():
+    """Tombol 'Cetak PDF' (hanya untuk akun dengan hak unduh)."""
+    if not can_download():
+        return
+    with st.container(key="mx_print"):
+        _html_frame(ui.print_button_html(), height=38)
 
 
 @st.fragment
