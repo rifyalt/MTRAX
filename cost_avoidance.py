@@ -1231,7 +1231,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
     years = corp_years(src) if has_corp else []
     YEAR_AUTO = "Sesuai tahun check-in"
     with t1:
-        year_pick = st.selectbox("Tahun corp rate", [YEAR_AUTO] + [str(y) for y in years], key="ca_year",
+        year_pick = st.selectbox("Tahun corp rate", [YEAR_AUTO] + [str(y) for y in years], key="ca_year", **ui.keep("selectbox"),
                                  label_visibility="collapsed",
                                  format_func=lambda v: "Per tahun check-in" if v == YEAR_AUTO else f"Corp rate {v}",
                                  help="Pilih tahun corp rate pembanding. 'Sesuai tahun check-in' = booking dibandingkan "
@@ -1318,7 +1318,8 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
     corp, m, pools, summary = res["corp"], res["m"], res["pools"], res["summary"]
     leak100, quality, city10 = res["leak100"], res["quality"], res["city10"]
 
-    sub1, sub2 = st.tabs(["Ringkasan", "Analisis lanjutan"])
+    _tk = ui.keep("tabs")
+    sub1, sub2 = st.tabs(["Ringkasan", "Analisis lanjutan"], **({"key": "ca_tab", **_tk} if _tk else {}))
 
     # ================= RINGKASAN =================
     with sub1:
@@ -1333,11 +1334,11 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
 
             h1, h3, h2 = st.columns([1.6, 2.2, 1], vertical_alignment="bottom")
             h1.markdown("**Detail per hotel & tipe kamar**")
-            show_nc = h3.toggle("Tampilkan tipe kamar yang belum ada corp rate", value=True, key="ca_show_nocorp",
+            show_nc = h3.toggle("Tampilkan tipe kamar yang belum ada corp rate", value=True, key="ca_show_nocorp", **ui.keep("toggle"),
                                 help="Tipe kamar yang dibeli di hotel ber-kontrak tetapi tidak punya corp rate. "
                                      "Hanya ditampilkan, tidak ikut dihitung.")
             sort_by = h2.selectbox("Urutkan", ["Nama hotel (A–Z)", "Room night", "Potensi avoidance", "Selisih %"],
-                                   key="ca_sort")
+                                   key="ca_sort", **ui.keep("selectbox"))
             u = res.get("uncovered")
             if show_nc and u is not None and not u.empty:
                 hk = ["_hotel_key", "_city_key"]
@@ -1452,7 +1453,7 @@ def render_cost_avoidance(df_all: pd.DataFrame, *, can_download: bool, can_edit:
 
         # 2. Renegosiasi
         ui.section("2 · Target renegosiasi corp rate")
-        pct = st.slider("Target persentil (P20 agresif · P60 lunak)", 20, 60, pct, 5, key="ca_pct")
+        pct = st.slider("Target persentil (P20 agresif · P60 lunak)", 20, 60, pct, 5, key="ca_pct", **ui.keep("slider"))
         if rg.empty:
             st.info("Tidak ada corp rate berstatus Tidak kompetitif.")
         else:
