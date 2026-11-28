@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.27-n"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.28-a"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -325,6 +325,8 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
     background:#FFFFFF !important; overflow:visible !important; height:auto !important; min-height:0 !important;
     position:static !important; padding-bottom:0 !important; margin-bottom:0 !important; }}
   [data-testid="stBottom"], [data-testid="stBottomBlockContainer"] {{ display:none !important; }}
+  body > div, [data-testid="stScreencast"], [data-testid="stAppViewContainer"] > div, [data-testid="stMainBlockContainer"],
+  [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {{ min-height:0 !important; height:auto !important; }}
   [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], [data-testid="stHeader"], [data-testid="stToolbar"],
   [data-testid="stDecoration"], [data-testid="stStatusWidget"], .st-key-mx_nav, .mx-footer, .mx-hero,
   [data-testid="stDownloadButton"], [data-testid="stPopover"], [data-testid="stExpander"], .stButton,
@@ -388,8 +390,8 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 /* ---- grafik berdampingan: susun ke bawah bila layar sempit ---- */
 @media (max-width: 1500px) {{ .mx-kpi .l {{ font-size:12px; }} .mx-kpi .ic {{ width:24px; height:24px; }} }}
 @media screen and (max-width: 1200px) {{
-  [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) {{ flex-wrap: wrap !important; }}
-  [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) > [data-testid="stColumn"] {{
+  html:not(.mx-printing) [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) {{ flex-wrap: wrap !important; }}
+  html:not(.mx-printing) [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) > [data-testid="stColumn"] {{
     width: 100% !important; flex: 1 1 100% !important; min-width: 100% !important; }}
 }}
 .mx-n {{ counter-reset: c var(--v); animation: mxCount 1.3s cubic-bezier(.15,.8,.25,1) both; }}
@@ -942,11 +944,11 @@ def print_button_html(label="Cetak PDF") -> str:
     return """<!doctype html><html><head><style>
 html,body{margin:0;padding:0;background:transparent;font-family:"Source Sans Pro","Source Sans 3",sans-serif}
 .w{display:flex;justify-content:flex-end}
-button{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 14px;border-radius:9px;cursor:pointer;
- border:1px solid #D5E3EE;background:#fff;color:#1F2A37;font:600 13.5px/1 inherit;font-family:inherit;
- transition:background .15s,border-color .15s,color .15s}
-button:hover{border-color:#1BA0E2;color:#0E6BA8;background:#F4FAFE}
-button:disabled{opacity:.6;cursor:progress}
+button{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 15px;border-radius:8px;cursor:pointer;
+ border:1px solid __ACT__;background:__ACT__;color:#fff;font:600 13.5px/1 inherit;font-family:inherit;
+ transition:background .15s,border-color .15s,box-shadow .15s}
+button:hover{background:__DARK__;border-color:__DARK__;box-shadow:0 4px 12px rgba(10,93,150,.22)}
+button:disabled{opacity:.7;cursor:progress}
 svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 </style></head><body><div class="w"><button id="b" title="Simpan halaman ini sebagai PDF (pilih 'Simpan sebagai PDF' di dialog print)">
 <svg viewBox="0 0 24 24"><path d="M7 9V3h10v6M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="7" y="14" width="10" height="7" rx="1"/></svg>
@@ -971,7 +973,7 @@ async function prep(){
   }
   const h=box().scrollHeight||1;
   z=Math.min(PW/lw, PH/h);
-  R.style.setProperty("--mx-pz", (z*0.97).toFixed(4));   // hanya dipakai @media print
+  R.style.setProperty("--mx-pz", (z*0.93).toFixed(4));   // hanya dipakai @media print
   return {lw, h, z};
 }
 function done(){
@@ -987,7 +989,7 @@ b.onclick=async ()=>{
   try{ P.focus(); P.print(); }catch(e){ done(); }
   setTimeout(()=>{ if(b.disabled) done(); },1500);
 };
-</script></body></html>""".replace("__LABEL__", esc(label))
+</script></body></html>""".replace("__LABEL__", esc(label)).replace("__ACT__", ACTION).replace("__DARK__", HILITE_DARK)
 
 
 def print_head(page, period, by=""):
