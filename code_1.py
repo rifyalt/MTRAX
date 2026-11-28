@@ -3311,7 +3311,7 @@ def tab_dashboard(df):
 def tab_price(df, pmap):
     ui.page_title("Price Intelligence", "Konsentrasi Pareto 80/20 · benchmark rate hotel · simulator negosiasi")
     with st.container(border=True):
-        c1, c2, c3, c5, c4 = st.columns([1.3, 1.8, 1, 1.1, 1.4])
+        c1, c2, c3, c5, c4 = st.columns([1.6, 1.5, 0.95, 1.05, 1.6])
         with c1:
             wil = ui.choice("Wilayah", ["Indonesia", "Internasional"], key="pi_wil")
         d = _market(df, wil)
@@ -3325,7 +3325,7 @@ def tab_price(df, pmap):
                                  help="Peringkat dan kurva 80/20 dihitung dari total room night atau total spend")
         with c4:
             st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            merge = st.checkbox("Gabungkan properti yang sama", value=True, key="pi_merge", disabled=dim != "Hotel")
+            merge = st.checkbox("Gabungkan properti", value=True, key="pi_merge", help="Gabungkan nama properti yang sama (mis. beda penulisan) jadi satu baris", disabled=dim != "Hotel")
     if hotels:
         d = d[d["Hotel Name"].isin(hotels)]
     d = d[d["Invoice Amount"].notna()] if "Invoice Amount" in d else d.iloc[0:0]
@@ -3350,10 +3350,21 @@ def tab_price(df, pmap):
     n20 = max(1, int(len(g) * 0.2))
     top_m = g[mcol].head(n20).sum()
     ent = "properti" if dim == "Hotel" else "kota"
-    ui.kpi_row([ui.kpi(f"Total {mname} · {wil}", fmt_m(total), _period_label(d), dark=True),
-                ui.kpi("20% teratas", ui.fmt_int(n20), f"dari {ui.fmt_int(len(g))} {ent}"),
-                ui.kpi("Kontribusi 20% teratas", ui.fmt_pct(top_m / total * 100 if total else 0), f"dari total {mname}"),
-                ui.kpi("Sisa 80%", fmt_m(total - top_m), f"{ui.fmt_int(len(g) - n20)} {ent}")])
+    tot_txt, tot_unit = fmt_m(total), ""
+    if not by_rn and " " in tot_txt:            # "Rp199,00 M" → angka + satuan kecil, seperti Overview
+        tot_txt, tot_unit = tot_txt.rsplit(" ", 1)
+    rest_txt, rest_unit = fmt_m(total - top_m), ""
+    if not by_rn and " " in rest_txt:
+        rest_txt, rest_unit = rest_txt.rsplit(" ", 1)
+    ent_ic = "hotel" if dim == "Hotel" else "city"
+    ui.kpi_row([ui.kpi(f"Total {mname} · {wil}", tot_txt, unit=tot_unit, icon="night" if by_rn else "rate",
+                       sub=ui.esc(_period_label(d)), sub_html=True),
+                ui.kpi("20% teratas", ui.fmt_int(n20), unit=ent, icon=ent_ic,
+                       sub=f"dari <b>{ui.fmt_int(len(g))}</b> {ent}", sub_html=True),
+                ui.kpi("Kontribusi 20% teratas", ui.fmt_pct(top_m / total * 100 if total else 0), icon="pie",
+                       sub=f"dari total {mname}"),
+                ui.kpi("Sisa 80%", rest_txt, unit=rest_unit, icon="layers",
+                       sub=f"<b>{ui.fmt_int(len(g) - n20)}</b> {ent} lainnya", sub_html=True)], 200)
     with st.container(border=True):
         ui.section(f"Konsentrasi {mname} — Pareto 80/20", "Batang biru tua = 20% teratas · garis = persentase kumulatif")
         _pareto_fig(list(g[key]), g[mcol].to_numpy(), n20, "pi_pareto", "Room night" if by_rn else "Spend (Rp)")
