@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.28-a"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.28-b"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -287,6 +287,11 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 .mx-footer {{ text-align:center; padding:20px 0 4px; color:var(--muted); font-size:12.5px; }}
 /* ---------- Cetak ke PDF: Overview, 1 lembar A4 potret (tombol "Cetak PDF" → dialog print browser) ---------- */
 .mx-print-head {{ display:none; }}
+/* di layar: kop cetak tidak memakan ruang; iframe tombol dikunci 38 px (beberapa versi Streamlit memberi tinggi bawaan) */
+[data-testid="stElementContainer"]:has(> div .mx-print-head), [data-testid="stElementContainer"]:has(.mx-print-head) {{ display:none; }}
+.mx-printing [data-testid="stElementContainer"]:has(.mx-print-head) {{ display:block; }}
+.st-key-mx_print, .st-key-mx_print [data-testid="stElementContainer"] {{ gap:0 !important; }}
+.st-key-mx_print iframe {{ height:38px !important; min-height:38px !important; max-height:38px !important; display:block; }}
 /* mode siap-cetak di layar: tata letak desktop selebar --mx-pw lalu diperkecil (--mx-pz) agar pas 1 halaman A4 */
 .mx-printing [data-testid="stSidebar"],
 .mx-printing [data-testid="stSidebarCollapsedControl"],
@@ -335,6 +340,7 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
   [data-testid="stHorizontalBlock"] {{ display:flex !important; flex-wrap:nowrap !important; }}
   [data-testid="stHorizontalBlock"] > [data-testid="stColumn"], [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
     display:flex !important; width:auto !important; min-width:0 !important; margin-bottom:0 !important; }}
+  [data-testid="stElementContainer"]:has(.mx-print-head) {{ display:block !important; }}
   .mx-print-head {{ display:flex !important; }}
   /* perkecil hanya saat cetak: grafik sudah digambar di layar selebar --mx-pw, lalu diskalakan pas 1 halaman */
   .mx-printing [data-testid="stMainBlockContainer"], .mx-printing .block-container {{ zoom:var(--mx-pz, 1); }}
