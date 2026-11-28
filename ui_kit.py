@@ -18,7 +18,7 @@ import os
 
 import streamlit as st
 
-UI_VERSION = "2026.11.28-b"   # tampil di footer; cek ini bila tampilan terasa belum berubah
+UI_VERSION = "2026.11.28-d"   # tampil di footer; cek ini bila tampilan terasa belum berubah
 
 # ---------------------------------------------------------------- brand tokens
 P1 = "#1BA0E2"          # primary — seri data utama
@@ -287,6 +287,7 @@ div[data-testid="stExpander"] summary {{ font-weight:500; }}
 .mx-footer {{ text-align:center; padding:20px 0 4px; color:var(--muted); font-size:12.5px; }}
 /* ---------- Cetak ke PDF: Overview, 1 lembar A4 potret (tombol "Cetak PDF" → dialog print browser) ---------- */
 .mx-print-head {{ display:none; }}
+.st-key-mx_ck {{ position:absolute !important; width:0 !important; height:0 !important; overflow:hidden !important; }}
 /* di layar: kop cetak tidak memakan ruang; iframe tombol dikunci 38 px (beberapa versi Streamlit memberi tinggi bawaan) */
 [data-testid="stElementContainer"]:has(> div .mx-print-head), [data-testid="stElementContainer"]:has(.mx-print-head) {{ display:none; }}
 .mx-printing [data-testid="stElementContainer"]:has(.mx-print-head) {{ display:block; }}
@@ -589,12 +590,40 @@ def status_line(text, tone="ok") -> str:
     return f'<div class="t" style="color:{color}"><span class="mx-dot" style="background:{dot}"></span>{esc(text)}</div>'
 
 
+_KEEP_CACHE = {}
+
+
+def keep(widget: str) -> dict:
+    """Argumen agar nilai widget bertahan saat halaman di-refresh (F5):
+    bind="query-params" → nilai disimpan di URL; persist_state="session" → tidak hilang saat widget
+    sedang tidak tampil (mis. pindah tab). Otomatis kosong di versi Streamlit yang belum mendukung."""
+    if widget not in _KEEP_CACHE:
+        kw = {}
+        try:
+            import inspect
+            ps = inspect.signature(getattr(st, widget)).parameters
+            if "bind" in ps:
+                kw["bind"] = "query-params"
+            if "persist_state" in ps:
+                kw["persist_state"] = "session"
+        except Exception:
+            pass
+        _KEEP_CACHE[widget] = kw
+    return dict(_KEEP_CACHE[widget])
+
+
 def choice(label, options, key, default=None):
     default = default if default is not None else options[0]
     if hasattr(st, "segmented_control"):
-        v = st.segmented_control(label, options, default=default, key=key)
+        # nilai yang sudah ada di session_state (mis. dipulihkan setelah refresh) dipakai tanpa 'default'
+        # agar Streamlit tidak memunculkan peringatan default + Session State
+        if key in st.session_state and st.session_state[key] not in options:
+            del st.session_state[key]                 # nilai lama tidak valid (mis. dari cookie) → abaikan
+        preset = key in st.session_state
+        v = st.segmented_control(label, options, default=None if preset else default, key=key,
+                                 **keep("segmented_control"))
         return v if v is not None else default
-    return st.radio(label, options, index=options.index(default), key=key, horizontal=True)
+    return st.radio(label, options, index=options.index(default), key=key, horizontal=True, **keep("radio"))
 
 
 def fmt_int(v) -> str:
