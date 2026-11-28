@@ -4327,6 +4327,11 @@ def main_app():
         st.session_state._raw_sig = ca_frame_sig(raw)
         st.session_state._sig_ver = ver
     sig = st.session_state._raw_sig
+    try:                                              # kamus nama hotel berubah → hitung ulang penyeragaman
+        import hotel_name_standardizer as _hns
+        sig = f"{sig}|std{int(_hns.STANDARD_FILE.stat().st_mtime)}"
+    except Exception:
+        pass
     with st.spinner("Menyiapkan data…"):
         df, pmap, fx_info, prep_warn = _prepare_cached(sig, raw)
     st.session_state["_fx_info"] = fx_info
