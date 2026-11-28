@@ -348,6 +348,70 @@ def _clear_session_cookie():
         height=0
     )
 
+# ======================================
+# PULIHKAN TAMPILAN SETELAH REFRESH (F5)
+# ── Refresh membuat sesi Streamlit baru (session_state kosong). Pilihan tampilan terakhir
+#    (periode, tab, wilayah, rentang tanggal) disimpan di cookie browser "mtrax_view".
+#    Saat halaman dibuka lagi, data periode itu dimuat otomatis dari cache server
+#    (load_drive_data, st.cache_data) sehingga tidak perlu klik "Muat Data" lagi.
+#    Cookie HANYA berisi pilihan tampilan — tidak ada data transaksi / identitas.
+# ======================================
+_VIEW_COOKIE_NAME = "mtrax_view"
+# Pilihan Wilayah per tab: tidak tampil di URL saat tab lain dibuka, jadi ikut disimpan di cookie
+STICKY_KEYS = ("db_market", "pi_wil", "sk_wil", "th_wil")
+VIEW_COOKIE_HOURS = 12
+
+
+def _write_view_cookie(view: dict | None):
+    """Tulis/hapus cookie tampilan lewat iframe tak terlihat."""
+    from urllib.parse import quote
+    if view is None:
+        js = f'document.cookie = "{_VIEW_COOKIE_NAME}=; max-age=0; path=/; SameSite=Lax";'
+    else:
+        val = quote(json.dumps(view, separators=(",", ":")))
+        js = (f'document.cookie = "{_VIEW_COOKIE_NAME}={val}; max-age={VIEW_COOKIE_HOURS * 3600}; '
+              f'path=/; SameSite=Lax";')
+    with st.container(key="mx_ck"):
+        _html_frame(f"<script>{js}</script>", height=0)
+
+
+def _read_view_cookie() -> dict:
+    from urllib.parse import unquote
+    try:
+        raw = st.context.cookies.get(_VIEW_COOKIE_NAME)
+        v = json.loads(unquote(raw)) if raw else {}
+        return v if isinstance(v, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_view(page=None):
+    """Simpan pilihan tampilan saat ini ke cookie (hanya kalau berubah & data dari Drive)."""
+    period = st.session_state.get("data_period", "")
+    if not st.session_state.get("data_loaded") or period not in _allowed_periods():
+        return
+    g = st.session_state.get("_gf_rng")
+    view = {"p": period, "pg": page or st.session_state.get("nav_page"),
+            "m": st.session_state.get("db_market"),
+            "w": {k: st.session_state[k] for k in STICKY_KEYS if isinstance(st.session_state.get(k), str)},
+            "r": [g[0].strftime("%Y-%m-%d"), g[1].strftime("%Y-%m-%d")] if g else None}
+    if st.session_state.get("_view_saved") != view:
+        st.session_state._view_saved = view
+        _write_view_cookie(view)
+    # URL juga menyimpan periode data & rentang tanggal (widget lain disimpan Streamlit lewat bind="query-params")
+    try:
+        qp = st.query_params
+        if qp.get("data") != period:
+            qp["data"] = period
+        rng_txt = f"{view['r'][0]}_{view['r'][1]}" if view["r"] else None
+        if rng_txt and qp.get("rng") != rng_txt:
+            qp["rng"] = rng_txt
+        elif not rng_txt and "rng" in qp:
+            del qp["rng"]
+    except Exception:
+        pass
+
+
 def _try_restore_session_from_cookie():
     """Dipanggil sebelum pengecekan authenticated — pulihkan sesi dari cookie kalau ada & valid."""
     if st.session_state.get("authenticated"):
@@ -2767,6 +2831,68 @@ def _net_chip():
     _html_frame(ui.net_chip_html(_client_ip(), _drive_ping()), height=34)
 
 
+def _allowed_periods() -> list:
+    all_folders = dict(st.secrets.get("drive_folders", {}))
+    if is_demo_user():
+        cfg = _demo_config() or {"periods": []}
+        return [p for p in all_folders if not cfg["periods"] or p in cfg["periods"]]
+    return list(all_folders.keys())
+
+
+def _load_period(sel) -> None:
+    """Tarik data satu periode dari Drive (cache server) ke sesi ini. Melempar exception kalau gagal."""
+    all_folders = dict(st.secrets.get("drive_folders", {}))
+    _t0 = time.time()
+    raw = load_drive_data(all_folders[sel], ["Unnamed: 0", "Travel Request Number.1"])
+    if is_demo_user():
+        raw = prepare_demo_dataset(raw)
+        st.session_state._demo_masked = True
+        audit("demo_muat_data", periode=sel)
+    st.session_state.df_all = raw
+    st.session_state.data_loaded = True
+    st.session_state.data_period = sel
+    st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
+    st.session_state._load_secs = time.time() - _t0
+
+
+def _restore_view():
+    """Sekali per sesi baru: kalau ada cookie tampilan, muat ulang data & kembalikan tab/filter terakhir."""
+    if st.session_state.get("_view_tried"):
+        return
+    st.session_state._view_tried = True
+    if st.session_state.get("data_loaded"):
+        return
+    try:
+        qp = st.query_params
+        q_data, q_rng = qp.get("data"), qp.get("rng")
+    except Exception:
+        q_data = q_rng = None
+    from_url = bool(q_data)
+    v = {"p": q_data, "r": q_rng.split("_", 1) if q_rng and "_" in q_rng else None} if from_url \
+        else _read_view_cookie()
+    p = v.get("p")
+    if not p or p not in _allowed_periods():
+        return
+    try:
+        with st.spinner(f"Memulihkan tampilan terakhir · memuat data {p}…"):
+            _load_period(p)
+    except Exception:
+        return                                     # gagal → tampilan awal biasa (klik Muat Data)
+    if v.get("r"):
+        st.session_state._pending_rng = v["r"]
+    ck = _read_view_cookie() if from_url else v
+    for k, val in (ck.get("w") or {}).items():     # wilayah tab lain (tidak ada di URL)
+        if k in STICKY_KEYS and isinstance(val, str) and not (from_url and k in qp):
+            st.session_state[k] = val
+    if from_url:
+        return                                     # tab & pilihan lain dibaca widget langsung dari URL
+    st.session_state.sb_period = p
+    if v.get("pg") in PAGES:
+        st.session_state.nav_page = v["pg"]
+    if v.get("m") in ("Semua", "Domestik", "Internasional"):
+        st.session_state.db_market = v["m"]
+
+
 def render_sidebar():
     with st.sidebar:
         ui.brand()
@@ -2789,14 +2915,9 @@ def render_sidebar():
         if not login_required():
             st.caption(f"Login sementara dimatikan. Aktifkan lagi: [access] login_required = true.")
 
-        all_folders = dict(st.secrets.get("drive_folders", {}))
-        if is_demo_user():
-            cfg = _demo_config() or {"periods": []}
-            periods = [p for p in all_folders if not cfg["periods"] or p in cfg["periods"]]
-        else:
-            periods = list(all_folders.keys())
+        periods = _allowed_periods()
         if periods:
-            sel = st.selectbox("Periode data", periods, key="sb_period")
+            sel = st.selectbox("Periode data", periods, key="sb_period", **ui.keep("selectbox"))
             c1, c2 = st.columns([3, 1]) if is_admin() else (st.container(), None)
             with c1:
                 go_clicked = st.button("Muat Data", type="primary", width="stretch", key="sb_get")
@@ -2809,17 +2930,7 @@ def render_sidebar():
             if go_clicked:
                 with st.spinner(f"Memuat data {sel}…"):
                     try:
-                        _t0 = time.time()
-                        raw = load_drive_data(all_folders[sel], ["Unnamed: 0", "Travel Request Number.1"])
-                        if is_demo_user():
-                            raw = prepare_demo_dataset(raw)
-                            st.session_state._demo_masked = True
-                            audit("demo_muat_data", periode=sel)
-                        st.session_state.df_all = raw
-                        st.session_state.data_loaded = True
-                        st.session_state.data_period = sel
-                        st.session_state._data_ver = st.session_state.get("_data_ver", 0) + 1
-                        st.session_state._load_secs = time.time() - _t0
+                        _load_period(sel)
                         st.rerun()
                     except Exception as e:
                         st.error("Gagal memuat data." if is_demo_user() else f"Gagal memuat data: {e}")
@@ -2865,6 +2976,11 @@ def render_sidebar():
         if uname != GUEST_USERNAME and st.button("Keluar", width="stretch", key="sb_logout"):
             _revoke_session_token(st.session_state.get("_session_token"))
             _clear_session_cookie()
+            _write_view_cookie(None)          # tampilan terakhir ikut dilupakan saat keluar
+            try:
+                st.query_params.clear()
+            except Exception:
+                pass
             time.sleep(0.5)
             for k in list(st.session_state.keys()):
                 del st.session_state[k]
@@ -2912,6 +3028,19 @@ PAGE_ICONS = {
 _HARI_ID = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 _BULAN_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
 
+LEAD_MAX_DAYS = 365   # check-in > 1 tahun setelah pengajuan dianggap salah ketik (mis. 2028 untuk 2026)
+
+
+def _checkin_ok(x):
+    """Mask baris dengan tanggal check-in wajar: ada, tidak sebelum pengajuan (toleransi 1 hari),
+    dan paling lambat LEAD_MAX_DAYS hari setelah pengajuan (Issue Time)."""
+    ok = x["Check in Date"].notna()
+    if "Issue Time" in x:
+        lt = (x["Check in Date"].dt.normalize() - x["Issue Time"].dt.normalize()).dt.days
+        ok &= lt.isna() | lt.between(-1, LEAD_MAX_DAYS)
+    return ok
+
+
 def _prev_window(a, b):
     """Periode pembanding untuk rentang [a, b].
     Mulai tgl 1 → geser n bulan kalender (1–16 Nov → 1–16 Okt; Okt–Nov → Agu–Sep).
@@ -2952,10 +3081,10 @@ def _forecast_card(d):
         h1, h2 = st.columns([2, 1.3], vertical_alignment="top")
         cities = d["City"].dropna().astype(str) if "City" in d else pd.Series(dtype=str)
         opts = ["Semua kota"] + list(cities.value_counts().head(30).index)
-        pick = h2.selectbox("Kota", opts, key="db_fc_city", label_visibility="collapsed")
+        pick = h2.selectbox("Kota", opts, key="db_fc_city", **ui.keep("selectbox"), label_visibility="collapsed")
         x = d if pick == "Semua kota" else d[d["City"].astype(str) == pick]
         last = _last_complete_month(d)
-        m = (x.dropna(subset=["Check in Date"])
+        m = (x.dropna(subset=["Check in Date"]).loc[lambda z: _checkin_ok(z)]
              .assign(P=lambda z: z["Check in Date"].dt.to_period("M"))
              .groupby("P")["Number of Rooms Night"].sum())
         if last is not None:
@@ -3050,6 +3179,8 @@ def _checkin_heatmap(d):
         return
     with st.container(border=True, key="db_ci"):
         x = d.dropna(subset=["Check in Date"])
+        n_bad = int((~_checkin_ok(x)).sum())
+        x = x[_checkin_ok(x)]                                 # buang tanggal check-in tidak wajar (salah ketik tahun)
         if x.empty:
             ui.section("Hari mulai check-in")
             st.caption("Tidak ada data check-in.")
@@ -3061,7 +3192,9 @@ def _checkin_heatmap(d):
         x = x[x["P"].isin(months)]
         total = x["Travel Request Number"].nunique() if has_tr else len(x)
         unit = "travel request" if has_tr else "booking"
-        ui.section("Hari mulai check-in", f"% dari {ui.fmt_int(total)} {unit} unik · per hari & bulan check-in")
+        bad_txt = f" · {ui.fmt_int(n_bad)} tanggal tidak wajar dikecualikan" if n_bad else ""
+        ui.section("Hari mulai check-in", (f"% dari {ui.fmt_int(total)} {unit} unik{bad_txt}" if n_bad
+                    else f"% dari {ui.fmt_int(total)} {unit} unik · per hari & bulan check-in"))
         g = x.groupby(["Hari", "P"])
         cnt = (g["Travel Request Number"].nunique() if has_tr else g.size())
         pv = cnt.unstack(fill_value=0).reindex(index=_HARI_ID, columns=months).fillna(0)
@@ -3095,7 +3228,7 @@ def tab_dashboard(df):
     lead_txt, lead_sub = "-", ""
     if {"Issue Time", "Check in Date"}.issubset(d.columns):
         lt = (d["Check in Date"].dt.normalize() - d["Issue Time"].dt.normalize()).dt.days
-        lt = lt[lt >= 0]
+        lt = lt[(lt >= 0) & (lt <= LEAD_MAX_DAYS)]
         if len(lt):
             lead_txt, lead_sub = f"{lt.mean():.0f} hari", f"{(lt <= 2).mean() * 100:.0f}% last-minute"
     n_hotel = d["Hotel Name"].nunique() if "Hotel Name" in d else 0
@@ -3120,7 +3253,7 @@ def tab_dashboard(df):
         ld = np.nan
         if {"Check in Date", "Issue Time"}.issubset(x.columns):
             q = (x["Check in Date"].dt.normalize() - x["Issue Time"].dt.normalize()).dt.days
-            q = q[q >= 0]
+            q = q[(q >= 0) & (q <= LEAD_MAX_DAYS)]
             ld = q.mean() if len(q) else np.nan
         return dict(bk=len(x), tr=x["Travel Request Number"].nunique() if "Travel Request Number" in x else len(x),
                     ht=x["Hotel Name"].nunique() if "Hotel Name" in x else 0, rn=r,
@@ -3317,15 +3450,15 @@ def tab_price(df, pmap):
         d = _market(df, wil)
         with c2:
             hotels = st.multiselect("Filter hotel (opsional)", sorted(d["Hotel Name"].dropna().unique()),
-                                    placeholder="Semua hotel", key="pi_hotels")
+                                    placeholder="Semua hotel", key="pi_hotels", **ui.keep("multiselect"))
         with c3:
-            dim = st.selectbox("Dimensi Pareto", ["Hotel", "Kota"], key="pi_dim")
+            dim = st.selectbox("Dimensi Pareto", ["Hotel", "Kota"], key="pi_dim", **ui.keep("selectbox"))
         with c5:
-            basis = st.selectbox("Basis Pareto", ["Room night", "Spend"], key="pi_basis",
+            basis = st.selectbox("Basis Pareto", ["Room night", "Spend"], key="pi_basis", **ui.keep("selectbox"),
                                  help="Peringkat dan kurva 80/20 dihitung dari total room night atau total spend")
         with c4:
             st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            merge = st.checkbox("Gabungkan properti", value=True, key="pi_merge", help="Gabungkan nama properti yang sama (mis. beda penulisan) jadi satu baris", disabled=dim != "Hotel")
+            merge = st.checkbox("Gabungkan properti", value=True, key="pi_merge", **ui.keep("checkbox"), help="Gabungkan nama properti yang sama (mis. beda penulisan) jadi satu baris", disabled=dim != "Hotel")
     if hotels:
         d = d[d["Hotel Name"].isin(hotels)]
     d = d[d["Invoice Amount"].notna()] if "Invoice Amount" in d else d.iloc[0:0]
@@ -3405,7 +3538,7 @@ def tab_price(df, pmap):
                                                          .sort_values(ascending=False).index)
         hcol = key if dim == "Hotel" else ("Hotel / Properti" if "Hotel / Properti" in hd else "Hotel Name")
         with h2:
-            pick = st.selectbox("Pilih hotel", order, key="pi_pick")
+            pick = st.selectbox("Pilih hotel", order, key="pi_pick", **ui.keep("selectbox"))
         x = hd[hd[hcol] == pick]
         if x.empty:
             st.info("Data rate hotel ini belum cukup.")
@@ -3416,7 +3549,7 @@ def tab_price(df, pmap):
                     ui.kpi("Room night", ui.fmt_int(x["Number of Rooms Night"].sum()))], 150)
         s1, s2, s3 = st.columns([2, 1, 1])
         with s1:
-            disc = st.slider("Target diskon (%)", 0, 30, 10, key="pi_disc")
+            disc = st.slider("Target diskon (%)", 0, 30, 10, key="pi_disc", **ui.keep("slider"))
         nego = avg * (1 - disc / 100)
         with s2:
             st.metric("Rate hasil negosiasi", ui.fmt_rp(nego))
@@ -3526,9 +3659,9 @@ def tab_sankey(df):
         with c1:
             wil = ui.choice("Wilayah", ["Semua", "Domestik", "Internasional"], key="sk_wil")
         with c2:
-            n_city = st.selectbox("Kota teratas", [5, 8, 10, 15, 20], index=2, key="sk_city")
+            n_city = st.selectbox("Kota teratas", [5, 8, 10, 15, 20], index=2, key="sk_city", **ui.keep("selectbox"))
         with c3:
-            n_hotel = st.selectbox("Hotel teratas", [10, 15, 20, 30, 50], index=2, key="sk_hotel")
+            n_hotel = st.selectbox("Hotel teratas", [10, 15, 20, 30, 50], index=2, key="sk_hotel", **ui.keep("selectbox"))
     base = _market(df, wil).dropna(subset=["Country", "City", "Hotel Name", "Invoice Amount"])
     if base.empty:
         st.info("Tidak ada data.")
@@ -3667,12 +3800,12 @@ def tab_dendro(df):
                   "Mengelompokkan kota atau hotel yang pola volume bulanannya mirip")
     with st.container(border=True):
         c = st.columns(5)
-        ent = c[0].selectbox("Entitas", ["Kota", "Hotel"], key="dd_ent")
-        metric = c[1].selectbox("Metric", ["Invoice Amount", "Number of Rooms Night"], key="dd_metric",
+        ent = c[0].selectbox("Entitas", ["Kota", "Hotel"], key="dd_ent", **ui.keep("selectbox"))
+        metric = c[1].selectbox("Metric", ["Invoice Amount", "Number of Rooms Night"], key="dd_metric", **ui.keep("selectbox"),
                                 format_func=lambda m: "Spend (Rupiah)" if m == "Invoice Amount" else "Room night")
-        method = c[2].selectbox("Metode linkage", ["ward", "complete", "average", "single"], key="dd_link")
-        top_n = c[3].selectbox("Jumlah teratas", [12, 20, 30, 50], key="dd_n")
-        k = c[4].selectbox("Jumlah klaster", [4, 3, 5, 6], key="dd_k")
+        method = c[2].selectbox("Metode linkage", ["ward", "complete", "average", "single"], key="dd_link", **ui.keep("selectbox"))
+        top_n = c[3].selectbox("Jumlah teratas", [12, 20, 30, 50], key="dd_n", **ui.keep("selectbox"))
+        k = c[4].selectbox("Jumlah klaster", [4, 3, 5, 6], key="dd_k", **ui.keep("selectbox"))
     col = "City" if ent == "Kota" else "Hotel Name"
     unit = "kota" if ent == "Kota" else "hotel"
     is_rp = metric == "Invoice Amount"
@@ -3705,7 +3838,7 @@ def tab_dendro(df):
         st.session_state["dd_focus"] = pend
     if st.session_state.get("dd_focus") not in opts:
         st.session_state["dd_focus"] = "Semua"
-    focus_s = st.segmented_control("Sorot klaster", opts, key="dd_focus", label_visibility="collapsed")
+    focus_s = st.segmented_control("Sorot klaster", opts, key="dd_focus", **ui.keep("segmented_control"), label_visibility="collapsed")
     focus = int(focus_s.split()[-1]) if focus_s and focus_s != "Semua" else None
 
     groups = tuple((int(kk), tuple((str(n), float(vals[n])) for n in vals[cl == kk].sort_values(ascending=False).index))
@@ -3895,8 +4028,8 @@ def tab_patra(df):
     years = sorted(d["_dt"].dropna().dt.year.unique().astype(int), reverse=True)
     with st.container(border=True):
         c1, c2, c3 = st.columns([1, 1, 2])
-        year = c1.selectbox("Tahun (tabel bulanan)", years, key="pj_year") if years else None
-        met = c2.selectbox("Metrik tabel", ["Invoice (TR unik)", "Room night"], key="pj_met")
+        year = c1.selectbox("Tahun (tabel bulanan)", years, key="pj_year", **ui.keep("selectbox")) if years else None
+        met = c2.selectbox("Metrik tabel", ["Invoice (TR unik)", "Room night"], key="pj_met", **ui.keep("selectbox"))
     tr = "Travel Request Number" in d
     cnt = lambda x: x["Travel Request Number"].nunique() if tr else len(x)  # noqa: E731
     pj, npj = d[d["Grup"] == "Patra Jasa Group"], d[d["Grup"] == "Non-Patra Jasa"]
@@ -4154,6 +4287,7 @@ def _render_page(page, df, pmap, data_sig):
         tab_patra(df)
     elif page == "Reports":
         tab_laporan(df, data_sig)
+    _save_view(page)                      # mis. ganti Wilayah (rerun fragment saja)
 
 
 # ---------------------------------------------------------------- main
@@ -4170,6 +4304,8 @@ def main_app():
     if st.session_state.get("_session_token"):
         _set_session_cookie(st.session_state._session_token)
     ui.inject_css()
+    if not (st.session_state.get("view") == "akses"):
+        _restore_view()
     render_sidebar()
     render_header()
 
@@ -4202,9 +4338,20 @@ def main_app():
     if dc:
         dates = df[dc].dropna()
         lo, hi = dates.min().date(), dates.max().date()
+        rk = f"gf_range_{ver}"
+        pend = st.session_state.pop("_pending_rng", None)
+        if pend:                                   # rentang dipulihkan setelah refresh → jadi nilai awal widget
+            try:
+                a0, b0 = (max(lo, pd.Timestamp(pend[0]).date()), min(hi, pd.Timestamp(pend[1]).date()))
+                if a0 <= b0:
+                    st.session_state["_rng_default"] = (rk, (a0, b0))
+            except Exception:
+                pass
+        dflt = st.session_state.get("_rng_default")
+        init = dflt[1] if dflt and dflt[0] == rk else (lo, hi)
         with st.sidebar:
-            rng = st.date_input("Rentang tanggal (semua tab)", (lo, hi), min_value=lo, max_value=hi,
-                                format="DD/MM/YYYY", key=f"gf_range_{ver}")
+            rng = st.date_input("Rentang tanggal (semua tab)", init, min_value=lo, max_value=hi,
+                                format="DD/MM/YYYY", key=rk)
         st.session_state["_df_full"] = df          # untuk pembanding periode sebelumnya (indikator ▲▼)
         st.session_state["_gf_rng"] = None
         if isinstance(rng, (list, tuple)) and len(rng) == 2:
@@ -4218,9 +4365,10 @@ def main_app():
     # Hanya halaman yang dipilih yang dihitung & digambar (st.tabs menghitung SEMUA tab di setiap interaksi).
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     with st.container(key="mx_nav"):
-        page = st.radio("Halaman", PAGES, horizontal=True, key="nav_page", label_visibility="collapsed",
+        page = st.radio("Halaman", PAGES, horizontal=True, key="nav_page", **ui.keep("radio"), label_visibility="collapsed",
                         format_func=lambda p: f"{PAGE_ICONS.get(p, '')} {p}")
     _render_page(page, df, pmap, data_sig)
+    _save_view(page)
 
     st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
     ui.note("<b>Catatan penggunaan &amp; kepatuhan</b><br>Aplikasi ini untuk analisis internal. Output tidak bersifat "
